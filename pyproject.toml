@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "ecph5"
+version = "0.1.0"
+description = ""
+authors = ["Omar Khan <ok2610@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pytest = "^8.2.2"
+numpy = "^2.0.0"
+click = "^8.1.7"
+h5py = "^3.11.0"
+ipython = "^8.25.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

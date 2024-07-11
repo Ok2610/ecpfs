@@ -296,6 +296,96 @@ class ECPBuilder:
                 h5['index'] = self.index
 
 
-    def add_items():
-        raise NotImplementedError()
+    def add_items(self, item_embeddings: np.ndarray):
+        """
+        Add items into the index
+        """
+        for idx, emb in enumerate(item_embeddings):
+            top, distances = self.distance_root_node(emb)
+            n = top[0]
+            for l in range(self.levels):
+                lvl = 'lvl_' + str(l)
+                node = 'node_' + str(n)
+                if l == self.levels-1:
+                    next = len(self.index[lvl][node]['item_ids'])
+                    if next > self.index[lvl][node]['embeddings'].shape[0]:
+                        concat_array = np.zeros(shape=(self.node_size, emb.shape[1]),
+                                                dtype=emb.dtype)
+                        self.index[lvl][node]['embeddings'].concatenate(concat_array)
+                        self.index[lvl][node]['distances'].concatenate(concat_array)
+                    self.index[lvl][node]['embeddings'][next] = emb
+                    self.index[lvl][node]['item_ids'].append(idx)
+                    self.index[lvl][node]['distances'][next] = distances[top[0]]
+                    # TODO: Move the below part to a function and call it after index is built
+                    if self.metric == "IP":
+                        if self.index[lvl][node]['border'][1] is None \
+                            or self.index[lvl][node]['border'][1] > distances[top[0]]:
+                            self.index[lvl][node]['border'] = (next, distances[top[0]])
+                    elif self.metric == "L2":
+                        if self.index[lvl][node]['border'][1] is None \
+                            or self.index[lvl][node]['border'][1] < distances[top[0]]:
+                            self.index[lvl][node]['border'] = (next, distances[top[0]])
+                else:
+                    top, distances = self.distance_level_node(emb, lvl, node)
+                    n = self.index[lvl][node]['node_ids'][top[0]]
+    
+
+    def search_tree(self, query: np.ndarray, search_exp: int, k: int, restart=True):
+        """
+        Search the index tree and find the <search_exp> best leaf nodes.
+        Uses priority queues to continue the previous search.
+
+        #### Parameters:
+        query: The query array
+        search_exp: The amount of leaf nodes to explore
+        k: Number of items to return
+        restart: If the priority queue should be cleared or not
+
+        #### Returns:
+        A priority queue of items
+        """
+        leaf_cnt = 0
+        if restart:
+            self.tree_pq = PriorityQueue()
+            self.item_pq = PriorityQueue()
+        top, distances = self.distance_root_node(query)
+        # Add to tree_pq
+        for t in top:
+            self.tree_pq.put((distances[t], False, 0, t))
+            
+        while leaf_cnt != search_exp and not self.tree_pq.empty():
+            _, is_leaf, l, n = self.tree_pq.get()
+            if is_leaf:
+                # Pop leaf node items onto the item queue and increase the leaf_cnt
+                lvl = 'lvl_' + str(l)
+                node = 'node_' + str(n)
+                radius = self.index[lvl][node]['border'][1]
+                top, distances = self.distance_level_node(query, lvl, node)
+                for t in top:
+                    self.item_pq.put((
+                        distances[t],
+                        self.index[lvl][node]['item_ids'][t]
+                    ))
+                leaf_cnt += 1
+            else:
+                # Keep popping from queue and adding the next level and node to the queue
+                top, distances = self.distance_level_node(query, lvl, node)
+                for t in top:
+                    dist = distances[t] - radius if self.metric == "L2" else distances[t] + radius
+                    if l+1 == self.levels-1:
+                        self.tree_pq.put((
+                            dist,
+                            True, 
+                            l+1,
+                            self.index[lvl][node]['node_ids'][t]
+                        ))
+                    else:
+                        self.tree_pq.put((
+                            dist, 
+                            False,
+                            l+1, 
+                            self.index[lvl][node]['node_ids'][t]
+                        ))
+        
+        return [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
 

@@ -1,8 +1,9 @@
 import math
-from typing import List, Tuple
 import h5py
 import numpy as np
+from queue import PriorityQueue
 from pathlib import Path
+from typing import List, Tuple
 
 class Node:
     def __init__(self, node_size, dim, dtype=np.float16):
@@ -103,6 +104,47 @@ class ECPBuilder:
         
         return self.representative_embeddings, self.representative_ids
     
+    def distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate the distance to the embeddings of the root node
+
+        #### Parameters
+        emb: Embedding vector to calculate distance to root node embeddings
+
+        #### Returns
+        Output the argsorted top array and the calculated distance array
+        """
+        if self.metric == "IP":
+            distances = np.dot(self.index['root']['embeddings'], emb)
+            top = np.argsort(distances)[::-1]
+        elif self.metric == "L2":
+            differences = self.index['root']['embeddings'] - emb
+            distances = np.linalg.norm(differences, axis=1)
+            top = np.argsort(distances)
+        return top, distances 
+
+
+    def distance_level_node(self, emb: np.ndarray, lvl: str, node: str) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate the distance to the embeddings of the node at the specified level
+
+        #### Parameters
+        emb: Embedding vector
+        lvl: The level to check, ex. "lvl_0", "lvl_1"
+        node: Node to check, ex. "node_0", "node_1"
+
+        #### Returns
+        Output the argsorted top array and the calculated distance array
+        """
+        if self.metric == "IP":
+            distances =  np.dot(self.index[lvl][node]['embeddings'], emb)
+            top = np.argsort(distances)[::-1]
+        if self.metric == "L2":
+            differences = self.index[lvl][node]['embeddings'] - emb
+            distances = np.linalg.norm(differences)
+            top = np.argsort(distances)
+        return top, distances
+        
 
     def build_tree_h5(self, save_to_file="") -> None:
         """
@@ -111,55 +153,39 @@ class ECPBuilder:
         #### Parameters
         save_to_file: Filename to store the index. If left blank nothing is stored to disk.
         """
-
-        # Calculate the distance to the embeddings of the root node
-        # Output the argsorted top array and the calculated distance array
-        def distance_root_node(emb: np.ndarray) -> List:
-            if self.metric == "IP":
-                distances = np.dot(self.index['root']['embeddings'], emb)
-                top = np.argsort(distances)[::-1]
-            elif self.metric == "L2":
-                differences = self.index['root']['embeddings'] - emb
-                distances = np.linalg.norm(differences, axis=1)
-                top = np.argsort(distances)
-            return top, distances 
-
-
-        # Calculate the distance to the embeddings of the node at the specified level
-        # Output the argsorted top array and the calculated distance array
-        def distance_level_node(emb: np.ndarray, lvl: str, node: str):
-            if self.metric == "IP":
-                distances =  np.dot(self.index[lvl][node]['embeddings'], emb)
-                top = np.argsort(distances)[::-1]
-            if self.metric == "L2":
-                differences = self.index[lvl][node]['embeddings'] - emb
-                distances = np.linalg.norm(differences)
-                top = np.argsort(distances)
-            return top, distances
         
-
-        # Check if the maximum number of items are in a node, and if they are,
-        # check if the new items is better than the border item
         def check_to_replace_border(lvl: str, node: str, emb: np.ndarray, cl_idx: int, dist: float):
+            """
+            Check if the maximum number of items have been reached in a node, and 
+            if the new item is better than the border item, replace and update border item info
+
+            #### Parameters
+            lvl: Level of the node
+            node: The node to check
+            emb: Embedding vector of item to check
+            cl_idx: The index of the representative cluster
+            """
             border_idx, border_dist = self.index[lvl][node]['border']
             if self.metric == "IP":
                 if  border_dist < dist:
                     self.index[lvl][node]['embeddings'][border_idx] = emb
                     self.index[lvl][node]['items_ids'][border_idx] = self.representative_ids[cl_idx]
-                    self.index[lvl][node]['cluster_ids'][border_idx] = cl_idx
+                    self.index[lvl][node]['node_ids'][border_idx] = cl_idx
                     self.index[lvl][node]['distances'][border_idx] = dist
                     update_node_border_info(lvl, node)
             elif self.metric == "L2":
                 if border_dist > dist:
                     self.index[lvl][node]['embeddings'][border_idx] = emb
                     self.index[lvl][node]['items_ids'][border_idx] = self.representative_ids[cl_idx]
-                    self.index[lvl][node]['cluster_ids'][border_idx] = cl_idx
+                    self.index[lvl][node]['node_ids'][border_idx] = cl_idx
                     self.index[lvl][node]['distances'][border_idx] = dist
                     update_node_border_info(lvl, node)
 
 
-        # Calculate and set the border item for the node at the provided level
-        def update_node_border_info(lvl: str, node: str):    
+        def update_node_border_info(lvl: str, node: str):
+            """
+            Calculate and set the border item for the node at the provided level
+            """
             # Update border info
             if self.metric == "IP":
                 new_border_dists = np.argsort(np.sort(self.index['lvl_0'][node]['distances']))
@@ -172,6 +198,9 @@ class ECPBuilder:
 
 
         def align_node_embeddings_and_distances():
+            """
+            Resize the embeddings and distances arrays of all nodes to match their actual size
+            """
             lvl_range = self.node_size
             for i in range(self.levels):
                 lvl = 'lvl_' + str(i)
@@ -199,12 +228,15 @@ class ECPBuilder:
         self.index['root']['embeddings'] = self.representative_embeddings[:self.node_size]
         self.index['root']['item_ids'] = self.representative_ids[:self.node_size]
 
-        lvl_range = self.node_size
-        for i in range(self.levels):
-            lvl = 'lvl_' + str(i)
+        lvl_range = 1
+        for l in range(self.levels):
+            lvl_range = lvl_range * self.node_size
+            if lvl_range > self.total_clusters:
+                lvl_range = self.total_clusters
+            lvl = 'lvl_' + str(l)
             self.index[lvl] = {}
-            for j in range(lvl_range):
-                node = 'node_' + str(j)
+            for i in range(lvl_range):
+                node = 'node_' + str(i)
                 self.index[lvl][node] = {
                     'embeddings': np.zeros(shape=(self.node_size, self.representative_embeddings.shape[1]),
                                            dtype=self.representative_embeddings.dtype),
@@ -213,22 +245,23 @@ class ECPBuilder:
                     'distances': np.zeros(shape=(self.node_size,), dtype=self.representative_embeddings.dtype),
                     'border': (0, None)
                 }
-            if i == self.levels-1:
-                lvl_range = self.total_clusters
-            else:
-                lvl_range = lvl_range * self.node_size
- 
 
         # Start building tree top-down
+        # As we already have root node, we start by inserting the nodes of lvl_1 into lvl_0.
+        # Then we input lvl_2 items into lvl_1, until we reach self.levels-1.
         lvl_range = self.node_size 
-        for l in range(self.levels):
+        for l in range(self.levels-1):
+            lvl_range = lvl_range * self.node_size
+            if lvl_range > self.total_clusters:
+                lvl_range = self.total_clusters
             embeddings = self.representative_embeddings[:lvl_range]
             for cl_idx, emb in enumerate(embeddings):
-                top, distances = distance_root_node(emb)
+                top, distances = self.distance_root_node(emb)
+                n = top[0]
                 curr_lvl = 0
                 while True:
                     lvl = 'lvl_' + str(curr_lvl)
-                    node = 'node_' + str(top[0]) # TODO: should be cluster_id?
+                    node = 'node_' + str(n)
                     if curr_lvl == l:
                         next = len(self.index[lvl][node]['item_ids'])
                         if next > self.index[lvl][node]['embeddings'].shape[0]:
@@ -240,6 +273,7 @@ class ECPBuilder:
                         self.index[lvl][node]['item_ids'].append(self.representative_ids[cl_idx])
                         self.index[lvl][node]['node_ids'].append(cl_idx)
                         self.index[lvl][node]['distances'][next] = distances[top[0]]
+                        # TODO: Move the below part to a function and call it after index is built
                         if self.metric == "IP":
                             if self.index[lvl][node]['border'][1] is None \
                                 or self.index[lvl][node]['border'][1] > distances[top[0]]:
@@ -250,12 +284,9 @@ class ECPBuilder:
                                 self.index[lvl][node]['border'] = (next, distances[top[0]])
                         break
                     else:
-                        top, distances = distance_level_node(emb, lvl, node)
+                        top, distances = self.distance_level_node(emb, lvl, node)
+                        n = self.index[lvl][node]['node_ids'][top[0]]
                     curr_lvl += 1
-            if l == self.levels-1:
-                lvl_range = self.total_clusters
-            else:
-                lvl_range = lvl_range * self.node_size
         
         # Resize the embeddings and distance arrays of nodes to actual size
         align_node_embeddings_and_distances()

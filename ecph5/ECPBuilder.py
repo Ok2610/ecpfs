@@ -12,6 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import dill
 from pathos.multiprocessing import Pool, cpu_count
 
+
 class ECPBuilder:
     def __init__(self, levels: int, logger, target_cluster_size=100, metric="L2"):
         """
@@ -38,7 +39,7 @@ class ECPBuilder:
         option="offset",
         save_to_file="",
         clst_ids_dsname="clst_item_ids",
-        clst_emb_dsname="clst_embeddings"
+        clst_emb_dsname="clst_embeddings",
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Determine the list of representatives for clusters.
@@ -64,14 +65,18 @@ class ECPBuilder:
 
             if option == "offset":
                 all_item_ids = np.arange(total_items).astype(np.uint32)
-                self.representative_ids = all_item_ids[::self.target_cluster_size]
-                self.logger.info(f"{len(self.representative_ids)} Cluster representatives selected")
+                self.representative_ids = all_item_ids[:: self.target_cluster_size]
+                self.logger.info(
+                    f"{len(self.representative_ids)} Cluster representatives selected"
+                )
                 if len(self.representative_ids) != self.total_clusters:
                     self.logger.error(
                         "Number of representatives does not match the total clusters."
                     )
                 self.logger.info(f"Getting representative embeddings from file")
-                self.representative_embeddings = f["embeddings"][::self.target_cluster_size]
+                self.representative_embeddings = f["embeddings"][
+                    :: self.target_cluster_size
+                ]
             elif option == "random":
                 if self.total_clusters > total_items:
                     self.logger.error(
@@ -80,9 +85,13 @@ class ECPBuilder:
                 self.representative_ids = np.random.choice(
                     total_items, size=self.total_clusters, replace=False
                 )
-                self.logger.info(f"{len(self.representative_ids)} Cluster Representatives Selected")
+                self.logger.info(
+                    f"{len(self.representative_ids)} Cluster Representatives Selected"
+                )
                 self.logger.info(f"Getting representative embeddings from file")
-                self.representative_embeddings = f["embeddings"][self.representative_ids]
+                self.representative_embeddings = f["embeddings"][
+                    self.representative_ids
+                ]
             elif option == "dissimilar":
                 if self.metric == "IP":
                     """"""
@@ -102,7 +111,6 @@ class ECPBuilder:
                     hf[clst_emb_dsname] = self.representative_embeddings
 
         return self.representative_embeddings, self.representative_ids
-
 
     def get_cluster_representatives_from_file(
         self, fp: Path, emb_dsname="clst_embeddings", ids_dsname="clst_item_ids"
@@ -126,7 +134,6 @@ class ECPBuilder:
 
         return self.representative_embeddings, self.representative_ids
 
-
     def distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate the distance to the embeddings of the root node
@@ -145,10 +152,11 @@ class ECPBuilder:
             distances = np.linalg.norm(differences, axis=1)
             top = np.argsort(distances)
         elif self.metric == "cos":
-            distances = cosine_similarity(self.index["root"]["embeddings"], (emb,)).flatten()
+            distances = cosine_similarity(
+                self.index["root"]["embeddings"], (emb,)
+            ).flatten()
             top = np.argsort(distances)[::-1]
         return top, distances
-
 
     def distance_level_node(
         self, emb: np.ndarray, lvl: str, node: str
@@ -172,7 +180,9 @@ class ECPBuilder:
             distances = np.linalg.norm(differences)
             top = np.argsort(distances)
         elif self.metric == "cos":
-            distances = cosine_similarity(self.index[lvl][node]["embeddings"], (emb,)).flatten()
+            distances = cosine_similarity(
+                self.index[lvl][node]["embeddings"], (emb,)
+            ).flatten()
             top = np.argsort(distances)[::-1]
             return top, distances
 
@@ -180,10 +190,12 @@ class ECPBuilder:
         """
         Resize the embeddings and distances arrays of a node to match their actual size
         """
-        self.index[lvl][node]["embeddings"].resize((
-            len(self.index[lvl][node]["item_ids"]),
-            self.index[lvl][node]["embeddings"].shape[1]
-        ))
+        self.index[lvl][node]["embeddings"].resize(
+            (
+                len(self.index[lvl][node]["item_ids"]),
+                self.index[lvl][node]["embeddings"].shape[1],
+            )
+        )
         self.index[lvl][node]["distances"].resize(
             len(self.index[lvl][node]["item_ids"])
         )
@@ -191,24 +203,21 @@ class ECPBuilder:
         # if len(self.index[lvl][node]["item_ids"]) > 0:
         #     update_node_border_info(lvl, node)
 
-
     def update_node_border_info(self, lvl: str, node: str):
         """
         Calculate and set the border item for the node at the provided level
         """
         # Update border info
         if self.metric == "IP" or self.metric == "cos":
-            new_border_dists = np.argsort(
-                np.sort(self.index[lvl][node]["distances"])
-            )
+            new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))
             self.index[lvl][node]["border"] = (
                 new_border_dists[0],
                 self.index[lvl][node]["distances"][new_border_dists[0]],
             )
         elif self.metric == "L2":
-            new_border_dists = np.argsort(
-                np.sort(self.index[lvl][node]["distances"])
-            )[::-1]
+            new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))[
+                ::-1
+            ]
             self.index[lvl][node]["border"] = (
                 new_border_dists[0],
                 self.index[lvl][node]["distances"][new_border_dists[0]],
@@ -223,20 +232,21 @@ class ECPBuilder:
             lvl = "lvl_" + str(i)
             for j in range(lvl_range):
                 node = "node_" + str(j)
-                self.index[lvl][node]["embeddings"].resize((
-                    len(self.index[lvl][node]["item_ids"]),
-                    self.index[lvl][node]["embeddings"].shape[1]
-                ))
+                self.index[lvl][node]["embeddings"].resize(
+                    (
+                        len(self.index[lvl][node]["item_ids"]),
+                        self.index[lvl][node]["embeddings"].shape[1],
+                    )
+                )
                 self.index[lvl][node]["distances"].resize(
                     len(self.index[lvl][node]["item_ids"])
                 )
                 if len(self.index[lvl][node]["item_ids"]) > 0:
                     self.update_node_border_info(lvl, node)
-            if i+1 == self.levels - 1:
+            if i + 1 == self.levels - 1:
                 lvl_range = self.total_clusters
             else:
                 lvl_range = lvl_range * self.node_size
-
 
     def build_tree_h5(self, save_to_file="") -> None:
         """
@@ -289,8 +299,10 @@ class ECPBuilder:
 
         self.index = {}
         self.index["root"] = {}
-        self.index["root"]["item_ids"] = self.representative_ids[:self.node_size]
-        self.index["root"]["embeddings"] = self.representative_embeddings[:self.node_size]
+        self.index["root"]["item_ids"] = self.representative_ids[: self.node_size]
+        self.index["root"]["embeddings"] = self.representative_embeddings[
+            : self.node_size
+        ]
 
         self.logger.info("Constructing levels...")
         lvl_range = 1
@@ -347,8 +359,12 @@ class ECPBuilder:
                                 shape=(self.node_size,),
                                 dtype=self.representative_embeddings.dtype,
                             )
-                            self.index[lvl][node]["embeddings"] = np.concatenate((self.index[lvl][node]["embeddings"], concat_array_emb))
-                            self.index[lvl][node]["distances"] = np.concatenate((self.index[lvl][node]["distances"], concat_array_dist))
+                            self.index[lvl][node]["embeddings"] = np.concatenate(
+                                (self.index[lvl][node]["embeddings"], concat_array_emb)
+                            )
+                            self.index[lvl][node]["distances"] = np.concatenate(
+                                (self.index[lvl][node]["distances"], concat_array_dist)
+                            )
                         self.index[lvl][node]["embeddings"][next] = emb
                         self.index[lvl][node]["item_ids"].append(
                             self.representative_ids[cl_idx]
@@ -390,21 +406,50 @@ class ECPBuilder:
         if save_to_file != "":
             with h5py.File(save_to_file, "a") as h5:
                 root_group = h5.create_group("root")
-                root_group.create_dataset('embeddings', data=self.index['root']['embeddings'], maxshape=(None, self.index['root']['embeddings'].shape[1]), chunks=True)
-                root_group.create_dataset('item_ids', data=self.index['root']['item_ids'], maxshape=(None,), chunks=True)
+                root_group.create_dataset(
+                    "embeddings",
+                    data=self.index["root"]["embeddings"],
+                    maxshape=(None, self.index["root"]["embeddings"].shape[1]),
+                    chunks=True,
+                )
+                root_group.create_dataset(
+                    "item_ids",
+                    data=self.index["root"]["item_ids"],
+                    maxshape=(None,),
+                    chunks=True,
+                )
                 for k, v in self.index.items():
-                    if not k.startswith('lvl_'):
+                    if not k.startswith("lvl_"):
                         continue
                     lvl_group = h5.create_group(k)
                     for n, node in v.items():
-                        node_group = lvl_group.create_group(n) 
-                        node_group.create_dataset('embeddings', data=node['embeddings'], maxshape=(None, node['embeddings'].shape[1]), chunks=True)
-                        node_group.create_dataset('distances', data=node['distances'], maxshape=(None,), chunks=True)
-                        node_group.create_dataset('item_ids', data=node['item_ids'], maxshape=(None,), chunks=True)
-                        node_group.create_dataset('node_ids', data=node['node_ids'], maxshape=(None,), chunks=True)
-                        node_group.create_dataset('border', data=node['border'])
+                        node_group = lvl_group.create_group(n)
+                        node_group.create_dataset(
+                            "embeddings",
+                            data=node["embeddings"],
+                            maxshape=(None, node["embeddings"].shape[1]),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "distances",
+                            data=node["distances"],
+                            maxshape=(None,),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "item_ids",
+                            data=node["item_ids"],
+                            maxshape=(None,),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "node_ids",
+                            data=node["node_ids"],
+                            maxshape=(None,),
+                            chunks=True,
+                        )
+                        node_group.create_dataset("border", data=node["border"])
         self.logger.info("Done building tree!")
-
 
     def add_items(self, item_embeddings: np.ndarray, save_to_file: Path, offset=0):
         """
@@ -416,20 +461,20 @@ class ECPBuilder:
             node = ""
             for t in top:
                 node = f"node_{t}"
-                if len(self.index[lvl][node]['item_ids']) > 0:
+                if len(self.index[lvl][node]["item_ids"]) > 0:
                     break
             for l in range(self.levels):
                 if l == self.levels - 1:
-                    self.item_to_cluster_map[offset+idx] = (node, distances[top[t]])
+                    self.item_to_cluster_map[offset + idx] = (node, distances[top[t]])
                 else:
                     top, distances = self.distance_level_node(emb, lvl, node)
                     lvl = f"lvl_{l+1}"
-                    if l+1 < self.levels-1:
-                        for t,n in enumerate(top):
+                    if l + 1 < self.levels - 1:
+                        for t, n in enumerate(top):
                             node = f"node_{n}"
-                            if len(self.index[f"lvl_{l+1}"][node]['item_ids']) > 0:
+                            if len(self.index[f"lvl_{l+1}"][node]["item_ids"]) > 0:
                                 break
-        
+
     def determine_node_map(self, item_embeddings, offset=0):
         node_map = {}
         for idx, emb in tqdm(enumerate(item_embeddings)):
@@ -438,29 +483,29 @@ class ECPBuilder:
             node = ""
             for t in top:
                 node = f"node_{t}"
-                if len(self.index[lvl][node]['item_ids']) > 0:
+                if len(self.index[lvl][node]["item_ids"]) > 0:
                     break
             for l in range(self.levels):
                 if l == self.levels - 1:
                     if node in node_map:
-                        node_map[node].append((offset+idx, distances[top[t]]))
+                        node_map[node].append((offset + idx, distances[top[t]]))
                     else:
-                        node_map[node] = [(offset+idx, distances[top[t]])]
+                        node_map[node] = [(offset + idx, distances[top[t]])]
                 else:
                     top, distances = self.distance_level_node(emb, lvl, node)
                     lvl = f"lvl_{l+1}"
-                    if l+1 < self.levels-1:
-                        for t,n in enumerate(top):
+                    if l + 1 < self.levels - 1:
+                        for t, n in enumerate(top):
                             node = f"node_{n}"
-                            if len(self.index[f"lvl_{l+1}"][node]['item_ids']) > 0:
+                            if len(self.index[f"lvl_{l+1}"][node]["item_ids"]) > 0:
                                 break
         return node_map
 
     def write_cluster_items_to_file(self, clusters, save_to_file):
         lvl = f"lvl_{self.levels-1}"
-        for k,v in clusters.items():
+        for k, v in clusters.items():
             node = k
-            for item,dist,emb in v:
+            for item, dist, emb in v:
                 next = len(self.index[lvl][node]["item_ids"])
                 if next >= self.index[lvl][node]["embeddings"].shape[0]:
                     concat_array_emb = np.zeros(
@@ -474,8 +519,12 @@ class ECPBuilder:
                         shape=(self.node_size,),
                         dtype=self.representative_embeddings.dtype,
                     )
-                    self.index[lvl][node]["embeddings"] = np.concatenate((self.index[lvl][node]["embeddings"], concat_array_emb))
-                    self.index[lvl][node]["distances"] = np.concatenate((self.index[lvl][node]["distances"], concat_array_dist))
+                    self.index[lvl][node]["embeddings"] = np.concatenate(
+                        (self.index[lvl][node]["embeddings"], concat_array_emb)
+                    )
+                    self.index[lvl][node]["distances"] = np.concatenate(
+                        (self.index[lvl][node]["distances"], concat_array_dist)
+                    )
                 self.index[lvl][node]["embeddings"][next] = emb
                 self.index[lvl][node]["item_ids"].append(item)
                 self.index[lvl][node]["distances"][next] = dist
@@ -501,51 +550,100 @@ class ECPBuilder:
                 for c in clusters.keys():
                     node = c
                     node_group = lvl_group.create_group(node)
-                    node_group.create_dataset('embeddings', data=self.index[lvl][node]['embeddings'], maxshape=(None, self.index[lvl][node]['embeddings'].shape[1]), chunks=True)
-                    node_group.create_dataset('distances', data=self.index[lvl][node]['distances'], maxshape=(None,), chunks=True)
-                    node_group.create_dataset('item_ids', data=self.index[lvl][node]['item_ids'], maxshape=(None,), chunks=True)
-                    node_group.create_dataset('border', data=self.index[lvl][node]['border'])
-            else: 
+                    node_group.create_dataset(
+                        "embeddings",
+                        data=self.index[lvl][node]["embeddings"],
+                        maxshape=(None, self.index[lvl][node]["embeddings"].shape[1]),
+                        chunks=True,
+                    )
+                    node_group.create_dataset(
+                        "distances",
+                        data=self.index[lvl][node]["distances"],
+                        maxshape=(None,),
+                        chunks=True,
+                    )
+                    node_group.create_dataset(
+                        "item_ids",
+                        data=self.index[lvl][node]["item_ids"],
+                        maxshape=(None,),
+                        chunks=True,
+                    )
+                    node_group.create_dataset(
+                        "border", data=self.index[lvl][node]["border"]
+                    )
+            else:
                 for c in clusters.keys():
                     node = c
                     if node in h5[lvl].keys():
                         node_group = h5[lvl][node]
-                        old_size = node_group['embeddings'].shape[0]
-                        new_size = self.index[lvl][node]['embeddings'].shape[0]
+                        old_size = node_group["embeddings"].shape[0]
+                        new_size = self.index[lvl][node]["embeddings"].shape[0]
                         # Resize
-                        node_group['embeddings'].resize((new_size, node_group['embeddings'].shape[1]))
-                        node_group['distances'].resize((new_size,))
-                        node_group['item_ids'].resize((new_size,))
+                        node_group["embeddings"].resize(
+                            (new_size, node_group["embeddings"].shape[1])
+                        )
+                        node_group["distances"].resize((new_size,))
+                        node_group["item_ids"].resize((new_size,))
                         # Insert
-                        node_group['embeddings'][old_size:] = self.index[lvl][node]['embeddings'][old_size:]
-                        node_group['distances'][old_size:] = self.index[lvl][node]['distances'][old_size:]
-                        node_group['item_ids'][old_size:] = self.index[lvl][node]['item_ids'][old_size:]
-                        node_group['border'][:] = self.index[lvl][node]['border']
+                        node_group["embeddings"][old_size:] = self.index[lvl][node][
+                            "embeddings"
+                        ][old_size:]
+                        node_group["distances"][old_size:] = self.index[lvl][node][
+                            "distances"
+                        ][old_size:]
+                        node_group["item_ids"][old_size:] = self.index[lvl][node][
+                            "item_ids"
+                        ][old_size:]
+                        node_group["border"][:] = self.index[lvl][node]["border"]
                     else:
                         node_group = h5[lvl].create_group(node)
-                        node_group.create_dataset('embeddings', data=self.index[lvl][node]['embeddings'], maxshape=(None, self.index[lvl][node]['embeddings'].shape[1]), chunks=True)
-                        node_group.create_dataset('distances', data=self.index[lvl][node]['distances'], maxshape=(None,), chunks=True)
-                        node_group.create_dataset('item_ids', data=self.index[lvl][node]['item_ids'], maxshape=(None,), chunks=True)
-                        node_group.create_dataset('border', data=self.index[lvl][node]['border'])
- 
- 
-    def add_items_concurrent(self, embeddings_file, save_to_file="", chunk_size=250000, workers=4):
+                        node_group.create_dataset(
+                            "embeddings",
+                            data=self.index[lvl][node]["embeddings"],
+                            maxshape=(
+                                None,
+                                self.index[lvl][node]["embeddings"].shape[1],
+                            ),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "distances",
+                            data=self.index[lvl][node]["distances"],
+                            maxshape=(None,),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "item_ids",
+                            data=self.index[lvl][node]["item_ids"],
+                            maxshape=(None,),
+                            chunks=True,
+                        )
+                        node_group.create_dataset(
+                            "border", data=self.index[lvl][node]["border"]
+                        )
+
+    def add_items_concurrent(
+        self, embeddings_file, save_to_file="", chunk_size=250000, workers=4
+    ):
         """
         Get a map corresponding to which cluster node they will end up in on the last level
         """
+
         def process_chunk(item_embeddings, offset):
             """
             Worker function to process an embeddings chunk.
             For example, calls ecp.add_items_map on this chunk.
             """
-            # ecp.add_items_map returns a dict where key is item id and value is (node, distance) 
-            return self.determine_node_map(item_embeddings=item_embeddings, offset=offset)
-        
+            # ecp.add_items_map returns a dict where key is item id and value is (node, distance)
+            return self.determine_node_map(
+                item_embeddings=item_embeddings, offset=offset
+            )
+
         if workers > cpu_count():
-            processes = cpu_count()-1
+            processes = cpu_count() - 1
         else:
             processes = workers
-        
+
         with h5py.File(embeddings_file, "r") as f:
             chunk_size = chunk_size
             partial_node_maps = []
@@ -556,7 +654,9 @@ class ECPBuilder:
                 for start_idx in range(0, total_items, chunk_size):
                     end_idx = min(start_idx + chunk_size, total_items)
                     chunk_data = embeddings[start_idx:end_idx][...]
-                    async_results = pool.apply_async(process_chunk, args=(chunk_data, start_idx))
+                    async_results = pool.apply_async(
+                        process_chunk, args=(chunk_data, start_idx)
+                    )
                     futures.append(async_results)
                 for future in tqdm(futures, desc="Gathering thread results"):
                     partial_node_maps.append(future.get())
@@ -564,24 +664,27 @@ class ECPBuilder:
             if save_to_file != "":
                 clst_chunks = int(self.total_clusters / 20)
                 for start_idx in tqdm(
-                    range(0, self.total_clusters, clst_chunks), desc="Writing clusters to file in chunks"
+                    range(0, self.total_clusters, clst_chunks),
+                    desc="Writing clusters to file in chunks",
                 ):
-                    end_idx = min(start_idx+clst_chunks, self.total_clusters)
+                    end_idx = min(start_idx + clst_chunks, self.total_clusters)
                     clusters = {}
-                    for n in tqdm(
-                        range(start_idx, end_idx), desc="Preparing chunk"
-                    ):
+                    for n in tqdm(range(start_idx, end_idx), desc="Preparing chunk"):
                         node = f"node_{n}"
                         cluster_items = []
                         for pmap in partial_node_maps:
                             if node in cluster_items:
-                                idx_mask = [idx for idx,_ in pmap[node]]
+                                idx_mask = [idx for idx, _ in pmap[node]]
                                 embs = embeddings[idx_mask]
-                                cluster_items += [(idx,dist,embs[i]) for i, idx, dist in enumerate(pmap[node])]
+                                cluster_items += [
+                                    (idx, dist, embs[i])
+                                    for i, idx, dist in enumerate(pmap[node])
+                                ]
                         clusters[node] = cluster_items
-                    self.write_cluster_items_to_file(clusters=clusters, save_to_file=save_to_file)
+                    self.write_cluster_items_to_file(
+                        clusters=clusters, save_to_file=save_to_file
+                    )
 
-    
     def search_tree(self, query: np.ndarray, search_exp: int, k: int, restart=True):
         """
         Search the index tree and find the <search_exp> best leaf nodes.
@@ -604,40 +707,36 @@ class ECPBuilder:
         # Add to tree_pq
         for t in top:
             self.tree_pq.put((distances[t], False, 0, t))
-            
+
         while leaf_cnt != search_exp and not self.tree_pq.empty():
             _, is_leaf, l, n = self.tree_pq.get()
             if is_leaf:
                 # Pop leaf node items onto the item queue and increase the leaf_cnt
-                lvl = 'lvl_' + str(l)
-                node = 'node_' + str(n)
-                radius = self.index[lvl][node]['border'][1]
+                lvl = "lvl_" + str(l)
+                node = "node_" + str(n)
+                radius = self.index[lvl][node]["border"][1]
                 top, distances = self.distance_level_node(query, lvl, node)
                 for t in top:
-                    self.item_pq.put((
-                        distances[t],
-                        self.index[lvl][node]['item_ids'][t]
-                    ))
+                    self.item_pq.put(
+                        (distances[t], self.index[lvl][node]["item_ids"][t])
+                    )
                 leaf_cnt += 1
             else:
                 # Keep popping from queue and adding the next level and node to the queue
                 top, distances = self.distance_level_node(query, lvl, node)
                 for t in top:
-                    dist = distances[t] - radius if self.metric == "L2" else distances[t] + radius
-                    if l+1 == self.levels-1:
-                        self.tree_pq.put((
-                            dist,
-                            True, 
-                            l+1,
-                            self.index[lvl][node]['node_ids'][t]
-                        ))
+                    dist = (
+                        distances[t] - radius
+                        if self.metric == "L2"
+                        else distances[t] + radius
+                    )
+                    if l + 1 == self.levels - 1:
+                        self.tree_pq.put(
+                            (dist, True, l + 1, self.index[lvl][node]["node_ids"][t])
+                        )
                     else:
-                        self.tree_pq.put((
-                            dist, 
-                            False,
-                            l+1, 
-                            self.index[lvl][node]['node_ids'][t]
-                        ))
-        
-        return [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
+                        self.tree_pq.put(
+                            (dist, False, l + 1, self.index[lvl][node]["node_ids"][t])
+                        )
 
+        return [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]

@@ -105,9 +105,7 @@ class ECPBuilder:
 
 
     def get_cluster_representatives_from_file(
-        self, fp: Path,
-        emb_dsname="clst_embeddings",
-        ids_dsname="clst_item_ids"
+        self, fp: Path, emb_dsname="clst_embeddings", ids_dsname="clst_item_ids"
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Load cluster representatives from a HDF5 file.
@@ -122,12 +120,13 @@ class ECPBuilder:
         A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
         """
 
-        with h5py.File(fp, 'r') as hf:
+        with h5py.File(fp, "r") as hf:
             self.representative_embeddings = hf[emb_dsname][:]
             self.representative_ids = hf[ids_dsname][:]
-        
+
         return self.representative_embeddings, self.representative_ids
-    
+
+
     def distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate the distance to the embeddings of the root node
@@ -139,16 +138,21 @@ class ECPBuilder:
         Output the argsorted top array and the calculated distance array
         """
         if self.metric == "IP":
-            distances = np.dot(self.index['root']['embeddings'], emb)
+            distances = np.dot(self.index["root"]["embeddings"], emb)
             top = np.argsort(distances)[::-1]
         elif self.metric == "L2":
-            differences = self.index['root']['embeddings'] - emb
+            differences = self.index["root"]["embeddings"] - emb
             distances = np.linalg.norm(differences, axis=1)
             top = np.argsort(distances)
-        return top, distances 
+        elif self.metric == "cos":
+            distances = cosine_similarity(self.index["root"]["embeddings"], (emb,)).flatten()
+            top = np.argsort(distances)[::-1]
+        return top, distances
 
 
-    def distance_level_node(self, emb: np.ndarray, lvl: str, node: str) -> Tuple[np.ndarray, np.ndarray]:
+    def distance_level_node(
+        self, emb: np.ndarray, lvl: str, node: str
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate the distance to the embeddings of the node at the specified level
 
@@ -161,14 +165,78 @@ class ECPBuilder:
         Output the argsorted top array and the calculated distance array
         """
         if self.metric == "IP":
-            distances =  np.dot(self.index[lvl][node]['embeddings'], emb)
+            distances = np.dot(self.index[lvl][node]["embeddings"], emb)
             top = np.argsort(distances)[::-1]
-        if self.metric == "L2":
-            differences = self.index[lvl][node]['embeddings'] - emb
+        elif self.metric == "L2":
+            differences = self.index[lvl][node]["embeddings"] - emb
             distances = np.linalg.norm(differences)
             top = np.argsort(distances)
-        return top, distances
-        
+        elif self.metric == "cos":
+            distances = cosine_similarity(self.index[lvl][node]["embeddings"], (emb,)).flatten()
+            top = np.argsort(distances)[::-1]
+            return top, distances
+
+    def align_specific_node(self, lvl, node):
+        """
+        Resize the embeddings and distances arrays of a node to match their actual size
+        """
+        self.index[lvl][node]["embeddings"].resize((
+            len(self.index[lvl][node]["item_ids"]),
+            self.index[lvl][node]["embeddings"].shape[1]
+        ))
+        self.index[lvl][node]["distances"].resize(
+            len(self.index[lvl][node]["item_ids"])
+        )
+        # TODO
+        # if len(self.index[lvl][node]["item_ids"]) > 0:
+        #     update_node_border_info(lvl, node)
+
+
+    def update_node_border_info(self, lvl: str, node: str):
+        """
+        Calculate and set the border item for the node at the provided level
+        """
+        # Update border info
+        if self.metric == "IP" or self.metric == "cos":
+            new_border_dists = np.argsort(
+                np.sort(self.index[lvl][node]["distances"])
+            )
+            self.index[lvl][node]["border"] = (
+                new_border_dists[0],
+                self.index[lvl][node]["distances"][new_border_dists[0]],
+            )
+        elif self.metric == "L2":
+            new_border_dists = np.argsort(
+                np.sort(self.index[lvl][node]["distances"])
+            )[::-1]
+            self.index[lvl][node]["border"] = (
+                new_border_dists[0],
+                self.index[lvl][node]["distances"][new_border_dists[0]],
+            )
+
+    def align_node_embeddings_and_distances(self):
+        """
+        Resize the embeddings and distances arrays of all nodes to match their actual size
+        """
+        lvl_range = self.node_size
+        for i in range(self.levels):
+            lvl = "lvl_" + str(i)
+            for j in range(lvl_range):
+                node = "node_" + str(j)
+                self.index[lvl][node]["embeddings"].resize((
+                    len(self.index[lvl][node]["item_ids"]),
+                    self.index[lvl][node]["embeddings"].shape[1]
+                ))
+                self.index[lvl][node]["distances"].resize(
+                    len(self.index[lvl][node]["item_ids"])
+                )
+                if len(self.index[lvl][node]["item_ids"]) > 0:
+                    self.update_node_border_info(lvl, node)
+            if i+1 == self.levels - 1:
+                lvl_range = self.total_clusters
+            else:
+                lvl_range = lvl_range * self.node_size
+
 
     def build_tree_h5(self, save_to_file="") -> None:
         """

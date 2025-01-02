@@ -245,10 +245,12 @@ class ECPBuilder:
         #### Parameters
         save_to_file: Filename to store the index. If left blank nothing is stored to disk.
         """
-        
-        def check_to_replace_border(lvl: str, node: str, emb: np.ndarray, cl_idx: int, dist: float):
+
+        def check_to_replace_border(
+            lvl: str, node: str, emb: np.ndarray, cl_idx: int, dist: float
+        ):
             """
-            Check if the maximum number of items have been reached in a node, and 
+            Check if the maximum number of items have been reached in a node, and
             if the new item is better than the border item, replace and update border item info
 
             #### Parameters
@@ -257,56 +259,25 @@ class ECPBuilder:
             emb: Embedding vector of item to check
             cl_idx: The index of the representative cluster
             """
-            border_idx, border_dist = self.index[lvl][node]['border']
-            if self.metric == "IP":
-                if  border_dist < dist:
-                    self.index[lvl][node]['embeddings'][border_idx] = emb
-                    self.index[lvl][node]['items_ids'][border_idx] = self.representative_ids[cl_idx]
-                    self.index[lvl][node]['node_ids'][border_idx] = cl_idx
-                    self.index[lvl][node]['distances'][border_idx] = dist
-                    update_node_border_info(lvl, node)
+            border_idx, border_dist = self.index[lvl][node]["border"]
+            if self.metric == "IP" or self.metric == "cos":
+                if border_dist < dist:
+                    self.index[lvl][node]["embeddings"][border_idx] = emb
+                    self.index[lvl][node]["items_ids"][border_idx] = (
+                        self.representative_ids[cl_idx]
+                    )
+                    self.index[lvl][node]["node_ids"][border_idx] = cl_idx
+                    self.index[lvl][node]["distances"][border_idx] = dist
+                    self.update_node_border_info(lvl, node)
             elif self.metric == "L2":
                 if border_dist > dist:
-                    self.index[lvl][node]['embeddings'][border_idx] = emb
-                    self.index[lvl][node]['items_ids'][border_idx] = self.representative_ids[cl_idx]
-                    self.index[lvl][node]['node_ids'][border_idx] = cl_idx
-                    self.index[lvl][node]['distances'][border_idx] = dist
-                    update_node_border_info(lvl, node)
-
-
-        def update_node_border_info(lvl: str, node: str):
-            """
-            Calculate and set the border item for the node at the provided level
-            """
-            # Update border info
-            if self.metric == "IP":
-                new_border_dists = np.argsort(np.sort(self.index['lvl_0'][node]['distances']))
-                self.index[lvl][node]['border'] = \
-                    (new_border_dists[0], self.index[lvl][node]['distances'][new_border_dists[0]])
-            elif self.metric == "L2":
-                new_border_dists = np.argsort(np.sort(self.index['lvl_0'][node]['distances']))[::-1]
-                self.index[lvl][node]['border'] = \
-                    (new_border_dists[0], self.index[lvl][node]['distances'][new_border_dists[0]])
-
-
-        def align_node_embeddings_and_distances():
-            """
-            Resize the embeddings and distances arrays of all nodes to match their actual size
-            """
-            lvl_range = self.node_size
-            for i in range(self.levels):
-                lvl = 'lvl_' + str(i)
-                self.index[lvl] = {}
-                for j in range(lvl_range):
-                    node = 'node_' + str(j)
-                    self.index[lvl][node]['embeddings'].resize(len(self.index[lvl][node]['item_ids']))
-                    self.index[lvl][node]['distances'].resize(len(self.index[lvl][node]['item_ids']))
-                    update_node_border_info(lvl, node)
-                if i == self.levels-1:
-                    lvl_range = self.total_clusters
-                else:
-                    lvl_range = lvl_range * self.node_size
-
+                    self.index[lvl][node]["embeddings"][border_idx] = emb
+                    self.index[lvl][node]["items_ids"][border_idx] = (
+                        self.representative_ids[cl_idx]
+                    )
+                    self.index[lvl][node]["node_ids"][border_idx] = cl_idx
+                    self.index[lvl][node]["distances"][border_idx] = dist
+                    self.update_node_border_info(lvl, node)
 
         if self.representative_embeddings is None or self.representative_ids is None:
             raise ValueError(
@@ -317,32 +288,40 @@ class ECPBuilder:
             )
 
         self.index = {}
-        self.index['root']['embeddings'] = self.representative_embeddings[:self.node_size]
-        self.index['root']['item_ids'] = self.representative_ids[:self.node_size]
+        self.index["root"] = {}
+        self.index["root"]["item_ids"] = self.representative_ids[:self.node_size]
+        self.index["root"]["embeddings"] = self.representative_embeddings[:self.node_size]
 
+        self.logger.info("Constructing levels...")
         lvl_range = 1
         for l in range(self.levels):
             lvl_range = lvl_range * self.node_size
             if lvl_range > self.total_clusters:
                 lvl_range = self.total_clusters
-            lvl = 'lvl_' + str(l)
+            lvl = "lvl_" + str(l)
             self.index[lvl] = {}
             for i in range(lvl_range):
-                node = 'node_' + str(i)
+                node = "node_" + str(i)
                 self.index[lvl][node] = {
-                    'embeddings': np.zeros(shape=(self.node_size, self.representative_embeddings.shape[1]),
-                                           dtype=self.representative_embeddings.dtype),
-                    'item_ids': [],
-                    'node_ids': [],
-                    'distances': np.zeros(shape=(self.node_size,), dtype=self.representative_embeddings.dtype),
-                    'border': (0, None)
+                    "embeddings": np.zeros(
+                        shape=(self.node_size, self.representative_embeddings.shape[1]),
+                        dtype=self.representative_embeddings.dtype,
+                    ),
+                    "item_ids": [],
+                    "node_ids": [],
+                    "distances": np.zeros(
+                        shape=(self.node_size,),
+                        dtype=self.representative_embeddings.dtype,
+                    ),
+                    "border": (-1, 1.0),
                 }
 
         # Start building tree top-down
         # As we already have root node, we start by inserting the nodes of lvl_1 into lvl_0.
         # Then we input lvl_2 items into lvl_1, until we reach self.levels-1.
-        lvl_range = self.node_size 
-        for l in range(self.levels-1):
+        self.logger.info("Adding representatives top-down...")
+        lvl_range = self.node_size
+        for l in range(self.levels - 1):
             lvl_range = lvl_range * self.node_size
             if lvl_range > self.total_clusters:
                 lvl_range = self.total_clusters
@@ -352,43 +331,82 @@ class ECPBuilder:
                 n = top[0]
                 curr_lvl = 0
                 while True:
-                    lvl = 'lvl_' + str(curr_lvl)
-                    node = 'node_' + str(n)
+                    lvl = "lvl_" + str(curr_lvl)
+                    node = "node_" + str(n)
                     if curr_lvl == l:
-                        next = len(self.index[lvl][node]['item_ids'])
-                        if next > self.index[lvl][node]['embeddings'].shape[0]:
-                            concat_array = np.zeros(shape=(self.node_size, self.representative_embeddings.shape[1]),
-                                                    dtype=self.representative_embeddings.dtype)
-                            self.index[lvl][node]['embeddings'].concatenate(concat_array)
-                            self.index[lvl][node]['distances'].concatenate(concat_array)
-                        self.index[lvl][node]['embeddings'][next] = emb
-                        self.index[lvl][node]['item_ids'].append(self.representative_ids[cl_idx])
-                        self.index[lvl][node]['node_ids'].append(cl_idx)
-                        self.index[lvl][node]['distances'][next] = distances[top[0]]
+                        next = len(self.index[lvl][node]["item_ids"])
+                        if next >= self.index[lvl][node]["embeddings"].shape[0]:
+                            concat_array_emb = np.zeros(
+                                shape=(
+                                    self.node_size,
+                                    self.representative_embeddings.shape[1],
+                                ),
+                                dtype=self.representative_embeddings.dtype,
+                            )
+                            concat_array_dist = np.zeros(
+                                shape=(self.node_size,),
+                                dtype=self.representative_embeddings.dtype,
+                            )
+                            self.index[lvl][node]["embeddings"] = np.concatenate((self.index[lvl][node]["embeddings"], concat_array_emb))
+                            self.index[lvl][node]["distances"] = np.concatenate((self.index[lvl][node]["distances"], concat_array_dist))
+                        self.index[lvl][node]["embeddings"][next] = emb
+                        self.index[lvl][node]["item_ids"].append(
+                            self.representative_ids[cl_idx]
+                        )
+                        self.index[lvl][node]["node_ids"].append(cl_idx)
+                        self.index[lvl][node]["distances"][next] = distances[top[0]]
                         # TODO: Move the below part to a function and call it after index is built
-                        if self.metric == "IP":
-                            if self.index[lvl][node]['border'][1] is None \
-                                or self.index[lvl][node]['border'][1] > distances[top[0]]:
-                                self.index[lvl][node]['border'] = (next, distances[top[0]])
+                        if self.metric == "IP" or self.metric == "cos":
+                            if (
+                                self.index[lvl][node]["border"][1] is None
+                                or self.index[lvl][node]["border"][1]
+                                > distances[top[0]]
+                            ):
+                                self.index[lvl][node]["border"] = (
+                                    next,
+                                    distances[top[0]],
+                                )
                         elif self.metric == "L2":
-                            if self.index[lvl][node]['border'][1] is None \
-                                or self.index[lvl][node]['border'][1] < distances[top[0]]:
-                                self.index[lvl][node]['border'] = (next, distances[top[0]])
+                            if (
+                                self.index[lvl][node]["border"][1] is None
+                                or self.index[lvl][node]["border"][1]
+                                < distances[top[0]]
+                            ):
+                                self.index[lvl][node]["border"] = (
+                                    next,
+                                    distances[top[0]],
+                                )
                         break
                     else:
                         top, distances = self.distance_level_node(emb, lvl, node)
-                        n = self.index[lvl][node]['node_ids'][top[0]]
+                        n = self.index[lvl][node]["node_ids"][top[0]]
                     curr_lvl += 1
-        
+
+        self.logger.info("Aligning arrays...")
         # Resize the embeddings and distance arrays of nodes to actual size
-        align_node_embeddings_and_distances()
+        self.align_node_embeddings_and_distances()
 
+        self.logger.info("Saving tree to file...")
         if save_to_file != "":
-            with h5py.File(save_to_file, 'a') as h5:
-                h5['index'] = self.index
+            with h5py.File(save_to_file, "a") as h5:
+                root_group = h5.create_group("root")
+                root_group.create_dataset('embeddings', data=self.index['root']['embeddings'], maxshape=(None, self.index['root']['embeddings'].shape[1]), chunks=True)
+                root_group.create_dataset('item_ids', data=self.index['root']['item_ids'], maxshape=(None,), chunks=True)
+                for k, v in self.index.items():
+                    if not k.startswith('lvl_'):
+                        continue
+                    lvl_group = h5.create_group(k)
+                    for n, node in v.items():
+                        node_group = lvl_group.create_group(n) 
+                        node_group.create_dataset('embeddings', data=node['embeddings'], maxshape=(None, node['embeddings'].shape[1]), chunks=True)
+                        node_group.create_dataset('distances', data=node['distances'], maxshape=(None,), chunks=True)
+                        node_group.create_dataset('item_ids', data=node['item_ids'], maxshape=(None,), chunks=True)
+                        node_group.create_dataset('node_ids', data=node['node_ids'], maxshape=(None,), chunks=True)
+                        node_group.create_dataset('border', data=node['border'])
+        self.logger.info("Done building tree!")
 
 
-    def add_items(self, item_embeddings: np.ndarray):
+    def add_items(self, item_embeddings: np.ndarray, save_to_file: Path, offset=0):
         """
         Add items into the index
         """

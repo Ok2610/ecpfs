@@ -12,6 +12,13 @@ numpy = "^2.0.0"
 click = "^8.1.7"
 h5py = "^3.11.0"
 ipython = "^8.25.0"
+loguru = "^0.7.3"
+typer = "^0.15.1"
+tqdm = "^4.67.1"
+black = "^24.10.0"
+scikit-learn = "^1.6.0"
+dill = "^0.3.9"
+pathos = "^0.3.3"
 
 
 [build-system]

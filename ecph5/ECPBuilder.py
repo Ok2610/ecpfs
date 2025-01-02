@@ -1,32 +1,40 @@
 import math
 import h5py
 import numpy as np
+from tqdm import tqdm
 from queue import PriorityQueue
 from pathlib import Path
-from typing import List, Tuple
+from typing import Tuple
+from math import sqrt
+from loguru import logger
+from sklearn.metrics.pairwise import cosine_similarity
 
-class Node:
-    def __init__(self, node_size, dim, dtype=np.float16):
-        self.embeddings: np.ndarray = np.zeros(shape=(node_size, dim), dtype=dtype)
-        self.item_ids: List[np.uint32] = []
-        self.node_ids: List[np.uint32] = []
-        self.distances: np.ndarray = np.zeros(shape=(node_size,), dtype=dtype)
-        self.border: Tuple[np.uint32, dtype | None] = (0, None)
- 
+import dill
+from pathos.multiprocessing import Pool, cpu_count
 
 class ECPBuilder:
-    def __init__(self, levels: int, target_cluster_size=100, metric="L2"):
-        self.levels : int = levels
-        self.target_cluster_size : int = target_cluster_size
-        self.metric : str = metric
-        self.representative_ids : np.ndarray | None = None
-        self.representative_embeddings : np.ndarray | None = None
-        return  
+    def __init__(self, levels: int, logger, target_cluster_size=100, metric="L2"):
+        """
+        Constructor.
 
+        Parameters:
+
+        levels: Number of levels in the index hierarchy
+        target_cluster_size: Aim for clusters of this size (no guarantees)
+        metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
+        """
+        self.levels: int = levels
+        self.target_cluster_size: int = target_cluster_size
+        self.logger = logger
+        self.metric: str = metric
+        self.representative_ids: np.ndarray | None = None
+        self.representative_embeddings: np.ndarray | None = None
+        self.item_to_cluster_map = {}
+        return
 
     def select_cluster_representatives(
         self,
-        embeddings: np.ndarray,
+        embeddings_file: Path,
         option="offset",
         save_to_file="",
         clst_ids_dsname="clst_item_ids",
@@ -49,36 +57,52 @@ class ECPBuilder:
         #### Returns
         A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
         """
-        self.total_clusters = math.ceil(len(embeddings)/self.target_cluster_size)
-        self.node_size = math.ceil(self.total_clusters ** (1. / self.levels))
+        with h5py.File(embeddings_file, "r") as f:
+            total_items = len(f["embeddings"])
+            self.total_clusters = math.ceil(total_items / self.target_cluster_size)
+            self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
 
-        if option == "offset":
-            all_item_ids = np.arange(len(embeddings))
-            self.representative_ids = all_item_ids[::self.target_cluster_size]
-            if (len(self.representative_ids) != self.total_clusters):
-                raise ValueError("Number of representatives does not match the total clusters.")
-            self.representative_embeddings = embeddings[::self.target_cluster_size]
-        elif option == "random":
-            if self.total_clusters > len(embeddings):
-                raise ValueError("Total clusters exceed the number of available embeddings.")
-            self.representative_ids = np.random.choice(len(embeddings), size=self.total_clusters, replace=False)
-            self.representative_embeddings = embeddings[self.representative_ids]
-        elif option == "dissimilar":
-            if self.metric == "IP":
-                ""
-            elif self.metric == "L2":
-                ""
-            raise NotImplementedError()
-        else:
-            raise ValueError("Unknown option, the valid options are ['offset', 'random', 'dissimilar']")
+            if option == "offset":
+                all_item_ids = np.arange(total_items).astype(np.uint32)
+                self.representative_ids = all_item_ids[::self.target_cluster_size]
+                self.logger.info(f"{len(self.representative_ids)} Cluster representatives selected")
+                if len(self.representative_ids) != self.total_clusters:
+                    self.logger.error(
+                        "Number of representatives does not match the total clusters."
+                    )
+                self.logger.info(f"Getting representative embeddings from file")
+                self.representative_embeddings = f["embeddings"][::self.target_cluster_size]
+            elif option == "random":
+                if self.total_clusters > total_items:
+                    self.logger.error(
+                        "Total clusters exceed the number of available embeddings."
+                    )
+                self.representative_ids = np.random.choice(
+                    total_items, size=self.total_clusters, replace=False
+                )
+                self.logger.info(f"{len(self.representative_ids)} Cluster Representatives Selected")
+                self.logger.info(f"Getting representative embeddings from file")
+                self.representative_embeddings = f["embeddings"][self.representative_ids]
+            elif option == "dissimilar":
+                if self.metric == "IP":
+                    """"""
+                elif self.metric == "L2":
+                    """"""
+                elif self.metric == "cos":
+                    """"""
+                raise NotImplementedError()
+            else:
+                raise ValueError(
+                    "Unknown option, the valid options are ['offset', 'random', 'dissimilar']"
+                )
 
-        if save_to_file != "":
-            with h5py.File(save_to_file, 'w') as hf:
-                hf[clst_ids_dsname] = self.representative_ids
-                hf[clst_emb_dsname] = self.representative_embeddings
+            if save_to_file != "":
+                with h5py.File(save_to_file, "w") as hf:
+                    hf[clst_ids_dsname] = self.representative_ids
+                    hf[clst_emb_dsname] = self.representative_embeddings
 
-        return self.representative_embeddings, self.representative_ids 
- 
+        return self.representative_embeddings, self.representative_ids
+
 
     def get_cluster_representatives_from_file(
         self, fp: Path,

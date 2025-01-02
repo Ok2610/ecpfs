@@ -502,52 +502,11 @@ class ECPBuilder:
         return node_map
 
     def write_cluster_items_to_file(self, clusters, save_to_file):
-        lvl = f"lvl_{self.levels-1}"
-        for k, v in clusters.items():
-            node = k
-            for item, dist, emb in v:
-                next = len(self.index[lvl][node]["item_ids"])
-                if next >= self.index[lvl][node]["embeddings"].shape[0]:
-                    concat_array_emb = np.zeros(
-                        shape=(
-                            self.node_size,
-                            self.representative_embeddings.shape[1],
-                        ),
-                        dtype=self.representative_embeddings.dtype,
-                    )
-                    concat_array_dist = np.zeros(
-                        shape=(self.node_size,),
-                        dtype=self.representative_embeddings.dtype,
-                    )
-                    self.index[lvl][node]["embeddings"] = np.concatenate(
-                        (self.index[lvl][node]["embeddings"], concat_array_emb)
-                    )
-                    self.index[lvl][node]["distances"] = np.concatenate(
-                        (self.index[lvl][node]["distances"], concat_array_dist)
-                    )
-                self.index[lvl][node]["embeddings"][next] = emb
-                self.index[lvl][node]["item_ids"].append(item)
-                self.index[lvl][node]["distances"][next] = dist
-                # TODO: Move the below part to a function and call it after index is built
-                if self.metric == "IP" or self.metric == "cos":
-                    if (
-                        self.index[lvl][node]["border"][1] is None
-                        or self.index[lvl][node]["border"][1] > dist
-                    ):
-                        self.index[lvl][node]["border"] = (next, dist)
-                elif self.metric == "L2":
-                    if (
-                        self.index[lvl][node]["border"][1] is None
-                        or self.index[lvl][node]["border"][1] < dist
-                    ):
-                        self.index[lvl][node]["border"] = (next, dist)
-            self.align_specific_node(lvl, node)
-
         with h5py.File(save_to_file, "a") as h5:
             lvl = f"lvl_{self.levels-1}"
             if lvl not in h5.keys():
                 lvl_group = h5.create_group(lvl)
-                for c in clusters.keys():
+                for c in tqdm(clusters.keys(), desc="Writing clusters to file"):
                     node = c
                     node_group = lvl_group.create_group(node)
                     node_group.create_dataset(
@@ -572,7 +531,7 @@ class ECPBuilder:
                         "border", data=self.index[lvl][node]["border"]
                     )
             else:
-                for c in clusters.keys():
+                for c in tqdm(clusters.keys(), desc="Writing clusters to file"):
                     node = c
                     if node in h5[lvl].keys():
                         node_group = h5[lvl][node]
@@ -661,26 +620,78 @@ class ECPBuilder:
                 for future in tqdm(futures, desc="Gathering thread results"):
                     partial_node_maps.append(future.get())
 
+            del chunk_data
             if save_to_file != "":
-                clst_chunks = int(self.total_clusters / 20)
+                clst_batches = int(self.total_clusters / 50)
                 for start_idx in tqdm(
-                    range(0, self.total_clusters, clst_chunks),
-                    desc="Writing clusters to file in chunks",
+                    range(0, self.total_clusters, clst_batches),
+                    desc="Writing clusters to file in batches",
                 ):
-                    end_idx = min(start_idx + clst_chunks, self.total_clusters)
+                    end_idx = min(start_idx + clst_batches, self.total_clusters)
                     clusters = {}
-                    for n in tqdm(range(start_idx, end_idx), desc="Preparing chunk"):
+                    for n in tqdm(range(start_idx, end_idx), desc="Preparing batch"):
                         node = f"node_{n}"
-                        cluster_items = []
                         for pmap in partial_node_maps:
-                            if node in cluster_items:
-                                idx_mask = [idx for idx, _ in pmap[node]]
-                                embs = embeddings[idx_mask]
-                                cluster_items += [
-                                    (idx, dist, embs[i])
-                                    for i, idx, dist in enumerate(pmap[node])
-                                ]
-                        clusters[node] = cluster_items
+                            if node in pmap:
+                                for e_idx, dist in pmap[node]:
+                                    if node not in clusters:
+                                        clusters[node] = []
+                                    clusters[node].append((e_idx, dist))
+
+                        node_order = []
+                        all_indices = []
+                        for n,v in clusters.items():
+                            all_indices += [e_idx for e_idx, _ in v]
+                            node_order.append(n)
+                        sorted_indices = sorted(all_indices)
+
+                        self.logger.info("Loading cluster batch embeddings")
+                        embs = embeddings[sorted_indices][...]
+
+                        self.logger.info("Updating in-memory index")
+                        lvl = f"lvl_{self.levels-1}"
+                        cnt = 0
+                        for node in node_order:
+                            for item, dist in clusters[node]:
+                                next = len(self.index[lvl][node]["item_ids"])
+                                if next >= self.index[lvl][node]["embeddings"].shape[0]:
+                                    concat_array_emb = np.zeros(
+                                        shape=(
+                                            self.node_size,
+                                            self.representative_embeddings.shape[1],
+                                        ),
+                                        dtype=self.representative_embeddings.dtype,
+                                    )
+                                    concat_array_dist = np.zeros(
+                                        shape=(self.node_size,),
+                                        dtype=self.representative_embeddings.dtype,
+                                    )
+                                    self.index[lvl][node]["embeddings"] = np.concatenate(
+                                        (self.index[lvl][node]["embeddings"], concat_array_emb)
+                                    )
+                                    self.index[lvl][node]["distances"] = np.concatenate(
+                                        (self.index[lvl][node]["distances"], concat_array_dist)
+                                    )
+                                self.index[lvl][node]["embeddings"][next] = embs[all_indices[cnt]]
+                                self.index[lvl][node]["item_ids"].append(item)
+                                self.index[lvl][node]["distances"][next] = dist
+                                cnt += 1
+                                # TODO: Move the below part to a function and call it after index is built
+                                if self.metric == "IP" or self.metric == "cos":
+                                    if (
+                                        self.index[lvl][node]["border"][1] is None
+                                        or self.index[lvl][node]["border"][1] > dist
+                                    ):
+                                        self.index[lvl][node]["border"] = (next, dist)
+                                elif self.metric == "L2":
+                                    if (
+                                        self.index[lvl][node]["border"][1] is None
+                                        or self.index[lvl][node]["border"][1] < dist
+                                    ):
+                                        self.index[lvl][node]["border"] = (next, dist)
+                            self.align_specific_node(lvl, node)
+
+                    self.logger.info(f"Writing batch (cluster {start_idx} to {end_idx})")
                     self.write_cluster_items_to_file(
                         clusters=clusters, save_to_file=save_to_file
                     )

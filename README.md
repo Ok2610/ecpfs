@@ -1,8 +1,8 @@
-# ecph5
+# ecpfs
 
 An implementation of the extended Cluster Pruning (eCP) index.
 
-The index format is stored in a versatile hdf5 format, that enables flexible loading solutions in any language.
+The index format is stored in a versatile directory format, that enables flexible loading solutions in any language.
 
 ### Format
 

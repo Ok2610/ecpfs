@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import h5py
 
-from ecph5 import ECPBuilder
+from ecpfs import ECPBuilder
 
 app = typer.Typer()
 logger.remove()  # Remove default logging handler
@@ -41,6 +41,24 @@ def build_index(
         int,
         typer.Option(help="Number of threads involved (default = 4)"),
     ] = 4,
+    no_emb_grp: Annotated[
+        bool,
+        typer.Option(
+            "--no-emb-grp",
+            help="Indicates if the embeddings dataset is in a group in the file/store",
+        ),
+    ] = False,
+    emb_grp_name: Annotated[
+        str,
+        typer.Option(help="Group name for the embeddings dataset"),
+    ] = "embeddings",
+    file_store: Annotated[
+        str,
+        typer.Option(
+            help="File store format. Options are 'zarr_l' (zarr.storage.LocalStore), 'zarr_z' (zarr.storage.ZipStore), 'h5' (HDF5)",
+            case_sensitive=False,
+        ),
+    ] = typer.Option("zarr_l", metavar="FORMAT", choices=["zarr_l", "zarr_z", "h5"]),
 ) -> None:
     if not embeddings_file.exists():
         logger.error("Embeddings file does not exist!")
@@ -50,17 +68,22 @@ def build_index(
         logger=logger,
         target_cluster_size=target_cluster_size,
         metric=metric,
+        index_file=save_file,
+        file_store=file_store,
     )
 
     logger.info("Selecting cluster representatives...")
     ecp.select_cluster_representatives(
-        embeddings_file=embeddings_file, save_to_file=save_file
+        embeddings_file=embeddings_file,
     )
     logger.info("Building tree...")
-    ecp.build_tree_h5(save_to_file=save_file)
+    ecp.build_tree_h5()
     logger.info("Adding items to index...")
     ecp.add_items_concurrent(
-        embeddings_file=embeddings_file, save_to_file=save_file, workers=workers
+        embeddings_file=embeddings_file,
+        workers=workers,
+        grp=no_emb_grp,
+        grp_name=emb_grp_name,
     )
     logger.info("Index created")
 

@@ -1,5 +1,6 @@
 import math
 import h5py
+import zarr
 import numpy as np
 from tqdm import tqdm
 from queue import PriorityQueue
@@ -9,12 +10,20 @@ from math import sqrt
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 
-import dill
 from pathos.multiprocessing import Pool, cpu_count
+import zarr.storage
 
 
 class ECPBuilder:
-    def __init__(self, levels: int, logger, target_cluster_size=100, metric="L2"):
+    def __init__(
+        self,
+        levels: int,
+        logger,
+        target_cluster_size=100,
+        metric="L2",
+        index_file="ecpfs_index.zarr",
+        file_store="zarr_l",
+    ):
         """
         Constructor.
 
@@ -23,11 +32,18 @@ class ECPBuilder:
         levels: Number of levels in the index hierarchy
         target_cluster_size: Aim for clusters of this size (no guarantees)
         metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
+
+        index_file: If a filename is specified, all index related data will be stored in a store. Default behaviour is to store it using a zarr.storage.LocalStore under the name "ecpfs_index.zarr". Set this to empty string if you do not want to store the index.
+
+        file_format: "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5)
+        The file format to store the representative cluster embeddings and ids. default="zarr_l"
         """
         self.levels: int = levels
         self.target_cluster_size: int = target_cluster_size
         self.logger = logger
         self.metric: str = metric
+        self.index_file = index_file
+        self.file_store = file_store
         self.representative_ids: np.ndarray | None = None
         self.representative_embeddings: np.ndarray | None = None
         self.item_to_cluster_map = {}
@@ -37,100 +53,148 @@ class ECPBuilder:
         self,
         embeddings_file: Path,
         option="offset",
-        save_to_file="",
         clst_ids_dsname="clst_item_ids",
         clst_emb_dsname="clst_embeddings",
+        grp=False,
+        grp_name="embeddings",
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Determine the list of representatives for clusters.
 
         #### Parameters
-        embeddings: Numpy 2D np.ndarray of embeddings
+        embeddings_file: A .h5/.zarr/.zip/.zipstore file that stores 2D np.ndarray of embeddings (.zarr = LocalStore, .zip/.zipstore = ZipStore)
 
         option: "offset", "random", or "dissimilar".
         "offset" = select based of an offset determined through the index config info,
         "random" = arbitrarily select cluster representatives, and
         "dissimilar" = ensure that a representative is dissimilar from others at the same level.
 
-        save_to_file: If a filename is specified, the selected representatives will be stored into an HDF5
-        file with the specified name, using the dataset names from clst_emb_dsname and clst_ids_dsname.
 
         #### Returns
         A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
         """
-        with h5py.File(embeddings_file, "r") as f:
-            total_items = len(f["embeddings"])
-            self.total_clusters = math.ceil(total_items / self.target_cluster_size)
-            self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
+        embeddings = None
+        emb_fp = None
 
-            if option == "offset":
-                all_item_ids = np.arange(total_items).astype(np.uint32)
-                self.representative_ids = all_item_ids[:: self.target_cluster_size]
-                self.logger.info(
-                    f"{len(self.representative_ids)} Cluster representatives selected"
-                )
-                if len(self.representative_ids) != self.total_clusters:
-                    self.logger.error(
-                        "Number of representatives does not match the total clusters."
-                    )
-                self.logger.info(f"Getting representative embeddings from file")
-                self.representative_embeddings = f["embeddings"][
-                    :: self.target_cluster_size
-                ]
-            elif option == "random":
-                if self.total_clusters > total_items:
-                    self.logger.error(
-                        "Total clusters exceed the number of available embeddings."
-                    )
-                self.representative_ids = np.random.choice(
-                    total_items, size=self.total_clusters, replace=False
-                )
-                self.logger.info(
-                    f"{len(self.representative_ids)} Cluster Representatives Selected"
-                )
-                self.logger.info(f"Getting representative embeddings from file")
-                self.representative_embeddings = f["embeddings"][
-                    self.representative_ids
-                ]
-            elif option == "dissimilar":
-                if self.metric == "IP":
-                    """"""
-                elif self.metric == "L2":
-                    """"""
-                elif self.metric == "cos":
-                    """"""
-                raise NotImplementedError()
+        # Get embeddings from HDF5 or zarr
+        if embeddings_file.suffix == ".h5":
+            emb_fp = h5py.File(embeddings_file, "r")
+            embeddings = emb_fp[grp_name]
+        elif (
+            embeddings_file.suffix == ".zarr"
+            or embeddings_file.suffix == ".zip"
+            or str.lower(embeddings_file.suffix) == ".zipstore"
+        ):
+            if grp:
+                embeddings = zarr.open(embeddings_file, mode="r")[grp_name]
             else:
-                raise ValueError(
-                    "Unknown option, the valid options are ['offset', 'random', 'dissimilar']"
-                )
+                embeddings = zarr.open(embeddings_file, mode="r")
+        else:
+            raise ValueError("Unknown embeddings file format")
 
-            if save_to_file != "":
-                with h5py.File(save_to_file, "w") as hf:
+        # Determine sizes
+        total_items = embeddings.shape[0]
+        self.total_clusters = total_items // self.target_cluster_size
+        self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
+
+        # Select cluster centroids
+        if option == "offset":
+            all_item_ids = np.arange(total_items).astype(np.uint32)
+            self.representative_ids = all_item_ids[:: self.target_cluster_size]
+            self.logger.info(
+                f"{len(self.representative_ids)} Cluster representatives selected"
+            )
+            if len(self.representative_ids) != self.total_clusters:
+                self.logger.error(
+                    "Number of representatives does not match the total clusters."
+                )
+            self.logger.info(f"Getting representative embeddings from file")
+            self.representative_embeddings = embeddings[:: self.target_cluster_size]
+        elif option == "random":
+            if self.total_clusters > total_items:
+                self.logger.error(
+                    "Total clusters exceed the number of available embeddings."
+                )
+            self.representative_ids = np.random.choice(
+                total_items, size=self.total_clusters, replace=False
+            )
+            self.logger.info(
+                f"{len(self.representative_ids)} Cluster Representatives Selected"
+            )
+            self.logger.info(f"Getting representative embeddings from file")
+            self.representative_embeddings = embeddings[self.representative_ids]
+        elif option == "dissimilar":
+            if self.metric == "IP":
+                """"""
+            elif self.metric == "L2":
+                """"""
+            elif self.metric == "cos":
+                """"""
+            raise NotImplementedError("dissimilar option")
+        else:
+            raise ValueError(
+                "Unknown option, the valid options are ['offset', 'random', 'dissimilar']"
+            )
+
+        # Store the cluster representative embeddings and item ids
+        if self.index_file != "":
+            if self.file_format == "zarr_l":
+                with zarr.storage.LocalStore(self.index_file, mode="w") as store:
+                    root = zarr.open(store)
+                    root[clst_ids_dsname] = self.representative_ids
+                    root[clst_emb_dsname] = self.representative_embeddings
+            elif self.file_format == "zarr_z":
+                with zarr.storage.ZipStore(self.index_file, mode="w") as store:
+                    root = zarr.open(store)
+                    root[clst_ids_dsname] = self.representative_ids
+                    root[clst_emb_dsname] = self.representative_embeddings
+            elif self.file_format == "h5":
+                with h5py.File(self.index_file, "w") as hf:
                     hf[clst_ids_dsname] = self.representative_ids
                     hf[clst_emb_dsname] = self.representative_embeddings
+
+        # Close zarr stores if used
+        if emb_fp is not None:
+            emb_fp.close()
 
         return self.representative_embeddings, self.representative_ids
 
     def get_cluster_representatives_from_file(
-        self, fp: Path, emb_dsname="clst_embeddings", ids_dsname="clst_item_ids"
+        self,
+        fp: Path,
+        emb_dsname="clst_embeddings",
+        ids_dsname="clst_item_ids",
+        format="zarr_l",
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Load cluster representatives from a HDF5 file.
+        Load cluster representatives from a zarr (local or zip) store or a HDF5 file.
 
         The HDF5 file should have two datasets, one for their representative embeddings and one for their item ids.
 
         #### Parameters
+        fp: File path
         emb_dsname: Dataset name of representative embeddings, default=clst_representatives
         ids_dsname: Dataset name of representative item ids, default=clst_item_ids
+        format: "zarr_l" (LocalStore), "zarr_z" (ZipStore), "h5" (HDF5)
 
         #### Returns
         A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
         """
 
-        with h5py.File(fp, "r") as hf:
-            self.representative_embeddings = hf[emb_dsname][:]
-            self.representative_ids = hf[ids_dsname][:]
+        if format == "zarr_l":
+            with zarr.storage.LocalStore(fp, mode="r") as store:
+                zf = zarr.open_group(store, mode="r")
+                self.representative_embeddings = zf[emb_dsname][:]
+                self.representative_ids = zf[ids_dsname][:]
+        elif format == "zarr_z":
+            with zarr.storage.ZipStore(fp, mode="r") as store:
+                zf = zarr.open_group(store, mode="r")
+                self.representative_embeddings = zf[emb_dsname][:]
+                self.representative_ids = zf[ids_dsname][:]
+        elif format == "h5":
+            with h5py.File(fp, "r") as hf:
+                self.representative_embeddings = hf[emb_dsname][:]
+                self.representative_ids = hf[ids_dsname][:]
 
         return self.representative_embeddings, self.representative_ids
 
@@ -248,7 +312,7 @@ class ECPBuilder:
             else:
                 lvl_range = lvl_range * self.node_size
 
-    def build_tree_h5(self, save_to_file="") -> None:
+    def build_tree_h5(self) -> None:
         """
         Build the hierarchical eCP index for an HDF5 file.
 
@@ -402,53 +466,90 @@ class ECPBuilder:
         # Resize the embeddings and distance arrays of nodes to actual size
         self.align_node_embeddings_and_distances()
 
-        self.logger.info("Saving tree to file...")
-        if save_to_file != "":
-            with h5py.File(save_to_file, "a") as h5:
-                root_group = h5.create_group("root")
-                root_group.create_dataset(
-                    "embeddings",
-                    data=self.index["root"]["embeddings"],
-                    maxshape=(None, self.index["root"]["embeddings"].shape[1]),
-                    chunks=True,
-                )
-                root_group.create_dataset(
-                    "item_ids",
-                    data=self.index["root"]["item_ids"],
-                    maxshape=(None,),
-                    chunks=True,
-                )
-                for k, v in self.index.items():
-                    if not k.startswith("lvl_"):
-                        continue
-                    lvl_group = h5.create_group(k)
-                    for n, node in v.items():
-                        node_group = lvl_group.create_group(n)
-                        node_group.create_dataset(
-                            "embeddings",
-                            data=node["embeddings"],
-                            maxshape=(None, node["embeddings"].shape[1]),
-                            chunks=True,
-                        )
-                        node_group.create_dataset(
-                            "distances",
-                            data=node["distances"],
-                            maxshape=(None,),
-                            chunks=True,
-                        )
-                        node_group.create_dataset(
-                            "item_ids",
-                            data=node["item_ids"],
-                            maxshape=(None,),
-                            chunks=True,
-                        )
-                        node_group.create_dataset(
-                            "node_ids",
-                            data=node["node_ids"],
-                            maxshape=(None,),
-                            chunks=True,
-                        )
-                        node_group.create_dataset("border", data=node["border"])
+        if self.index_file != "" and "zarr" in self.file_format:
+            self.logger.info("Saving tree to file...")
+            root = zarr.open(self.index_file)
+            # /index_root
+            root.create_group("index_root")
+            # /index_root/embeddings (N,D) float16/float32
+            root["index_root"]["embeddings"] = self.index["root"]["embeddings"]
+            # /index_root/item_ids (N,) uint32/uint64
+            root["index_root"]["item_ids"] = self.index["root"]["item_ids"]
+            for k, v in self.index.items():
+                if not k.startswith("lvl_"):
+                    continue
+                # /lvl_{}
+                root.create_group(k)
+                for n, node in v.items():
+                    # /lvl_{}/node_{}
+                    root[k].create_group(n)
+                    # /lvl_{}/node_{}/embeddings
+                    root[k][n]["embeddings"] = node["embeddings"]
+                    # /lvl_{}/node_{}/item_ids
+                    root[k][n]["item_ids"] = node["item_ids"]
+                    # /lvl_{}/node_{}/node_ids
+                    root[k][n]["node_ids"] = node["node_ids"]
+                    # /lvl_{}/node_{}/distances
+                    root[k][n]["distances"] = node["distances"]
+                    # /lvl_{}/node_{}/border
+                    root[k][n]["border"] = node["border"]
+        elif self.index_file != "" and self.file_format == "h5":
+            h5 = h5py.File(self.index_file, "a")
+            # /index_root
+            root_group = h5.create_group("index_root")
+            # /index_root/embeddings
+            root_group.create_dataset(
+                "embeddings",
+                data=self.index["root"]["embeddings"],
+                maxshape=(None, self.index["root"]["embeddings"].shape[1]),
+                chunks=True,
+            )
+            # /index_root/item_ids
+            root_group.create_dataset(
+                "item_ids",
+                data=self.index["root"]["item_ids"],
+                maxshape=(None,),
+                chunks=True,
+            )
+            for k, v in self.index.items():
+                if not k.startswith("lvl_"):
+                    continue
+                # /lvl_{}
+                lvl_group = h5.create_group(k)
+                for n, node in v.items():
+                    # /lvl_{}/node_{}
+                    node_group = lvl_group.create_group(n)
+                    # /lvl_{}/node_{}/embeddings
+                    node_group.create_dataset(
+                        "embeddings",
+                        data=node["embeddings"],
+                        maxshape=(None, node["embeddings"].shape[1]),
+                        chunks=True,
+                    )
+                    # /lvl_{}/node_{}/distances
+                    node_group.create_dataset(
+                        "distances",
+                        data=node["distances"],
+                        maxshape=(None,),
+                        chunks=True,
+                    )
+                    # /lvl_{}/node_{}/item_ids
+                    node_group.create_dataset(
+                        "item_ids",
+                        data=node["item_ids"],
+                        maxshape=(None,),
+                        chunks=True,
+                    )
+                    # /lvl_{}/node_{}/node_ids
+                    node_group.create_dataset(
+                        "node_ids",
+                        data=node["node_ids"],
+                        maxshape=(None,),
+                        chunks=True,
+                    )
+                    # /lvl_{}/node_{}/border
+                    node_group.create_dataset("border", data=node["border"])
+            h5.close()
         self.logger.info("Done building tree!")
 
     def add_items(self, item_embeddings: np.ndarray, save_to_file: Path, offset=0):
@@ -501,8 +602,73 @@ class ECPBuilder:
                                 break
         return node_map
 
-    def write_cluster_items_to_file(self, clusters, save_to_file):
-        with h5py.File(save_to_file, "a") as h5:
+    def write_cluster_items_to_file(self, clusters):
+        """
+        ### Parameters
+        clusters: numpy.ndarray of cluster embeddings
+        save_to_file: File path to store data
+        save_format: "zarr_l" (LocalStore), "zarr_z" (ZipStore), "h5" (HDF5)
+        The file format to store the data in
+        """
+        # TODO: Refactor this function into an ECPWriter class that has functions for the different formats
+        if self.index_file != "" and "zarr" in self.file_format:
+            root = zarr.open(self.index_file)
+            lvl = f"lvl_{self.levels-1}"
+            if lvl not in root.keys():
+                # /lvl_{self.levels-1}
+                root.create_group(lvl)
+                for c in tqdm(clusters.keys(), desc="Writing clusters to file"):
+                    node = c
+                    # /lvl_{self.levels-1}/node_{}
+                    root[lvl].create_group(node)
+                    # /lvl_{self.levels-1}/node_{}/embeddings
+                    root[lvl][node]["embeddings"] = self.index[lvl][node]["embeddings"]
+                    # /lvl_{self.levels-1}/node_{}/distances
+                    root[lvl][node]["distances"] = self.index[lvl][node]["distances"]
+                    # /lvl_{self.levels-1}/node_{}/item_ids
+                    root[lvl][node]["item_ids"] = self.index[lvl][node]["item_ids"]
+                    # /lvl_{self.levels-1}/node_{}/border
+                    root[lvl][node]["border"] = self.index[lvl][node]["border"]
+            else:
+                for c in tqdm(clusters.keys(), desc="Writing clusters to file"):
+                    node = c
+                    if node in root[lvl].keys():
+                        node_group = root[lvl][node]
+                        old_size = node_group["embeddings"].shape[0]
+                        new_size = self.index[lvl][node]["embeddings"].shape[0]
+                        # Resize
+                        node_group["embeddings"].resize(
+                            (new_size, node_group["embeddings"].shape[1])
+                        )
+                        node_group["distances"].resize((new_size,))
+                        node_group["item_ids"].resize((new_size,))
+                        # Insert
+                        node_group["embeddings"][old_size:] = self.index[lvl][node][
+                            "embeddings"
+                        ][old_size:]
+                        node_group["distances"][old_size:] = self.index[lvl][node][
+                            "distances"
+                        ][old_size:]
+                        node_group["item_ids"][old_size:] = self.index[lvl][node][
+                            "item_ids"
+                        ][old_size:]
+                        node_group["border"][:] = self.index[lvl][node]["border"]
+                    else:
+                        root[lvl].create_group(node)
+                        # /lvl_{}/node_{}/embeddings
+                        root[lvl][node]["embeddings"] = self.index[lvl][node][
+                            "embeddings"
+                        ]
+                        # /lvl_{}/node_{}/distances
+                        root[lvl][node]["distances"] = self.index[lvl][node][
+                            "distances"
+                        ]
+                        # /lvl_{}/node_{}/item_ids
+                        root[lvl][node]["item_ids"] = self.index[lvl][node]["item_ids"]
+                        # /lvl_{}/node_{}/border
+                        root[lvl][node]["border"] = self.index[lvl][node]["border"]
+        elif self.index_file != "" and self.file_format == "h5":
+            h5 = h5py.File(self.index_file, "a")
             lvl = f"lvl_{self.levels-1}"
             if lvl not in h5.keys():
                 lvl_group = h5.create_group(lvl)
@@ -580,9 +746,16 @@ class ECPBuilder:
                         node_group.create_dataset(
                             "border", data=self.index[lvl][node]["border"]
                         )
+            h5.close()
 
     def add_items_concurrent(
-        self, embeddings_file, save_to_file="", chunk_size=250000, workers=4
+        self,
+        embeddings_file: Path,
+        save_to_file="",
+        chunk_size=250000,
+        workers=4,
+        grp=False,
+        grp_name="embeddings",
     ):
         """
         Get a map corresponding to which cluster node they will end up in on the last level
@@ -603,98 +776,123 @@ class ECPBuilder:
         else:
             processes = workers
 
-        with h5py.File(embeddings_file, "r") as f:
-            chunk_size = chunk_size
-            partial_node_maps = []
-            total_items = len(f["embeddings"])
-            embeddings = f["embeddings"]
-            with Pool(processes=processes) as pool:
-                futures = []
-                for start_idx in range(0, total_items, chunk_size):
-                    end_idx = min(start_idx + chunk_size, total_items)
-                    chunk_data = embeddings[start_idx:end_idx][...]
-                    async_results = pool.apply_async(
-                        process_chunk, args=(chunk_data, start_idx)
+        embeddings = None
+        emb_fp = None
+        if embeddings_file.suffix == ".h5":
+            emb_fp = h5py.File(embeddings_file, "r")
+            embeddings = emb_fp[grp_name]
+        elif (
+            embeddings_file.suffix == ".zarr"
+            or embeddings_file.suffix == ".zip"
+            or str.lower(embeddings_file.suffix) == ".zipstore"
+        ):
+            if grp:
+                embeddings = zarr.open(embeddings_file)[grp_name]
+            else:
+                embeddings = zarr.open(embeddings_file)
+
+        chunk_size = chunk_size
+        partial_node_maps = []
+        total_items = len(embeddings)
+        with Pool(processes=processes) as pool:
+            futures = []
+            for start_idx in range(0, total_items, chunk_size):
+                end_idx = min(start_idx + chunk_size, total_items)
+                chunk_data = embeddings[start_idx:end_idx][...]
+                async_results = pool.apply_async(
+                    process_chunk, args=(chunk_data, start_idx)
+                )
+                futures.append(async_results)
+            for future in tqdm(futures, desc="Gathering thread results"):
+                partial_node_maps.append(future.get())
+
+        del chunk_data
+        if self.index_file != "":
+            clst_batches = int(self.total_clusters // 200)
+            for start_idx in tqdm(
+                range(0, self.total_clusters, clst_batches),
+                desc="Writing clusters to file in batches",
+            ):
+                end_idx = min(start_idx + clst_batches, self.total_clusters)
+                clusters = {}
+                for n in tqdm(range(start_idx, end_idx), desc="Preparing batch"):
+                    node = f"node_{n}"
+                    for pmap in partial_node_maps:
+                        if node in pmap:
+                            for e_idx, dist in pmap[node]:
+                                if node not in clusters:
+                                    clusters[node] = []
+                                clusters[node].append((e_idx, dist))
+
+                    node_order = []
+                    all_indices = []
+                    for n, v in clusters.items():
+                        all_indices += [e_idx for e_idx, _ in v]
+                        node_order.append(n)
+                    sorted_indices = sorted(all_indices)
+                    with h5py.File("save/tmp.h5", "w") as f:
+                        f["ids"] = sorted_indices
+
+                    self.logger.info(
+                        f"Loading cluster batch embeddings ({len(sorted_indices)})"
                     )
-                    futures.append(async_results)
-                for future in tqdm(futures, desc="Gathering thread results"):
-                    partial_node_maps.append(future.get())
+                    embs = embeddings[sorted_indices][...]
 
-            del chunk_data
-            if save_to_file != "":
-                clst_batches = int(self.total_clusters / 50)
-                for start_idx in tqdm(
-                    range(0, self.total_clusters, clst_batches),
-                    desc="Writing clusters to file in batches",
-                ):
-                    end_idx = min(start_idx + clst_batches, self.total_clusters)
-                    clusters = {}
-                    for n in tqdm(range(start_idx, end_idx), desc="Preparing batch"):
-                        node = f"node_{n}"
-                        for pmap in partial_node_maps:
-                            if node in pmap:
-                                for e_idx, dist in pmap[node]:
-                                    if node not in clusters:
-                                        clusters[node] = []
-                                    clusters[node].append((e_idx, dist))
-
-                        node_order = []
-                        all_indices = []
-                        for n,v in clusters.items():
-                            all_indices += [e_idx for e_idx, _ in v]
-                            node_order.append(n)
-                        sorted_indices = sorted(all_indices)
-
-                        self.logger.info("Loading cluster batch embeddings")
-                        embs = embeddings[sorted_indices][...]
-
-                        self.logger.info("Updating in-memory index")
-                        lvl = f"lvl_{self.levels-1}"
-                        cnt = 0
-                        for node in node_order:
-                            for item, dist in clusters[node]:
-                                next = len(self.index[lvl][node]["item_ids"])
-                                if next >= self.index[lvl][node]["embeddings"].shape[0]:
-                                    concat_array_emb = np.zeros(
-                                        shape=(
-                                            self.node_size,
-                                            self.representative_embeddings.shape[1],
-                                        ),
-                                        dtype=self.representative_embeddings.dtype,
+                    self.logger.info("Updating in-memory index")
+                    lvl = f"lvl_{self.levels-1}"
+                    cnt = 0
+                    for node in node_order:
+                        for item, dist in clusters[node]:
+                            next = len(self.index[lvl][node]["item_ids"])
+                            if next >= self.index[lvl][node]["embeddings"].shape[0]:
+                                concat_array_emb = np.zeros(
+                                    shape=(
+                                        self.node_size,
+                                        self.representative_embeddings.shape[1],
+                                    ),
+                                    dtype=self.representative_embeddings.dtype,
+                                )
+                                concat_array_dist = np.zeros(
+                                    shape=(self.node_size,),
+                                    dtype=self.representative_embeddings.dtype,
+                                )
+                                self.index[lvl][node]["embeddings"] = np.concatenate(
+                                    (
+                                        self.index[lvl][node]["embeddings"],
+                                        concat_array_emb,
                                     )
-                                    concat_array_dist = np.zeros(
-                                        shape=(self.node_size,),
-                                        dtype=self.representative_embeddings.dtype,
+                                )
+                                self.index[lvl][node]["distances"] = np.concatenate(
+                                    (
+                                        self.index[lvl][node]["distances"],
+                                        concat_array_dist,
                                     )
-                                    self.index[lvl][node]["embeddings"] = np.concatenate(
-                                        (self.index[lvl][node]["embeddings"], concat_array_emb)
-                                    )
-                                    self.index[lvl][node]["distances"] = np.concatenate(
-                                        (self.index[lvl][node]["distances"], concat_array_dist)
-                                    )
-                                self.index[lvl][node]["embeddings"][next] = embs[all_indices[cnt]]
-                                self.index[lvl][node]["item_ids"].append(item)
-                                self.index[lvl][node]["distances"][next] = dist
-                                cnt += 1
-                                # TODO: Move the below part to a function and call it after index is built
-                                if self.metric == "IP" or self.metric == "cos":
-                                    if (
-                                        self.index[lvl][node]["border"][1] is None
-                                        or self.index[lvl][node]["border"][1] > dist
-                                    ):
-                                        self.index[lvl][node]["border"] = (next, dist)
-                                elif self.metric == "L2":
-                                    if (
-                                        self.index[lvl][node]["border"][1] is None
-                                        or self.index[lvl][node]["border"][1] < dist
-                                    ):
-                                        self.index[lvl][node]["border"] = (next, dist)
-                            self.align_specific_node(lvl, node)
+                                )
+                            self.index[lvl][node]["embeddings"][next] = embs[
+                                all_indices[cnt]
+                            ]
+                            self.index[lvl][node]["item_ids"].append(item)
+                            self.index[lvl][node]["distances"][next] = dist
+                            cnt += 1
+                            # TODO: Move the below part to a function and call it after index is built
+                            if self.metric == "IP" or self.metric == "cos":
+                                if (
+                                    self.index[lvl][node]["border"][1] is None
+                                    or self.index[lvl][node]["border"][1] > dist
+                                ):
+                                    self.index[lvl][node]["border"] = (next, dist)
+                            elif self.metric == "L2":
+                                if (
+                                    self.index[lvl][node]["border"][1] is None
+                                    or self.index[lvl][node]["border"][1] < dist
+                                ):
+                                    self.index[lvl][node]["border"] = (next, dist)
+                        self.align_specific_node(lvl, node)
 
-                    self.logger.info(f"Writing batch (cluster {start_idx} to {end_idx})")
-                    self.write_cluster_items_to_file(
-                        clusters=clusters, save_to_file=save_to_file
-                    )
+                self.logger.info(f"Writing batch (cluster {start_idx} to {end_idx})")
+                self.write_cluster_items_to_file(
+                    clusters=clusters, save_to_file=save_to_file
+                )
 
     def search_tree(self, query: np.ndarray, search_exp: int, k: int, restart=True):
         """

@@ -78,10 +78,10 @@ def build_index(
         str,
         typer.Option(
             "--rep-selection",
-            help="Parameter for how the representatives are selected. Options are 'offset', 'random', or 'dissimilar' (Not implemented)",
+            help="Parameter for how the representatives are selected. Options are 'offset', 'random', 'mbk' (MiniBatchKmeans) or 'dissimilar' (Not implemented)",
             case_sensitive=False,
             metavar="REPSEL",
-            show_choices=["offset", "random", "dissimilar"]
+            show_choices=["offset", "random", "mbk", "dissimilar"]
         )
     ] = "offset",
     rep_file: Annotated[

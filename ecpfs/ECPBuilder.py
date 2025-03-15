@@ -9,6 +9,7 @@ from typing import Tuple
 from math import sqrt
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import MiniBatchKMeans
 
 from pathos.multiprocessing import Pool, cpu_count
 import zarr.storage
@@ -155,6 +156,17 @@ class ECPBuilder:
             )
             self.logger.info(f"Getting representative embeddings from file")
             self.representative_embeddings = embeddings[self.representative_ids]
+        elif option == "mbk":
+            mbk = MiniBatchKMeans (
+                init="k-means++", 
+                n_clusters=self.total_clusters,
+                batch_size=50000
+            )
+            for start in tqdm(range(0, embeddings.shape[0], 200000)):
+                end = min(start+200000, embeddings.shape[0])
+                mbk.partial_fit(embeddings[start:end])
+            self.representative_embeddings = mbk.cluster_centers_
+            self.representative_ids = np.arange(self.total_clusters)
         elif option == "dissimilar":
             if self.metric == "IP":
                 """"""

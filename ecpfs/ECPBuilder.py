@@ -75,8 +75,6 @@ class ECPBuilder:
         self,
         embeddings_file: Path,
         option="offset",
-        clst_ids_dsname="clst_item_ids",
-        clst_emb_dsname="clst_embeddings",
         grp=False,
         grp_name="embeddings",
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -178,29 +176,6 @@ class ECPBuilder:
 
         return self.representative_embeddings, self.representative_ids
 
-    def write_cluster_representatives(self):
-        clst_ids_dsname = "clst_item_ids"
-        clst_emb_dsname = "clst_embeddings"
-        if self.file_store == "zarr_l" or self.file_store == "zarr_z":
-            root = None
-            if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file, mode='w')
-            elif self.file_store == "zarr_z":
-                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="w"), mode="w")
-
-            root[clst_ids_dsname] = self.representative_ids
-            root.create_array(
-                name=clst_emb_dsname,
-                shape=self.representative_embeddings.shape,
-                dtype=self.representative_embeddings.dtype,
-                chunks=self.chunk_size
-            )
-            root[clst_emb_dsname] = self.representative_embeddings
-        elif self.file_store == "h5":
-            with h5py.File(self.index_file, "w") as hf:
-                hf[clst_ids_dsname] = self.representative_ids
-                hf[clst_emb_dsname] = self.representative_embeddings
-
 
     def get_cluster_representatives_from_file(
         self,
@@ -273,6 +248,50 @@ class ECPBuilder:
             ).flatten()
             top = np.argsort(distances)[::-1]
         return top, distances
+
+
+    def write_index_info(self):
+        if self.file_store == "zarr_l" or self.file_store == "zarr_z":
+            root = None
+            if self.file_store == "zarr_l":
+                root = zarr.open(self.index_file, mode='w')
+            elif self.file_store == "zarr_z":
+                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="w"), mode="w")
+            root.create_group("info")
+            root["info"]["levels"] = np.array([self.levels])
+            # TODO: Check if zarr v3 supports strings
+            root["info"]["metric"] = np.array([self.metric])
+        elif self.file_store == "h5":
+            with h5py.File(self.index_file, "a") as hf:
+                hf.create_group("info")
+                hf["info"]["levels"] = self.levels
+                hf["info"]["metric"] = self.metric
+
+
+    def write_cluster_representatives(self):
+        # TODO: Once write_index_info goes in use change mode="w" to mode="a"
+        clst_ids_dsname = "clst_item_ids"
+        clst_emb_dsname = "clst_embeddings"
+        if self.file_store == "zarr_l" or self.file_store == "zarr_z":
+            root = None
+            if self.file_store == "zarr_l":
+                root = zarr.open(self.index_file, mode='w')
+            elif self.file_store == "zarr_z":
+                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="w"), mode="w")
+
+            root[clst_ids_dsname] = self.representative_ids
+            root.create_array(
+                name=clst_emb_dsname,
+                shape=self.representative_embeddings.shape,
+                dtype=self.representative_embeddings.dtype,
+                chunks=self.chunk_size
+            )
+            root[clst_emb_dsname] = self.representative_embeddings
+        elif self.file_store == "h5":
+            with h5py.File(self.index_file, "w") as hf:
+                hf[clst_ids_dsname] = self.representative_ids
+                hf[clst_emb_dsname] = self.representative_embeddings
+
 
     def distance_level_node(
         self, emb: np.ndarray, lvl: str, node: str
@@ -630,26 +649,30 @@ class ECPBuilder:
             # Select the top non-empty node
             for t in top:
                 node = f"node_{t}"
-                if len(self.index[lvl][node]["item_ids"]) > 0:
+                if len(self.index[lvl][node]["node_ids"]) > 0:
                     break
             for l in range(self.levels):
                 if l == self.levels - 1:
+                    # If it is the bottom level add item with its distance into the node_map
                     if node in node_map:
                         node_map[node].append((offset + idx, distances[top[t]]))
                     else:
                         node_map[node] = [(offset + idx, distances[top[t]])]
                 else:
                     top, distances = self.distance_level_node(emb, lvl, node)
-                    lvl = f"lvl_{l+1}"
+                    curr_node = node
                     if l + 1 < self.levels - 1:
                         # Select the top non-empty node
                         for t, n in enumerate(top):
-                            node = f"node_{n}"
-                            if len(self.index[f"lvl_{l+1}"][node]["item_ids"]) > 0:
+                            node = f"node_{self.index[lvl][curr_node]['node_ids'][n]}"
+                            if len(self.index[f"lvl_{l+1}"][node]["node_ids"]) > 0:
                                 break
                     else:
+                        # Next level is the bottom, so t=0 as we do not check for empty
                         t = 0
-                        node = f"node_{top[t]}"
+                        node = f"node_{self.index[lvl][curr_node]['node_ids'][top[t]]}"
+                    # Increment lvl
+                    lvl = f"lvl_{l+1}"
         return node_map
 
     def write_cluster_items_to_file(self, clusters):
@@ -888,7 +911,7 @@ class ECPBuilder:
                 partial_node_maps.append(future.get())
         del chunk_data
 
-        clst_batches = int(self.total_clusters // 200)
+        clst_batches = int(self.total_clusters // 100)
         for start_idx in tqdm(
             range(0, self.total_clusters, clst_batches),
             desc="Writing clusters to file in batches",

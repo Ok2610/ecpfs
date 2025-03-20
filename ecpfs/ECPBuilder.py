@@ -54,6 +54,8 @@ class ECPBuilder:
         self.representative_embeddings: np.ndarray | None = None
         # self.item_to_cluster_map = {}
         self.chunk_size = (-1, -1)
+
+        self.write_index_info()
         return
 
     def select_cluster_representatives(
@@ -144,12 +146,8 @@ class ECPBuilder:
 
         self.write_cluster_representatives()
         # Store the cluster representative embeddings and item ids
-                # Close zarr stores if used
-        if emb_fp is not None:
-            emb_fp.close()
 
         return self.representative_embeddings, self.representative_ids
-
 
     def get_cluster_representatives_from_file(
         self,
@@ -224,24 +222,24 @@ class ECPBuilder:
             top = np.argsort(distances)[::-1]
         return top, distances
 
-
     def write_index_info(self):
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":
             root = None
             if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file, mode='w')
+                root = zarr.open(self.index_file, mode="w")
             elif self.file_store == "zarr_z":
-                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="w"), mode="w")
+                root = zarr.open(
+                    zarr.storage.ZipStore(self.index_file, mode="w"), mode="w"
+                )
             root.create_group("info")
             root["info"]["levels"] = np.array([self.levels])
             # TODO: Check if zarr v3 supports strings
-            root["info"]["metric"] = np.array([self.metric])
+            root["info"]["metric"] = np.array([self.metric.value])
         elif self.file_store == "h5":
             with h5py.File(self.index_file, "a") as hf:
                 hf.create_group("info")
                 hf["info"]["levels"] = self.levels
-                hf["info"]["metric"] = self.metric
-
+                hf["info"]["metric"] = self.metric.value
 
     def write_cluster_representatives(self):
         # TODO: Once write_index_info goes in use change mode="w" to mode="a"
@@ -250,23 +248,24 @@ class ECPBuilder:
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":
             root = None
             if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file, mode='w')
+                root = zarr.open(self.index_file)
             elif self.file_store == "zarr_z":
-                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="w"), mode="w")
+                root = zarr.open(
+                    zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
+                )
 
             root[clst_ids_dsname] = self.representative_ids
             root.create_array(
                 name=clst_emb_dsname,
                 shape=self.representative_embeddings.shape,
                 dtype=self.representative_embeddings.dtype,
-                chunks=self.chunk_size
+                chunks=self.chunk_size,
             )
             root[clst_emb_dsname] = self.representative_embeddings
         elif self.file_store == "h5":
-            with h5py.File(self.index_file, "w") as hf:
+            with h5py.File(self.index_file, "a") as hf:
                 hf[clst_ids_dsname] = self.representative_ids
                 hf[clst_emb_dsname] = self.representative_embeddings
-
 
     def distance_level_node(
         self, emb: np.ndarray, lvl: str, node: str

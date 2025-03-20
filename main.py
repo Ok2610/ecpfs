@@ -124,8 +124,8 @@ def build_index(
         file_store=file_store,
     )
 
-    logger.info("Selecting cluster representatives...")
     if rep_file is None:
+        logger.info(f"Selecting cluster representatives using {rep_selection}...")
         ecp.select_cluster_representatives(
             embeddings_file=embeddings_file,
             grp=False if no_emb_grp else True,
@@ -133,6 +133,7 @@ def build_index(
             option=rep_selection,
         )
     else:
+        logger.info("Loading cluster representatives...")
         ecp.get_cluster_representatives_from_file(
             rep_file,
             emb_dsname=rep_emb_grp,

@@ -1,18 +1,18 @@
-from ecpfs.utils import get_source_embeddings, calculate_chunk_size
 import math
 import h5py
 import zarr
 import numpy as np
-from tqdm import tqdm
-from queue import PriorityQueue
 from pathlib import Path
 from typing import Tuple
+from queue import PriorityQueue
+from tqdm import tqdm
+from enum import Enum
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
-from enum import Enum
+from pathos.multiprocessing import Pool
+from multiprocessing import cpu_count
 
-from pathos.multiprocessing import Pool, cpu_count
-
+from ecpfs.utils import get_source_embeddings, calculate_chunk_size
 
 class Metric(Enum):
     L2 = 0
@@ -47,7 +47,7 @@ class ECPBuilder:
         self.levels: int = levels
         self.target_cluster_size: int = target_cluster_size
         self.logger = logger
-        self.metric: str = metric
+        self.metric: Metric = metric
         self.index_file = index_file
         self.file_store = file_store
         self.representative_ids: np.ndarray | None = None
@@ -83,7 +83,7 @@ class ECPBuilder:
         embeddings = get_source_embeddings(embeddings_file, grp, grp_name)
 
         # Determine sizes
-        total_items, total_features = embeddings.shape
+        (total_items, total_features) = embeddings.shape
         self.total_clusters = math.ceil(total_items / self.target_cluster_size)
         self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
 
@@ -242,7 +242,6 @@ class ECPBuilder:
                 hf["info"]["metric"] = self.metric.value
 
     def write_cluster_representatives(self):
-        # TODO: Once write_index_info goes in use change mode="w" to mode="a"
         clst_ids_dsname = "clst_item_ids"
         clst_emb_dsname = "clst_embeddings"
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":

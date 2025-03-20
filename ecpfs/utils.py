@@ -2,12 +2,13 @@ from pathlib import Path
 from typing import Tuple
 import numpy as np
 import zarr
+from zarr.storage import ZipStore
 import h5py
 
 
 def calculate_chunk_size(
-    num_features, dtype=np.float32, max_chunk_size=50 * 1024 * 1024
-) -> Tuple[np.uint32, np.uint32]:
+    num_features: int, dtype: np.dtype, max_chunk_size=50 * 1024 * 1024
+) -> Tuple[int, int]:
     """
     Calculates the maximum number of rows that keeps the chunk size below the given limit.
 
@@ -32,7 +33,7 @@ def calculate_chunk_size(
     return (max_rows, num_features)
 
 
-def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str):
+def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str) -> zarr.Array | h5py.Dataset:
     embeddings = None
     if embeddings_file.suffix == ".h5":
         embeddings = h5py.File(embeddings_file, "r")[grp_name]
@@ -40,21 +41,23 @@ def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str):
         if grp:
             embeddings = zarr.open(embeddings_file, mode="r")[grp_name]
         else:
-            embeddings = zarr.open(embeddings_file, mode="r")
-
+            embeddings = zarr.open_array(embeddings_file, mode="r")
     elif (
         embeddings_file.suffix == ".zip"
         or str.lower(embeddings_file.suffix) == ".zipstore"
     ):
         if grp:
             embeddings = zarr.open(
-                zarr.storage.ZipStore(embeddings_file, mode="r"), mode="r"
+                ZipStore(embeddings_file, mode="r"), mode="r"
             )[grp_name]
         else:
-            embeddings = zarr.open(
-                zarr.storage.ZipStore(embeddings_file, mode="r"), mode="r"
+            embeddings = zarr.open_array(
+                ZipStore(embeddings_file, mode="r"), mode="r"
             )
     else:
         raise ValueError("Unknown embeddings file format")
 
-    return embeddings
+    if isinstance(embeddings, zarr.Array) or isinstance(embeddings, h5py.Dataset):
+        return embeddings
+    else:
+        raise ValueError("Group name resulted in a group object. Please provide a dataset/array name.")

@@ -5,7 +5,21 @@ import numpy as np
 class Node:
     def __init__(self, node_size, dim, dtype=np.float16):
         self.embeddings: np.ndarray = np.zeros(shape=(node_size, dim), dtype=dtype)
-        self.item_ids: List[np.uint32] = []
+        # self.item_ids: List[np.uint32] = []
         self.node_ids: List[np.uint32] = []
         self.distances: np.ndarray = np.zeros(shape=(node_size,), dtype=dtype)
+        self.border: Tuple[np.uint32, dtype] = (0, 0.0)
+        self.parent: np.uint32 = 0
+
+
+class LeafNode:
+    def __init__(self, size, dim, dtype=np.float16):
+        self.embeddings: np.ndarray = np.zeros(shape(size, dim), dtype=dtype)
+        self.item_ids: List[np.uint32] = []
+        self.distances: np.ndarray = np.zeros(
+            shape(
+                size,
+            ),
+            dtype=dtype,
+        )
         self.border: Tuple[np.uint32, dtype] = (0, 0.0)

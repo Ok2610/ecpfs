@@ -1,3 +1,4 @@
+from ecpfs.utils import get_source_embeddings, calculate_chunk_size
 import math
 import h5py
 import zarr
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Tuple
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
+from enum import Enum
 
 from pathos.multiprocessing import Pool, cpu_count
 
@@ -76,30 +78,7 @@ class ECPBuilder:
         #### Returns
         A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
         """
-        embeddings = None
-        emb_fp = None
-
-        # Get embeddings from HDF5 or zarr
-        if embeddings_file.suffix == ".h5":
-            emb_fp = h5py.File(embeddings_file, "r")
-            embeddings = emb_fp[grp_name]
-        elif (
-            embeddings_file.suffix == ".zarr"
-        ):
-            if grp:
-                embeddings = zarr.open(embeddings_file, mode="r")[grp_name]
-            else:
-                embeddings = zarr.open(embeddings_file, mode="r")
-        elif(embeddings_file.suffix == ".zip"
-            or str.lower(embeddings_file.suffix) == ".zipstore"):
-            emb_fp = zarr.storage.ZipStore(embeddings_file, mode="r")
-            if grp:
-                embeddings = zarr.open(emb_fp, mode="r")[grp_name]
-            else:
-                embeddings = zarr.open(emb_fp, mode="r")
-
-        else:
-            raise ValueError("Unknown embeddings file format")
+        embeddings = get_source_embeddings(embeddings_file, grp, grp_name)
 
         # Determine sizes
         total_items, total_features = embeddings.shape
@@ -107,9 +86,10 @@ class ECPBuilder:
         self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
 
         self.chunk_size = calculate_chunk_size(
-            num_features=total_features,
-            dtype=embeddings.dtype
+            num_features=total_features, dtype=embeddings.dtype
         )
+
+        self.logger.info(f"Chunk Shape = {self.chunk_size}")
 
         # Select cluster centroids
         if option == "offset":
@@ -212,8 +192,9 @@ class ECPBuilder:
 
         self.chunk_size = calculate_chunk_size(
             num_features=self.representative_embeddings.shape[1],
-            dtype=self.representative_embeddings.dtype
+            dtype=self.representative_embeddings.dtype,
         )
+        self.logger.info(f"Chunk Shape = {self.chunk_size}")
 
         self.write_cluster_representatives()
 
@@ -868,27 +849,7 @@ class ECPBuilder:
             processes = workers
 
         embeddings = None
-        emb_fp = None
-        if embeddings_file.suffix == ".h5":
-            emb_fp = h5py.File(embeddings_file, "r")
-            embeddings = emb_fp[grp_name]
-        elif (
-            embeddings_file.suffix == ".zarr"
-        ):
-            if grp:
-                embeddings = zarr.open(embeddings_file, mode="r")[grp_name]
-            else:
-                embeddings = zarr.open(embeddings_file, mode="r")
-
-        elif(
-            embeddings_file.suffix == ".zip"
-            or str.lower(embeddings_file.suffix) == ".zipstore"
-        ):
-            emb_fp = zarr.storage.ZipStore(embeddings_file, mode="r")
-            if grp:
-                embeddings = zarr.open(emb_fp, mode="r")[grp_name]
-            else:
-                embeddings = zarr.open(emb_fp, mode="r")
+        embeddings = get_source_embeddings(embeddings_file, grp, grp_name)
 
         chunk_size = chunk_size
         partial_node_maps = []

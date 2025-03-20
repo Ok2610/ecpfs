@@ -6,7 +6,7 @@ authors = ["Omar Khan <ok2610@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 pytest = "^8.2.2"
 numpy = "^2.0.0"
 click = "^8.1.7"
@@ -21,6 +21,9 @@ dill = "^0.3.9"
 pathos = "^0.3.3"
 zarr = "^3.0.5"
 
+
+[tool.poetry.group.dev.dependencies]
+pylint = "^3.3.5"
 
 [build-system]
 requires = ["poetry-core"]

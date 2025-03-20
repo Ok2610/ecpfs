@@ -6,35 +6,17 @@ from tqdm import tqdm
 from queue import PriorityQueue
 from pathlib import Path
 from typing import Tuple
-from math import sqrt
-from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
 
 from pathos.multiprocessing import Pool, cpu_count
-import zarr.storage
 
-def calculate_chunk_size(num_features, dtype=np.float32, max_chunk_size=50 * 1024 * 1024):
-    """
-    Calculates the maximum number of rows that keeps the chunk size below the given limit.
-    
-    Args:
-        shape (tuple): Shape of the dataset (rows, columns).
-        dtype (numpy dtype): Data type of the array.
-        max_chunk_size (int): Maximum chunk size in bytes (default: 50 MB).
 
-    Returns:
-        tuple: Optimal chunk size (rows, columns).
-    """
-    bytes_per_value = np.dtype(dtype).itemsize  # Size of one value in bytes
-    bytes_per_row = num_features * bytes_per_value  # Size of one row in bytes
+class Metric(Enum):
+    L2 = 0
+    IP = 1
+    COS = 2
 
-    max_rows = max_chunk_size // bytes_per_row  # Max rows per chunk
-
-    if max_rows < 1:
-        raise ValueError("Chunk size too small to fit even one row. Increase max_chunk_size or reduce dimensions.")
-
-    return (max_rows, num_features)
 
 class ECPBuilder:
     def __init__(
@@ -42,7 +24,7 @@ class ECPBuilder:
         levels: int,
         logger,
         target_cluster_size=100,
-        metric="L2",
+        metric=Metric.L2,
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
     ):
@@ -68,8 +50,8 @@ class ECPBuilder:
         self.file_store = file_store
         self.representative_ids: np.ndarray | None = None
         self.representative_embeddings: np.ndarray | None = None
-        self.item_to_cluster_map = {}
-        self.chunk_size = (-1,-1) 
+        # self.item_to_cluster_map = {}
+        self.chunk_size = (-1, -1)
         return
 
     def select_cluster_representatives(
@@ -168,11 +150,11 @@ class ECPBuilder:
             self.representative_embeddings = mbk.cluster_centers_
             self.representative_ids = np.arange(self.total_clusters)
         elif option == "dissimilar":
-            if self.metric == "IP":
+            if self.metric == Metric.IP:
                 """"""
-            elif self.metric == "L2":
+            elif self.metric == Metric.L2:
                 """"""
-            elif self.metric == "cos":
+            elif self.metric == Metric.COS:
                 """"""
             raise NotImplementedError("dissimilar option")
         else:
@@ -247,14 +229,14 @@ class ECPBuilder:
         #### Returns
         Output the argsorted top array and the calculated distance array
         """
-        if self.metric == "IP":
+        if self.metric == Metric.IP:
             distances = np.dot(self.index["root"]["embeddings"], emb)
             top = np.argsort(distances)[::-1]
-        elif self.metric == "L2":
+        elif self.metric == Metric.L2:
             differences = self.index["root"]["embeddings"] - emb
             distances = np.linalg.norm(differences, axis=1)
             top = np.argsort(distances)
-        elif self.metric == "cos":
+        elif self.metric == Metric.COS:
             distances = cosine_similarity(
                 self.index["root"]["embeddings"], (emb,)
             ).flatten()
@@ -319,14 +301,14 @@ class ECPBuilder:
         #### Returns
         Output the argsorted top array and the calculated distance array
         """
-        if self.metric == "IP":
+        if self.metric == Metric.IP:
             distances = np.dot(self.index[lvl][node]["embeddings"], emb)
             top = np.argsort(distances)[::-1]
-        elif self.metric == "L2":
+        elif self.metric == Metric.L2:
             differences = self.index[lvl][node]["embeddings"] - emb
             distances = np.linalg.norm(differences)
             top = np.argsort(distances)
-        elif self.metric == "cos":
+        elif self.metric == Metric.COS:
             distances = cosine_similarity(
                 self.index[lvl][node]["embeddings"], (emb,)
             ).flatten()
@@ -355,13 +337,15 @@ class ECPBuilder:
         Calculate and set the border item for the node at the provided level
         """
         # Update border info
-        if self.metric == "IP" or self.metric == "cos":
+        if self.metric == Metric.IP or self.metric == Metric.COS:
+            # TODO: Calculate dot product with representative embedding
             new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))
             self.index[lvl][node]["border"] = (
                 new_border_dists[0],
                 self.index[lvl][node]["distances"][new_border_dists[0]],
             )
-        elif self.metric == "L2":
+        elif self.metric == Metric.L2:
+            # TODO: Calculate L2 distance with representative embedding
             new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))[
                 ::-1
             ]
@@ -414,7 +398,7 @@ class ECPBuilder:
             cl_idx: The index of the representative cluster
             """
             border_idx, border_dist = self.index[lvl][node]["border"]
-            if self.metric == "IP" or self.metric == "cos":
+            if self.metric == Metric.IP or self.metric == Metric.COS:
                 if border_dist < dist:
                     self.index[lvl][node]["embeddings"][border_idx] = emb
                     self.index[lvl][node]["items_ids"][border_idx] = (
@@ -423,7 +407,7 @@ class ECPBuilder:
                     self.index[lvl][node]["node_ids"][border_idx] = cl_idx
                     self.index[lvl][node]["distances"][border_idx] = dist
                     self.update_node_border_info(lvl, node)
-            elif self.metric == "L2":
+            elif self.metric == Metric.L2:
                 if border_dist > dist:
                     self.index[lvl][node]["embeddings"][border_idx] = emb
                     self.index[lvl][node]["items_ids"][border_idx] = (
@@ -516,7 +500,7 @@ class ECPBuilder:
                         self.index[lvl][node]["node_ids"].append(cl_idx)
                         self.index[lvl][node]["distances"][next] = distances[top[0]]
                         # TODO: Move the below part to a function and call it after index is built
-                        if self.metric == "IP" or self.metric == "cos":
+                        if self.metric == Metric.IP or self.metric == Metric.COS:
                             if (
                                 self.index[lvl][node]["border"][1] is None
                                 or self.index[lvl][node]["border"][1]
@@ -526,7 +510,7 @@ class ECPBuilder:
                                     next,
                                     distances[top[0]],
                                 )
-                        elif self.metric == "L2":
+                        elif self.metric == Metric.L2:
                             if (
                                 self.index[lvl][node]["border"][1] is None
                                 or self.index[lvl][node]["border"][1]

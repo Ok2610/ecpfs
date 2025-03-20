@@ -1,7 +1,7 @@
 import sys
 import typer
 from loguru import logger
-from typing_extensions import Annotated
+from typing import Annotated
 from pathlib import Path
 
 from ecpfs import ECPBuilder
@@ -120,11 +120,22 @@ def build_index(
         logger.error("Embeddings file does not exist!")
         exit(-1)
 
+    _metric = None
+    if metric == Metric.L2.name:
+        _metric = Metric.L2
+    elif metric == Metric.IP.name:
+        _metric = Metric.IP
+    elif metric == Metric.COS.name:
+        _metric = Metric.COS
+    else:
+        logger.error("Invalid metric")
+        exit(-1)
+
     ecp = ECPBuilder.ECPBuilder(
         levels=levels,
         logger=logger,
         target_cluster_size=target_cluster_size,
-        metric=metric,
+        metric=_metric,
         index_file=save_file,
         file_store=file_store,
     )

@@ -14,10 +14,10 @@ class Node:
 
 class LeafNode:
     def __init__(self, size, dim, dtype=np.float16):
-        self.embeddings: np.ndarray = np.zeros(shape(size, dim), dtype=dtype)
+        self.embeddings: np.ndarray = np.zeros(shape=(size, dim), dtype=dtype)
         self.item_ids: List[np.uint32] = []
         self.distances: np.ndarray = np.zeros(
-            shape(
+            shape=(
                 size,
             ),
             dtype=dtype,

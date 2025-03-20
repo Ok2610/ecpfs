@@ -308,9 +308,8 @@ class ECPBuilder:
         self.index[lvl][node]["distances"].resize(
             len(self.index[lvl][node]["item_ids"])
         )
-        # TODO
-        # if len(self.index[lvl][node]["item_ids"]) > 0:
-        #     update_node_border_info(lvl, node)
+        if len(self.index[lvl][node]["item_ids"]) > 0:
+            self.update_node_border_info(lvl, node)
 
     def update_node_border_info(self, lvl: str, node: str):
         """
@@ -341,18 +340,24 @@ class ECPBuilder:
         lvl_range = self.node_size
         for i in range(self.levels):
             lvl = "lvl_" + str(i)
+            level = int(lvl.split("_")[1])
+            if level == self.levels - 1:
+                ids_key = "item_ids"
+            else:
+                ids_key = "node_ids"
+
             for j in range(lvl_range):
                 node = "node_" + str(j)
                 self.index[lvl][node]["embeddings"].resize(
                     (
-                        len(self.index[lvl][node]["item_ids"]),
+                        len(self.index[lvl][node][ids_key]),
                         self.index[lvl][node]["embeddings"].shape[1],
                     )
                 )
                 self.index[lvl][node]["distances"].resize(
-                    len(self.index[lvl][node]["item_ids"])
+                    len(self.index[lvl][node][ids_key])
                 )
-                if len(self.index[lvl][node]["item_ids"]) > 0:
+                if len(self.index[lvl][node][ids_key]) > 0:
                     self.update_node_border_info(lvl, node)
             if i + 1 == self.levels - 1:
                 lvl_range = self.total_clusters
@@ -407,7 +412,7 @@ class ECPBuilder:
 
         self.index = {}
         self.index["root"] = {}
-        self.index["root"]["item_ids"] = self.representative_ids[: self.node_size]
+        self.index["root"]["node_ids"] = self.representative_ids[: self.node_size]
         self.index["root"]["embeddings"] = self.representative_embeddings[
             : self.node_size
         ]
@@ -419,6 +424,10 @@ class ECPBuilder:
             if lvl_range > self.total_clusters:
                 lvl_range = self.total_clusters
             lvl = "lvl_" + str(l)
+            if l == self.levels - 1:
+                ids_key = "item_ids"
+            else:
+                ids_key = "node_ids"
             self.index[lvl] = {}
             for i in range(lvl_range):
                 node = "node_" + str(i)
@@ -427,8 +436,7 @@ class ECPBuilder:
                         shape=(self.node_size, self.representative_embeddings.shape[1]),
                         dtype=self.representative_embeddings.dtype,
                     ),
-                    "item_ids": [],
-                    "node_ids": [],
+                    ids_key: [],
                     "distances": np.zeros(
                         shape=(self.node_size,),
                         dtype=self.representative_embeddings.dtype,
@@ -454,7 +462,7 @@ class ECPBuilder:
                     lvl = "lvl_" + str(curr_lvl)
                     node = "node_" + str(n)
                     if curr_lvl == l:
-                        next = len(self.index[lvl][node]["item_ids"])
+                        next = len(self.index[lvl][node]["node_ids"])
                         if next >= self.index[lvl][node]["embeddings"].shape[0]:
                             concat_array_emb = np.zeros(
                                 shape=(
@@ -474,9 +482,6 @@ class ECPBuilder:
                                 (self.index[lvl][node]["distances"], concat_array_dist)
                             )
                         self.index[lvl][node]["embeddings"][next] = emb
-                        self.index[lvl][node]["item_ids"].append(
-                            self.representative_ids[cl_idx]
-                        )
                         self.index[lvl][node]["node_ids"].append(cl_idx)
                         self.index[lvl][node]["distances"][next] = distances[top[0]]
                         # TODO: Move the below part to a function and call it after index is built
@@ -516,7 +521,9 @@ class ECPBuilder:
             if self.file_store == "zarr_l":
                 root = zarr.open(self.index_file)
             elif self.file_store == "zarr_z":
-                root = zarr.open(zarr.storage.ZipStore(self.index_file, mode="a"), mode="a")
+                root = zarr.open(
+                    zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
+                )
 
             # /index_root
             root.create_group("index_root")
@@ -525,14 +532,19 @@ class ECPBuilder:
                 name="embeddings",
                 shape=self.index["root"]["embeddings"].shape,
                 dtype=self.index["root"]["embeddings"].dtype,
-                chunks=self.chunk_size
+                chunks=self.chunk_size,
             )
             root["index_root"]["embeddings"] = self.index["root"]["embeddings"]
-            # /index_root/item_ids (N,) uint32/uint64
-            root["index_root"]["item_ids"] = np.array(self.index["root"]["item_ids"])
+            # /index_root/node_ids (N,) uint32/uint64
+            root["index_root"]["node_ids"] = np.array(self.index["root"]["node_ids"])
             for k, v in self.index.items():
                 if not k.startswith("lvl_"):
                     continue
+                level = int(k.split("_")[1])
+                if level == self.levels - 1:
+                    ids_key = "item_ids"
+                else:
+                    ids_key = "node_ids"
                 # /lvl_{}
                 root.create_group(k)
                 for n, node in v.items():
@@ -543,20 +555,17 @@ class ECPBuilder:
                         name="embeddings",
                         shape=node["embeddings"].shape,
                         dtype=node["embeddings"].dtype,
-                        chunks=self.chunk_size
+                        chunks=self.chunk_size,
                     )
-                    root[k][n]["embeddings"] = node["embeddings"]
-                    # /lvl_{}/node_{}/item_ids
-                    root[k][n]["item_ids"] = np.array(node["item_ids"], dtype=np.uint32)
-                    # /lvl_{}/node_{}/node_ids
-                    root[k][n]["node_ids"] = np.array(node["node_ids"], dtype=np.uint32)
+                    root[k][n]["embeddings"][:] = node["embeddings"]
+                    # /lvl_{}/node_{}/node_ids|item_ids
+                    root[k][n][ids_key] = np.array(node[ids_key], dtype=np.uint32)
                     # /lvl_{}/node_{}/distances
-                    root[k][n]["distances"] = node["distances"]
+                    # root[k][n]["distances"] = node["distances"]
                     # /lvl_{}/node_{}/border
-                    root[k][n]["border"] = np.array([
-                        node["border"][0],
-                        node["border"][1]
-                    ])
+                    root[k][n]["border"] = np.array(
+                        [node["border"][0], node["border"][1]]
+                    )
         elif self.file_store == "h5":
             h5 = h5py.File(self.index_file, "a")
             # /index_root
@@ -568,16 +577,22 @@ class ECPBuilder:
                 maxshape=(None, self.index["root"]["embeddings"].shape[1]),
                 chunks=True,
             )
-            # /index_root/item_ids
+            # /index_root/node_ids
             root_group.create_dataset(
-                "item_ids",
-                data=self.index["root"]["item_ids"],
+                "node_ids",
+                data=self.index["root"]["node_ids"],
                 maxshape=(None,),
                 chunks=True,
             )
             for k, v in self.index.items():
                 if not k.startswith("lvl_"):
                     continue
+                level = int(k.split("_")[1])
+                if level == self.levels - 1:
+                    ids_key = "item_ids"
+                else:
+                    ids_key = "node_ids"
+
                 # /lvl_{}
                 lvl_group = h5.create_group(k)
                 for n, node in v.items():
@@ -591,16 +606,16 @@ class ECPBuilder:
                         chunks=True,
                     )
                     # /lvl_{}/node_{}/distances
+                    # node_group.create_dataset(
+                    #     "distances",
+                    #     data=node["distances"],
+                    #     maxshape=(None,),
+                    #     chunks=True,
+                    # )
+                    # /lvl_{}/node_{}/node_ids|item_ids
                     node_group.create_dataset(
-                        "distances",
-                        data=node["distances"],
-                        maxshape=(None,),
-                        chunks=True,
-                    )
-                    # /lvl_{}/node_{}/item_ids
-                    node_group.create_dataset(
-                        "item_ids",
-                        data=node["item_ids"],
+                        ids_key,
+                        data=node[ids_key],
                         maxshape=(None,),
                         chunks=True,
                     )

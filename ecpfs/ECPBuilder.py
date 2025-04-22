@@ -1,15 +1,16 @@
+import concurrent.futures
 import math
+import concurrent
 import h5py
 import zarr
 import numpy as np
 from pathlib import Path
 from typing import Tuple
-from queue import PriorityQueue
 from tqdm import tqdm
 from enum import Enum
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
-from pathos.multiprocessing import Pool
+# from pathos.multiprocessing import Pool
 from multiprocessing import cpu_count
 
 from ecpfs.utils import get_source_embeddings, calculate_chunk_size
@@ -21,6 +22,10 @@ class Metric(Enum):
 
 
 class ECPBuilder:
+    """
+    Class to build the eCP index tree.
+    The class is designed to build a hierarchical index for fast nearest neighbor search in high-dimensional spaces.
+    """
     def __init__(
         self,
         levels: int,
@@ -35,14 +40,11 @@ class ECPBuilder:
 
         Parameters:
 
-        levels: Number of levels in the index hierarchy
-        target_cluster_size: Aim for clusters of this size (no guarantees)
-        metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
-
-        index_file: If a filename is specified, all index related data will be stored in a store. Default behaviour is to store it using a zarr.storage.LocalStore under the name "ecpfs_index.zarr". Set this to empty string if you do not want to store the index.
-
-        file_store: "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5)
-        The file format to store the representative cluster embeddings and ids. default="zarr_l"
+            levels: Number of levels in the index hierarchy
+            target_cluster_size: Aim for clusters of this size (no guarantees)
+            metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
+            index_file: If a filename is specified, all index related data will be stored in a store. Default behaviour is to store it using a zarr.storage.LocalStore under the name "ecpfs_index.zarr". Set this to empty string if you do not want to store the index.
+            file_store: The file format to store the representative cluster embeddings and ids. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
         """
         self.levels: int = levels
         self.target_cluster_size: int = target_cluster_size
@@ -68,17 +70,19 @@ class ECPBuilder:
         """
         Determine the list of representatives for clusters.
 
-        #### Parameters
-        embeddings_file: A .h5/.zarr/.zip/.zipstore file that stores 2D np.ndarray of embeddings (.zarr = LocalStore, .zip/.zipstore = ZipStore)
+        Parameters:
+            embeddings_file: A .h5/.zarr/.zip/.zipstore file that stores 2D np.ndarray of embeddings (.zarr = LocalStore, .zip/.zipstore = ZipStore)
 
-        option: "offset", "random", or "dissimilar".
-        "offset" = select based of an offset determined through the index config info,
-        "random" = arbitrarily select cluster representatives, and
-        "dissimilar" = ensure that a representative is dissimilar from others at the same level.
+            option: "offset", "random", or "dissimilar".
+                "offset" = select based of an offset determined through the index config info,
+                "random" = arbitrarily select cluster representatives, and
+                "dissimilar" = ensure that a representative is dissimilar from others at the same level.
 
 
-        #### Returns
-        A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
+                - embeddings: 2D array of representative cluster embeddings.
+                - ids: 1D array of representative cluster ids.
         """
         embeddings = get_source_embeddings(embeddings_file, grp, grp_name)
 
@@ -161,14 +165,16 @@ class ECPBuilder:
 
         The HDF5 file should have two datasets, one for their representative embeddings and one for their item ids.
 
-        #### Parameters
-        fp: File path
-        emb_dsname: Dataset name of representative embeddings, default=clst_representatives
-        ids_dsname: Dataset name of representative item ids, default=clst_item_ids
-        format: "zarr_l" (LocalStore), "zarr_z" (ZipStore), "h5" (HDF5)
+        Parameters:
+            fp (Path): File path to the zarr or HDF5 file.
+            emb_dsname (str): Dataset name of representative embeddings, default=clst_embeddings
+            ids_dsname (str): Dataset name of representative item ids, default=clst_item_ids
+            format (str): Format of the file. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
 
-        #### Returns
-        A tuple of two numpy arrays, a 2D array for the embeddings, and a 1D array for their item ids.
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
+                - embeddings: 2D array of representative cluster embeddings.
+                - ids: 1D array of representative cluster ids.
         """
 
         if format == "zarr_l":
@@ -202,11 +208,13 @@ class ECPBuilder:
         """
         Calculate the distance to the embeddings of the root node
 
-        #### Parameters
-        emb: Embedding vector to calculate distance to root node embeddings
+        Parameters:
+            emb (np.ndarray): Embedding vector to calculate distance to root node embeddings
 
-        #### Returns
-        Output the argsorted top array and the calculated distance array
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
+                - top: The indices of the sorted distances (argsorted).
+                - distances: The calculated distances to the root node embeddings.
         """
         if self.metric == Metric.IP:
             distances = np.dot(self.index["root"]["embeddings"], emb)
@@ -233,7 +241,6 @@ class ECPBuilder:
                 )
             root.create_group("info")
             root["info"]["levels"] = np.array([self.levels])
-            # TODO: Check if zarr v3 supports strings
             root["info"]["metric"] = np.array([self.metric.value])
         elif self.file_store == "h5":
             with h5py.File(self.index_file, "a") as hf:
@@ -272,13 +279,15 @@ class ECPBuilder:
         """
         Calculate the distance to the embeddings of the node at the specified level
 
-        #### Parameters
-        emb: Embedding vector
-        lvl: The level to check, ex. "lvl_0", "lvl_1"
-        node: Node to check, ex. "node_0", "node_1"
+        Parameters:
+            emb (np.ndarray): Embedding vector to calculate distance to node embeddings
+            lvl (str): The level to check, ex. "lvl_0", "lvl_1"
+            node (str): Node to check, ex. "node_0", "node_1"
 
-        #### Returns
-        Output the argsorted top array and the calculated distance array
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
+                - top: The indices of the sorted distances (argsorted).
+                - distances: The calculated distances to the node embeddings.
         """
         if self.metric == Metric.IP:
             distances = np.dot(self.index[lvl][node]["embeddings"], emb)
@@ -297,6 +306,10 @@ class ECPBuilder:
     def align_specific_node(self, lvl, node):
         """
         Resize the embeddings and distances arrays of a node to match their actual size
+
+        Parameters:
+            lvl (str): The level of the node, ex. "lvl_0", "lvl_1"
+            node (str): The node to resize, ex. "node_0", "node_1"
         """
         self.index[lvl][node]["embeddings"].resize(
             (
@@ -313,6 +326,10 @@ class ECPBuilder:
     def update_node_border_info(self, lvl: str, node: str):
         """
         Calculate and set the border item for the node at the provided level
+
+        Parameters:
+            lvl (str): The level of the node, ex. "lvl_0", "lvl_1"
+            node (str): The node to update, ex. "node_0", "node_1"
         """
         # Update border info
         if self.metric == Metric.IP or self.metric == Metric.COS:
@@ -375,11 +392,12 @@ class ECPBuilder:
             Check if the maximum number of items have been reached in a node, and
             if the new item is better than the border item, replace and update border item info
 
-            #### Parameters
-            lvl: Level of the node
-            node: The node to check
-            emb: Embedding vector of item to check
-            cl_idx: The index of the representative cluster
+            Parameters:
+                lvl (str): The level of the node, ex. "lvl_0", "lvl_1"
+                node (str): The node to check, ex. "node_0", "node_1"
+                emb (np.ndarray): The embedding vector of the item to check
+                cl_idx (int): The index of the representative cluster
+                dist (float): The distance of the item to the node
             """
             border_idx, border_dist = self.index[lvl][node]["border"]
             if self.metric == Metric.IP or self.metric == Metric.COS:
@@ -515,7 +533,7 @@ class ECPBuilder:
         self.align_node_embeddings_and_distances()
 
         # TODO: Move to own function
-        # self.write_tree_to_file()
+        # self.write_tree_structure_to_file()
         # TODO: Multiprocess this part
         if "zarr" in self.file_store:
             self.logger.info("Saving tree to file...")
@@ -562,8 +580,6 @@ class ECPBuilder:
                     root[k][n]["embeddings"][:] = node["embeddings"]
                     # /lvl_{}/node_{}/node_ids|item_ids
                     root[k][n][ids_key] = np.array(node[ids_key], dtype=np.uint32)
-                    # /lvl_{}/node_{}/distances
-                    # root[k][n]["distances"] = node["distances"]
                     # /lvl_{}/node_{}/border
                     root[k][n]["border"] = np.array(
                         [node["border"][0], node["border"][1]]
@@ -607,13 +623,6 @@ class ECPBuilder:
                         maxshape=(None, node["embeddings"].shape[1]),
                         chunks=True,
                     )
-                    # /lvl_{}/node_{}/distances
-                    # node_group.create_dataset(
-                    #     "distances",
-                    #     data=node["distances"],
-                    #     maxshape=(None,),
-                    #     chunks=True,
-                    # )
                     # /lvl_{}/node_{}/node_ids|item_ids
                     node_group.create_dataset(
                         ids_key,
@@ -764,7 +773,6 @@ class ECPBuilder:
             self.index[lvl][node]["embeddings"] = np.array(
                 [embs[sort_map[i]] for i in ids]
             )
-            # TODO: Refactor so that it works
             # TODO: Move the below part to a function and call it after index is built
             if self.metric == Metric.IP or self.metric == Metric.COS:
                 if self.index[lvl][node]["border"] is None or self.index[lvl][node][
@@ -817,28 +825,46 @@ class ECPBuilder:
         partial_node_maps = []
         total_items = embeddings.shape[0]
         # Determine the level-1 clusters of items in batches (chunk_size)
-        with Pool(processes=processes) as pool:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=processes) as executor:
+            # Create a list of futures for each chunk
             futures = []
+            # Iterate over the chunks of data
             for start_idx in range(0, total_items, chunk_size):
+                # Calculate the end index for the current chunk
                 end_idx = min(start_idx + chunk_size, total_items)
+                # Get the chunk of data
                 chunk_data = embeddings[start_idx:end_idx][...]
-                async_results = pool.apply_async(
-                    process_chunk, args=(chunk_data, start_idx)
+                # Submit the chunk to the executor for processing
+                async_results = executor.submit(
+                    process_chunk, chunk_data, start_idx
                 )
+                # Append the future to the list
                 futures.append(async_results)
-            for future in tqdm(futures, desc="Gathering thread results"):
-                partial_node_maps.append(future.get())
+            
+            # Wait for all futures to complete and gather the results
+            for future in tqdm(concurrent.futures.as_completed(futures), desc="Gathering thread results", total=len(futures)):
+                # Get the result from the future and append it to the list
+                partial_node_maps.append(future.result())
         del chunk_data
 
         clst_batches = int(self.total_clusters // 20)
-        with Pool(processes=processes) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=processes) as executor:
+            # Create a list of futures for each batch
+            futures = []
+            # Iterate over the batches of data
             for start_idx in range(0, self.total_clusters, clst_batches):
+                # Calculate the end index for the current batch
                 end_idx = min(start_idx + clst_batches, self.total_clusters)
                 clusters = {}
                 for n in tqdm(range(start_idx, end_idx), desc="Preparing batch"):
+                    # From the partial_node_maps, get the item ids and distances
+                    # for the current cluster node
                     node = f"node_{n}"
                     for pmap in partial_node_maps:
+                        # Check if the node exists in the partial_node_map
                         if node in pmap:
+                            # If it does, get the item ids and distances
+                            # and add them to the clusters dict
                             for e_idx, dist in pmap[node]:
                                 if node not in clusters:
                                     clusters[node] = {"ids": [], "distances": []}
@@ -859,75 +885,23 @@ class ECPBuilder:
                     continue
                 else:
                     self.logger.info(
-                        f"Loading cluster batch embeddings ({len(all_indices)})"
+                        f"Writing cluster batch embeddings ({len(all_indices)})"
                     )
 
-                    pool.apply_async(
+                    # Submit the batch to the executor for processing
+                    executor.submit(
                         self.write_items_concurrent,
-                        args=(
-                            embeddings,
-                            all_indices,
-                            node_order,
-                            clusters,
-                            start_idx,
-                            end_idx,
-                        ),
+                        embeddings,
+                        all_indices,
+                        node_order,
+                        clusters,
+                        start_idx,
+                        end_idx,
                     )
-            pool.close()
-            pool.join()  # Wait for all the workers to finish
-
-    def search_tree(self, query: np.ndarray, search_exp: int, k: int, restart=True):
-        """
-        Search the index tree and find the <search_exp> best leaf nodes.
-        Uses priority queues to continue the previous search.
-
-        #### Parameters:
-        query: The query array
-        search_exp: The amount of leaf nodes to explore
-        k: Number of items to return
-        restart: If the priority queue should be cleared or not
-
-        #### Returns:
-        A priority queue of items
-        """
-        leaf_cnt = 0
-        if restart:
-            self.tree_pq = PriorityQueue()
-            self.item_pq = PriorityQueue()
-        top, distances = self.distance_root_node(query)
-        # Add to tree_pq
-        for t in top:
-            self.tree_pq.put((distances[t], False, 0, t))
-
-        while leaf_cnt != search_exp and not self.tree_pq.empty():
-            _, is_leaf, l, n = self.tree_pq.get()
-            if is_leaf:
-                # Pop leaf node items onto the item queue and increase the leaf_cnt
-                lvl = "lvl_" + str(l)
-                node = "node_" + str(n)
-                radius = self.index[lvl][node]["border"][1]
-                top, distances = self.distance_level_node(query, lvl, node)
-                for t in top:
-                    self.item_pq.put(
-                        (distances[t], self.index[lvl][node]["item_ids"][t])
-                    )
-                leaf_cnt += 1
-            else:
-                # Keep popping from queue and adding the next level and node to the queue
-                top, distances = self.distance_level_node(query, lvl, node)
-                for t in top:
-                    dist = (
-                        distances[t] - radius
-                        if self.metric == Metric.L2
-                        else distances[t] + radius
-                    )
-                    if l + 1 == self.levels - 1:
-                        self.tree_pq.put(
-                            (dist, True, l + 1, self.index[lvl][node]["node_ids"][t])
-                        )
-                    else:
-                        self.tree_pq.put(
-                            (dist, False, l + 1, self.index[lvl][node]["node_ids"][t])
-                        )
-
-        return [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
+            for future in tqdm(concurrent.futures.as_completed(futures), desc="Gathering thread results", total=len(futures)):
+                # Do nothing, just wait for all futures to complete
+                try:
+                    future.result()
+                except Exception as e:
+                    self.logger.error(f"Error in thread: {e}")
+                    raise e 

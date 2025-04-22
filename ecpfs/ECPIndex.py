@@ -19,6 +19,7 @@ class ECPIndex:
         tree_pq (PriorityQueue): Priority queue for tree search.
         item_pq (PriorityQueue): Priority queue for item search.
     """
+
     class _Node:
         """
         A class representing a node in the index tree.
@@ -31,6 +32,7 @@ class ECPIndex:
             last_access (float): Last access time.
             access_count (int): Access count.
         """
+
         def __init__(self, node_fp: zarr.Group, c_key: str):
             """
             Initializes the node with its zarr group and children key.
@@ -38,13 +40,13 @@ class ECPIndex:
                 node_fp (zarr.Group): Zarr group for the node.
                 c_key (str): Key for children (node_ids | item_ids).
             """
-            self._node_fp = node_fp  
-            self._c_key = c_key      
-            self._embeddings = None  
-            self._children = None    
-            self._last_access = 0    
-            self._access_count = 0   
-        
+            self._node_fp = node_fp
+            self._c_key = c_key
+            self._embeddings = None
+            self._children = None
+            self._last_access = 0
+            self._access_count = 0
+
         @property
         def embeddings(self):
             """
@@ -57,7 +59,7 @@ class ECPIndex:
             if self._embeddings is None:
                 self._embeddings = self._node_fp["embeddings"][:]
             return self._embeddings
-        
+
         @property
         def children(self):
             """
@@ -70,14 +72,14 @@ class ECPIndex:
             if self._children is None:
                 self._children = self._node_fp[self._c_key][:]
             return self._children
-        
+
         def clear_cache(self):
             """
             Clears the cached embeddings and children of the node.
             """
             self._embeddings = None
             self._children = None
-        
+
         def is_loaded(self):
             """
             Checks if the node's embeddings or children are loaded.
@@ -86,8 +88,7 @@ class ECPIndex:
             """
             return self._embeddings is not None or self._children is not None
 
-
-    def __init__(self, index_path: Path, prefetch: int=-1, max_workers=4):
+    def __init__(self, index_path: Path, prefetch: int = -1, max_workers=4):
         """
         Initializes the ECPIndex with the given index path.
         Parameters:
@@ -96,7 +97,7 @@ class ECPIndex:
             max_workers (int): Number of threads to use for prefetching.
         """
         store = LocalStore(index_path)
-        index_fp = zarr.open(store, mode='r')
+        index_fp = zarr.open(store, mode="r")
         self.root = index_fp["index_root"]["embeddings"]
         self.levels = index_fp["info"]["levels"][0]
         self.nodes = [[] for _ in range(self.levels)]
@@ -109,7 +110,7 @@ class ECPIndex:
                     self._Node(node_fp=index_fp[lvl][node], c_key=c_key)
                 )
         if prefetch > -1:
-            for i in range(prefetch+1):
+            for i in range(prefetch + 1):
                 self.prefetch_level(i, max_workers=max_workers)
 
     def __distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -142,7 +143,7 @@ class ECPIndex:
 
     def cleanup_cache(self, max_loaded_nodes: int):
         """
-        If more than max_loaded_nodes have their arrays loaded, 
+        If more than max_loaded_nodes have their arrays loaded,
         clears the cache for nodes that were accessed the least recently.
         Parameters:
             max_loaded_nodes (int): Maximum number of loaded nodes allowed.
@@ -155,7 +156,7 @@ class ECPIndex:
         total_loaded = len(loaded_nodes)
         print(f"Total loaded nodes: {total_loaded}")
         if total_loaded <= max_loaded_nodes:
-            return 
+            return
         # Calculate how many node caches to clear.
         nodes_to_clear = total_loaded - max_loaded_nodes
         # Sort by last access (least recently accessed first).
@@ -182,6 +183,7 @@ class ECPIndex:
             level_index (int): Index of the level to prefetch.
             max_workers (int): Number of threads to use for prefetching.
         """
+
         def load_node(node):
             # Access the properties to trigger the lazy load.
             _ = node.embeddings
@@ -193,15 +195,11 @@ class ECPIndex:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         # Submit loading tasks for all nodes.
         _ = [executor.submit(load_node, node) for node in nodes]
-        # Optionally wait for all preloading to complete.
-        # for future in concurrent.futures.as_completed(futures):
-        #     try:
-        #         future.result()
-        #     except Exception as e:
-        #         print(f"Error preloading node: {e}")
         executor.shutdown(wait=False)
 
-    def search(self, query: np.ndarray, k: int, search_exp=64, restart=True) -> Tuple[List[float], List[int]]:
+    def search(
+        self, query: np.ndarray, k: int, search_exp=64, restart=True
+    ) -> Tuple[List[float], List[int]]:
         """
         Searches for the k nearest neighbors of the query embedding.
         Parameters:

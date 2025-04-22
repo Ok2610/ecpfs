@@ -10,10 +10,12 @@ from tqdm import tqdm
 from enum import Enum
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
+
 # from pathos.multiprocessing import Pool
 from multiprocessing import cpu_count
 
 from ecpfs.utils import get_source_embeddings, calculate_chunk_size
+
 
 class Metric(Enum):
     L2 = 0
@@ -26,6 +28,7 @@ class ECPBuilder:
     Class to build the eCP index tree.
     The class is designed to build a hierarchical index for fast nearest neighbor search in high-dimensional spaces.
     """
+
     def __init__(
         self,
         levels: int,
@@ -835,14 +838,16 @@ class ECPBuilder:
                 # Get the chunk of data
                 chunk_data = embeddings[start_idx:end_idx][...]
                 # Submit the chunk to the executor for processing
-                async_results = executor.submit(
-                    process_chunk, chunk_data, start_idx
-                )
+                async_results = executor.submit(process_chunk, chunk_data, start_idx)
                 # Append the future to the list
                 futures.append(async_results)
-            
+
             # Wait for all futures to complete and gather the results
-            for future in tqdm(concurrent.futures.as_completed(futures), desc="Gathering thread results", total=len(futures)):
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                desc="Gathering thread results",
+                total=len(futures),
+            ):
                 # Get the result from the future and append it to the list
                 partial_node_maps.append(future.result())
         del chunk_data
@@ -898,10 +903,14 @@ class ECPBuilder:
                         start_idx,
                         end_idx,
                     )
-            for future in tqdm(concurrent.futures.as_completed(futures), desc="Gathering thread results", total=len(futures)):
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                desc="Gathering thread results",
+                total=len(futures),
+            ):
                 # Do nothing, just wait for all futures to complete
                 try:
                     future.result()
                 except Exception as e:
                     self.logger.error(f"Error in thread: {e}")
-                    raise e 
+                    raise e

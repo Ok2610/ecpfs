@@ -33,7 +33,9 @@ def calculate_chunk_size(
     return (max_rows, num_features)
 
 
-def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str) -> zarr.Array | h5py.Dataset:
+def get_source_embeddings(
+    embeddings_file: Path, grp: bool, grp_name: str
+) -> zarr.Array | h5py.Dataset:
     """
     Get the source embeddings from the specified file.
     Parameters:
@@ -56,17 +58,17 @@ def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str) -> za
         or str.lower(embeddings_file.suffix) == ".zipstore"
     ):
         if grp:
-            embeddings = zarr.open(
-                ZipStore(embeddings_file, mode="r"), mode="r"
-            )[grp_name]
+            embeddings = zarr.open(ZipStore(embeddings_file, mode="r"), mode="r")[
+                grp_name
+            ]
         else:
-            embeddings = zarr.open_array(
-                ZipStore(embeddings_file, mode="r"), mode="r"
-            )
+            embeddings = zarr.open_array(ZipStore(embeddings_file, mode="r"), mode="r")
     else:
         raise ValueError("Unknown embeddings file format")
 
     if isinstance(embeddings, zarr.Array) or isinstance(embeddings, h5py.Dataset):
         return embeddings
     else:
-        raise ValueError("Group name resulted in a group object. Please provide a dataset/array name.")
+        raise ValueError(
+            "Group name resulted in a group object. Please provide a dataset/array name."
+        )

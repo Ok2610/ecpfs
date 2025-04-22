@@ -12,8 +12,8 @@ def calculate_chunk_size(
     """
     Calculates the maximum number of rows that keeps the chunk size below the given limit.
 
-    Args:
-        shape (tuple): Shape of the dataset (rows, columns).
+    Parameters:
+        num_features (int): Number of features (columns) in the dataset.
         dtype (numpy dtype): Data type of the array.
         max_chunk_size (int): Maximum chunk size in bytes (default: 50 MB).
 
@@ -34,6 +34,15 @@ def calculate_chunk_size(
 
 
 def get_source_embeddings(embeddings_file: Path, grp: bool, grp_name: str) -> zarr.Array | h5py.Dataset:
+    """
+    Get the source embeddings from the specified file.
+    Parameters:
+        embeddings_file (Path): Path to the embeddings file.
+        grp (bool): Whether to treat the file as a group or not.
+        grp_name (str): Name of the group or dataset to access.
+    Returns:
+        zarr.Array or h5py.Dataset: The embeddings data.
+    """
     embeddings = None
     if embeddings_file.suffix == ".h5":
         embeddings = h5py.File(embeddings_file, "r")[grp_name]

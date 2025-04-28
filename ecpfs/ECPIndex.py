@@ -7,6 +7,8 @@ import numpy as np
 import zarr
 from zarr.storage import LocalStore
 
+from ecpfs.utils import Metric, calculate_distances
+
 
 class ECPIndex:
     """
@@ -100,6 +102,7 @@ class ECPIndex:
         index_fp = zarr.open(store, mode="r")
         self.root = index_fp["index_root"]["embeddings"]
         self.levels = index_fp["info"]["levels"][0]
+        self.metric = Metric(index_fp["info"]["metric"][0])
         self.nodes = [[] for _ in range(self.levels)]
         for i in range(self.levels):
             lvl = f"lvl_{i}"
@@ -112,34 +115,6 @@ class ECPIndex:
         if prefetch > -1:
             for i in range(prefetch + 1):
                 self.prefetch_level(i, max_workers=max_workers)
-
-    def __distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Computes the distances from the root node to the given embedding.
-        Parameters:
-            emb (np.ndarray): The embedding to compare against the root node.
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: The indices of the closest nodes and their distances.
-        """
-        distances = np.dot(self.root, emb)
-        top = np.argsort(distances)[::-1]
-        return top, distances
-
-    def __distance_level_node(
-        self, emb: np.ndarray, lvl: int, node: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Computes the distances from a specific node at a given level to the given embedding.
-        Parameters:
-            emb (np.ndarray): The embedding to compare against the node.
-            lvl (int): The level of the node.
-            node (int): The index of the node at the specified level.
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: The indices of the closest nodes and their distances.
-        """
-        distances = np.dot(self.nodes[lvl][node].embeddings, emb)
-        top = np.argsort(distances)[::-1]
-        return top, distances
 
     def cleanup_cache(self, max_loaded_nodes: int):
         """
@@ -216,21 +191,22 @@ class ECPIndex:
         if restart:
             self.tree_pq = PriorityQueue()
             self.item_pq = PriorityQueue()
-        root_top, root_distances = self.__distance_root_node(query)
+        root_top, root_distances = calculate_distances(query, self.root, self.metric)
         for t in root_top:
             self.tree_pq.put((root_distances[t], False, 0, t))
 
         while leaf_cnt != search_exp and not self.tree_pq.empty():
             _, is_leaf, lvl, node = self.tree_pq.get()
+            top, distances = calculate_distances(
+                query, self.nodes[lvl][node].embeddings, self.metric
+            )
             if is_leaf:
                 # radius = self.index[lvl][node]["border"][1]
-                top, distances = self.__distance_level_node(query, lvl, node)
                 for t in top:
                     self.item_pq.put((distances[t], self.nodes[lvl][node].children[t]))
                 leaf_cnt += 1
             else:
                 # Keep popping from queue and adding the next level and node to the queue
-                top, distances = self.__distance_level_node(query, lvl, node)
                 for t in top:
                     dist = (
                         distances[t]  # - radius

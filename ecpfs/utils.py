@@ -1,9 +1,18 @@
+from enum import Enum
 from pathlib import Path
 from typing import Tuple
 import numpy as np
 import zarr
 from zarr.storage import ZipStore
 import h5py
+
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+class Metric(Enum):
+    L2 = 0
+    IP = 1
+    COS = 2
 
 
 def calculate_chunk_size(
@@ -72,3 +81,32 @@ def get_source_embeddings(
         raise ValueError(
             "Group name resulted in a group object. Please provide a dataset/array name."
         )
+
+
+def calculate_distances(
+    q_emb: np.ndarray, embeddings: np.ndarray, metric: Metric
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate the distance to the embeddings of the node at the specified level
+
+    Parameters:
+        q_emb (np.ndarray): The query embedding.
+        embeddings (np.ndarray): The embeddings to compare against.
+        metric (Metric): The distance metric to use.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
+            - top: The indices of the sorted distances (argsorted).
+            - distances: The calculated distances to the node embeddings.
+    """
+    if metric == Metric.IP:
+        distances = np.dot(embeddings, q_emb)
+        top = np.argsort(distances)[::-1]
+    elif metric == Metric.L2:
+        differences = embeddings - q_emb
+        distances = np.linalg.norm(differences)
+        top = np.argsort(distances)
+    elif metric == Metric.COS:
+        distances = cosine_similarity(embeddings, (q_emb,)).flatten()
+        top = np.argsort(distances)[::-1]
+    return top, distances

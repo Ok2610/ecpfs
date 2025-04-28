@@ -8,19 +8,16 @@ from pathlib import Path
 from typing import Tuple
 from tqdm import tqdm
 from enum import Enum
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import MiniBatchKMeans
 
-# from pathos.multiprocessing import Pool
 from multiprocessing import cpu_count
 
-from ecpfs.utils import get_source_embeddings, calculate_chunk_size
-
-
-class Metric(Enum):
-    L2 = 0
-    IP = 1
-    COS = 2
+from ecpfs.utils import (
+    Metric,
+    calculate_distances,
+    get_source_embeddings,
+    calculate_chunk_size,
+)
 
 
 class ECPBuilder:
@@ -148,7 +145,7 @@ class ECPBuilder:
             raise NotImplementedError("dissimilar option")
         else:
             raise ValueError(
-                "Unknown option, the valid options are ['offset', 'random', 'dissimilar']"
+                "Unknown option, the valid options are ['offset', 'random', 'mbk', 'dissimilar']"
             )
 
         self.write_cluster_representatives()
@@ -207,32 +204,6 @@ class ECPBuilder:
 
         return self.representative_embeddings, self.representative_ids
 
-    def distance_root_node(self, emb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Calculate the distance to the embeddings of the root node
-
-        Parameters:
-            emb (np.ndarray): Embedding vector to calculate distance to root node embeddings
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
-                - top: The indices of the sorted distances (argsorted).
-                - distances: The calculated distances to the root node embeddings.
-        """
-        if self.metric == Metric.IP:
-            distances = np.dot(self.index["root"]["embeddings"], emb)
-            top = np.argsort(distances)[::-1]
-        elif self.metric == Metric.L2:
-            differences = self.index["root"]["embeddings"] - emb
-            distances = np.linalg.norm(differences, axis=1)
-            top = np.argsort(distances)
-        elif self.metric == Metric.COS:
-            distances = cosine_similarity(
-                self.index["root"]["embeddings"], (emb,)
-            ).flatten()
-            top = np.argsort(distances)[::-1]
-        return top, distances
-
     def write_index_info(self):
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":
             root = None
@@ -275,36 +246,6 @@ class ECPBuilder:
             with h5py.File(self.index_file, "a") as hf:
                 hf[clst_ids_dsname] = self.representative_ids
                 hf[clst_emb_dsname] = self.representative_embeddings
-
-    def distance_level_node(
-        self, emb: np.ndarray, lvl: str, node: str
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Calculate the distance to the embeddings of the node at the specified level
-
-        Parameters:
-            emb (np.ndarray): Embedding vector to calculate distance to node embeddings
-            lvl (str): The level to check, ex. "lvl_0", "lvl_1"
-            node (str): Node to check, ex. "node_0", "node_1"
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
-                - top: The indices of the sorted distances (argsorted).
-                - distances: The calculated distances to the node embeddings.
-        """
-        if self.metric == Metric.IP:
-            distances = np.dot(self.index[lvl][node]["embeddings"], emb)
-            top = np.argsort(distances)[::-1]
-        elif self.metric == Metric.L2:
-            differences = self.index[lvl][node]["embeddings"] - emb
-            distances = np.linalg.norm(differences)
-            top = np.argsort(distances)
-        elif self.metric == Metric.COS:
-            distances = cosine_similarity(
-                self.index[lvl][node]["embeddings"], (emb,)
-            ).flatten()
-            top = np.argsort(distances)[::-1]
-        return top, distances
 
     def align_specific_node(self, lvl, node):
         """
@@ -475,7 +416,9 @@ class ECPBuilder:
                 lvl_range = self.total_clusters
             embeddings = self.representative_embeddings[:lvl_range]
             for cl_idx, emb in enumerate(embeddings):
-                top, distances = self.distance_root_node(emb)
+                top, distances = calculate_distances(
+                    emb, self.index["root"]["embeddings"], self.metric
+                )
                 n = top[0]
                 curr_lvl = 0
                 while True:
@@ -527,7 +470,9 @@ class ECPBuilder:
                                 )
                         break
                     else:
-                        top, distances = self.distance_level_node(emb, lvl, node)
+                        top, distances = calculate_distances(
+                            emb, self.index[lvl][node]["embeddings"], self.metric
+                        )
                         n = self.index[lvl][node]["node_ids"][top[0]]
                     curr_lvl += 1
 
@@ -648,7 +593,9 @@ class ECPBuilder:
     def determine_node_map(self, item_embeddings, offset=0):
         node_map = {}
         for idx, emb in tqdm(enumerate(item_embeddings)):
-            top, distances = self.distance_root_node(emb)
+            top, distances = calculate_distances(
+                emb, self.index["root"]["embeddings"], self.metric
+            )
             lvl = "lvl_0"
             node = ""
             # Select the top non-empty node
@@ -664,7 +611,9 @@ class ECPBuilder:
                     else:
                         node_map[node] = [(offset + idx, distances[top[t]])]
                 else:
-                    top, distances = self.distance_level_node(emb, lvl, node)
+                    top, distances = calculate_distances(
+                        emb, self.index[lvl][node]["embeddings"], self.metric
+                    )
                     curr_node = node
                     if l + 1 < self.levels - 1:
                         # Select the top non-empty node

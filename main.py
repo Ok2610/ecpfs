@@ -25,10 +25,10 @@ def build_index(
         str, typer.Option("--save-file", help="Output file")
     ] = "ecpfs_index.zarr",
     levels: Annotated[int, typer.Option(help="Levels in the index")] = 3,
-    target_cluster_size: Annotated[
+    target_cluster_items: Annotated[
         int,
         typer.Option(
-            "--target-cluster-size", help="Preferred size of clusters (no guarantees)"
+            "--target-cluster-items", help="Preferred items for each cluster (no guarantees)"
         ),
     ] = 100,
     metric: Annotated[
@@ -85,10 +85,10 @@ def build_index(
     rep_emb_grp: Annotated[
         str,
         typer.Option("--rep-emb-grp", help="Representative file embeddings group name"),
-    ] = "clst_embeddings",
+    ] = "rep_embeddings",
     rep_ids_grp: Annotated[
         str, typer.Option("--rep-ids-grp", help="Representative file ids group name")
-    ] = "clst_item_ids",
+    ] = "rep_item_ids",
     rep_file_store: Annotated[
         str,
         typer.Option(
@@ -118,10 +118,11 @@ def build_index(
     ecp = ECPBuilder.ECPBuilder(
         levels=levels,
         logger=logger,
-        target_cluster_size=target_cluster_size,
+        target_cluster_items=target_cluster_items,
         metric=_metric,
         index_file=save_file,
         file_store=file_store,
+        workers=workers,
     )
 
     if rep_file is None:
@@ -147,7 +148,6 @@ def build_index(
     logger.info("Adding items to index...")
     ecp.add_items_concurrent(
         embeddings_file=embeddings_file,
-        workers=workers,
         grp=False if no_emb_grp else True,
         grp_name=emb_grp_name,
     )

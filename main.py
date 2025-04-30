@@ -60,10 +60,10 @@ def build_index(
         str,
         typer.Option(
             "--file-store",
-            help="File store format. Options are 'zarr_l' (zarr.storage.LocalStore), 'zarr_z' (zarr.storage.ZipStore), 'h5' (HDF5)",
+            help="File store format. Options are 'zarr_l' (zarr.storage.LocalStore), 'zarr_z' (zarr.storage.ZipStore)",
             case_sensitive=False,
             metavar="FORMAT",
-            show_choices=["zarr_l", "zarr_z", "h5"],
+            show_choices=["zarr_l", "zarr_z"],
         ),
     ] = "zarr_l",
     rep_selection: Annotated[
@@ -94,10 +94,10 @@ def build_index(
         str,
         typer.Option(
             "--rep-file-store",
-            help="Represenatives file store format. Options are 'zarr_l' (zarr.storage.LocalStore), 'zarr_z' (zarr.storage.ZipStore), 'h5' (HDF5)",
+            help="Represenatives file store format. Options are 'zarr_l' (zarr.storage.LocalStore), 'zarr_z' (zarr.storage.ZipStore)",
             case_sensitive=False,
             metavar="FORMAT",
-            show_choices=["zarr_l", "zarr_z", "h5"],
+            show_choices=["zarr_l", "zarr_z"],
         ),
     ] = "zarr_l",
 ) -> None:

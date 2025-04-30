@@ -66,7 +66,7 @@ class ECPBuilder:
             target_cluster_items: Aim for clusters with this many items (no guarantees)
             metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
             index_file: If a filename is specified, all index related data will be stored in a store. Default behaviour is to store it using a zarr.storage.LocalStore under the name "ecpfs_index.zarr". Set this to empty string if you do not want to store the index.
-            file_store: The file format to store the representative cluster embeddings and ids. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
+            file_store: The file format to store the representative cluster embeddings and ids. "zarr_l" (LocalStore) or "zarr_z" (ZipStore), default="zarr_l".
         """
         self.levels: int = levels
         self.target_cluster_items: int = target_cluster_items
@@ -101,7 +101,6 @@ class ECPBuilder:
                 "offset" = select based of an offset determined through the index config info,
                 "random" = arbitrarily select cluster representatives, and
                 "dissimilar" = ensure that a representative is dissimilar from others at the same level.
-
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
@@ -194,7 +193,7 @@ class ECPBuilder:
             fp (Path): File path to the zarr or HDF5 file.
             emb_dsname (str): Dataset name of representative embeddings, default=rep_embeddings
             ids_dsname (str): Dataset name of representative item ids, default=rep_item_ids
-            format (str): Format of the file. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
+            format (str): Format of the file. "zarr_l" (LocalStore) or "zarr_z" (ZipStore), default="zarr_l".
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: A tuple of two numpy arrays:
@@ -211,10 +210,6 @@ class ECPBuilder:
                 zf = zarr.open(store, mode="r")
                 self.representative_embeddings = zf[emb_dsname][:]
                 self.representative_ids = zf[ids_dsname][:]
-        elif format == "h5":
-            with h5py.File(fp, "r") as hf:
-                self.representative_embeddings = hf[emb_dsname][:]
-                self.representative_ids = hf[ids_dsname][:]
 
         self.total_clusters = self.representative_ids.shape[0]
         self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
@@ -231,48 +226,37 @@ class ECPBuilder:
 
     @log_time
     def write_index_info(self):
-        if self.file_store == "zarr_l" or self.file_store == "zarr_z":
-            root = None
-            if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file, mode="w")
-            elif self.file_store == "zarr_z":
-                root = zarr.open(
-                    zarr.storage.ZipStore(self.index_file, mode="w"), mode="w"
-                )
-            root.create_group("info")
-            root["info"]["levels"] = np.array([self.levels])
-            root["info"]["metric"] = np.array([self.metric.value])
-        elif self.file_store == "h5":
-            with h5py.File(self.index_file, "a") as hf:
-                hf.create_group("info")
-                hf["info"]["levels"] = self.levels
-                hf["info"]["metric"] = self.metric.value
+        root = None
+        if self.file_store == "zarr_l":
+            root = zarr.open(self.index_file, mode="w")
+        elif self.file_store == "zarr_z":
+            root = zarr.open(
+                zarr.storage.ZipStore(self.index_file, mode="w"), mode="w"
+            )
+        root.create_group("info")
+        root["info"]["levels"] = np.array([self.levels])
+        root["info"]["metric"] = np.array([self.metric.value])
 
     @log_time
     def write_cluster_representatives(self):
         rep_ids_dsname = "rep_item_ids"
         rep_emb_dsname = "rep_embeddings"
-        if self.file_store == "zarr_l" or self.file_store == "zarr_z":
-            root = None
-            if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file)
-            elif self.file_store == "zarr_z":
-                root = zarr.open(
-                    zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
-                )
-
-            root[rep_ids_dsname] = self.representative_ids
-            root.create_array(
-                name=rep_emb_dsname,
-                shape=self.representative_embeddings.shape,
-                dtype=self.representative_embeddings.dtype,
-                chunks=self.chunk_size,
+        root = None
+        if self.file_store == "zarr_l":
+            root = zarr.open(self.index_file)
+        elif self.file_store == "zarr_z":
+            root = zarr.open(
+                zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
             )
-            root[rep_emb_dsname] = self.representative_embeddings
-        elif self.file_store == "h5":
-            with h5py.File(self.index_file, "a") as hf:
-                hf[rep_ids_dsname] = self.representative_ids
-                hf[rep_emb_dsname] = self.representative_embeddings
+
+        root[rep_ids_dsname] = self.representative_ids
+        root.create_array(
+            name=rep_emb_dsname,
+            shape=self.representative_embeddings.shape,
+            dtype=self.representative_embeddings.dtype,
+            chunks=self.chunk_size,
+        )
+        root[rep_emb_dsname] = self.representative_embeddings
 
     def align_specific_node(self, lvl, node):
         """
@@ -304,14 +288,12 @@ class ECPBuilder:
         """
         # Update border info
         if self.metric == Metric.IP or self.metric == Metric.COS:
-            # TODO: Calculate dot product with representative embedding
             new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))
             self.index[lvl][node]["border"] = (
                 new_border_dists[0],
                 self.index[lvl][node]["distances"][new_border_dists[0]],
             )
         elif self.metric == Metric.L2:
-            # TODO: Calculate L2 distance with representative embedding
             new_border_dists = np.argsort(np.sort(self.index[lvl][node]["distances"]))[
                 ::-1
             ]
@@ -516,117 +498,63 @@ class ECPBuilder:
         """
         Write the tree structure to a file.
         """
-        if "zarr" in self.file_store:
-            root = None
-            if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file)
-            elif self.file_store == "zarr_z":
-                root = zarr.open(
-                    zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
+        root = None
+        if self.file_store == "zarr_l":
+            root = zarr.open(self.index_file)
+        elif self.file_store == "zarr_z":
+            root = zarr.open(
+                zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
+            )
+
+        # /index_root
+        root.create_group("index_root")
+        # /index_root/embeddings (N,D) float16/float32
+        root["index_root"].create_array(
+            name="embeddings",
+            shape=self.index["root"]["embeddings"].shape,
+            dtype=self.index["root"]["embeddings"].dtype,
+            chunks=self.chunk_size,
+        )
+        root["index_root"]["embeddings"][:] = self.index["root"]["embeddings"]
+        # /index_root/node_ids (N,) uint32/uint64
+        root["index_root"]["node_ids"] = np.array(self.index["root"]["node_ids"])
+
+        def process_level(level_key, data):
+            level = int(level_key.split("_")[1])
+            # /lvl_{}
+            root.create_group(level_key)
+            for n, node in data.items():
+                # /lvl_{}/node_{}
+                root[level_key].create_group(n)
+                if level == self.levels - 1:
+                    continue
+                # /lvl_{}/node_{}/embeddings
+                root[level_key][n].create_array(
+                    name="embeddings",
+                    shape=node["embeddings"].shape,
+                    dtype=node["embeddings"].dtype,
+                    chunks=self.chunk_size,
+                )
+                root[level_key][n]["embeddings"][:] = node["embeddings"]
+                # /lvl_{}/node_{}/node_ids|item_ids
+                root[level_key][n]["node_ids"] = np.array(
+                    node["node_ids"], dtype=np.uint32
+                )
+                # /lvl_{}/node_{}/border
+                root[level_key][n]["border"] = np.array(
+                    [node["border"][0], node["border"][1]]
                 )
 
-            # /index_root
-            root.create_group("index_root")
-            # /index_root/embeddings (N,D) float16/float32
-            root["index_root"].create_array(
-                name="embeddings",
-                shape=self.index["root"]["embeddings"].shape,
-                dtype=self.index["root"]["embeddings"].dtype,
-                chunks=self.chunk_size,
-            )
-            root["index_root"]["embeddings"][:] = self.index["root"]["embeddings"]
-            # /index_root/node_ids (N,) uint32/uint64
-            root["index_root"]["node_ids"] = np.array(self.index["root"]["node_ids"])
-
-            def process_level(level_key, data):
-                level = int(level_key.split("_")[1])
-                # /lvl_{}
-                root.create_group(level_key)
-                for n, node in data.items():
-                    # /lvl_{}/node_{}
-                    root[level_key].create_group(n)
-                    if level == self.levels - 1:
-                        continue
-                    # /lvl_{}/node_{}/embeddings
-                    root[level_key][n].create_array(
-                        name="embeddings",
-                        shape=node["embeddings"].shape,
-                        dtype=node["embeddings"].dtype,
-                        chunks=self.chunk_size,
-                    )
-                    root[level_key][n]["embeddings"][:] = node["embeddings"]
-                    # /lvl_{}/node_{}/node_ids|item_ids
-                    root[level_key][n]["node_ids"] = np.array(
-                        node["node_ids"], dtype=np.uint32
-                    )
-                    # /lvl_{}/node_{}/border
-                    root[level_key][n]["border"] = np.array(
-                        [node["border"][0], node["border"][1]]
-                    )
-
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.workers
-            ) as executor:
-                futures = [
-                    executor.submit(process_level, k, v)
-                    for k, v in self.index.items()
-                    if k.startswith("lvl_")
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    future.result()
-
-        elif self.file_store == "h5":
-            h5 = h5py.File(self.index_file, "a")
-            # /index_root
-            root_group = h5.create_group("index_root")
-            # /index_root/embeddings
-            root_group.create_dataset(
-                "embeddings",
-                data=self.index["root"]["embeddings"],
-                maxshape=(None, self.index["root"]["embeddings"].shape[1]),
-                chunks=True,
-            )
-            # /index_root/node_ids
-            root_group.create_dataset(
-                "node_ids",
-                data=self.index["root"]["node_ids"],
-                maxshape=(None,),
-                chunks=True,
-            )
-
-            def process_level_h5(level_key, level_data):
-                """
-                Worker function to process a single level for HDF5.
-                """
-                level = int(level_key.split("_")[1])
-                ids_key = "item_ids" if level == self.levels - 1 else "node_ids"
-                lvl_group = h5.create_group(level_key)
-                for node_key, node_data in level_data.items():
-                    node_group = lvl_group.create_group(node_key)
-                    node_group.create_dataset(
-                        "embeddings",
-                        data=node_data["embeddings"],
-                        maxshape=(None, node_data["embeddings"].shape[1]),
-                        chunks=True,
-                    )
-                    node_group.create_dataset(
-                        ids_key,
-                        data=node_data[ids_key],
-                        maxshape=(None,),
-                        chunks=True,
-                    )
-                    node_group.create_dataset("border", data=node_data["border"])
-
-            # Use ThreadPoolExecutor to process levels in parallel
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [
-                    executor.submit(process_level_h5, level_key, level_data)
-                    for level_key, level_data in self.index.items()
-                    if level_key.startswith("lvl_")
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    future.result()
-            h5.close()
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.workers
+        ) as executor:
+            futures = [
+                executor.submit(process_level, k, v)
+                for k, v in self.index.items()
+                if k.startswith("lvl_")
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
     def determine_node_map(self, item_embeddings, offset=0):
         node_map = {}
@@ -673,65 +601,38 @@ class ECPBuilder:
         ### Parameters
         clusters: numpy.ndarray of cluster embeddings
         """
-        if "zarr" in self.file_store:
-            root = None
-            if self.file_store == "zarr_l":
-                root = zarr.open(self.index_file)
-            elif self.file_store == "zarr_z":
-                root = zarr.open(
-                    zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
-                )
+        root = None
+        if self.file_store == "zarr_l":
+            root = zarr.open(self.index_file)
+        elif self.file_store == "zarr_z":
+            root = zarr.open(
+                zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
+            )
 
-            lvl = f"lvl_{self.levels-1}"
-            for c in clusters.keys():
-                node = c
-                # if node in root[lvl].keys():
-                node_group = root[lvl][node]
-                # /lvl_{}/node_{}/embeddings
-                node_group.create_array(
-                    name="embeddings",
-                    shape=self.index[lvl][node]["embeddings"].shape,
-                    dtype=self.index[lvl][node]["embeddings"].dtype,
-                    chunks=self.chunk_size,
-                )
-                node_group["embeddings"][:] = self.index[lvl][node]["embeddings"][:]
-                # /lvl_{}/node_{}/node_ids|item_ids
-                node_group["item_ids"] = np.array(
-                    self.index[lvl][node]["item_ids"], dtype=np.uint32
-                )
-                # /lvl_{}/node_{}/border
-                node_group["border"] = np.array(
-                    [
-                        self.index[lvl][node]["border"][0],
-                        self.index[lvl][node]["border"][1],
-                    ]
-                )
-        elif self.file_store == "h5":
-            h5 = h5py.File(self.index_file, "a")
-            lvl = f"lvl_{self.levels-1}"
-            for c in clusters.keys():
-                node = c
-                node_group = h5[lvl][node]
-                old_size = node_group["embeddings"].shape[0]
-                new_size = self.index[lvl][node]["embeddings"].shape[0]
-                # Resize
-                node_group["embeddings"].resize(
-                    (new_size, node_group["embeddings"].shape[1])
-                )
-                # node_group["distances"].resize((new_size,))
-                node_group["item_ids"].resize((new_size,))
-                # Insert
-                node_group["embeddings"][old_size:] = self.index[lvl][node][
-                    "embeddings"
-                ][old_size:]
-                # node_group["distances"][old_size:] = self.index[lvl][node][
-                #     "distances"
-                # ][old_size:]
-                node_group["item_ids"][old_size:] = self.index[lvl][node]["item_ids"][
-                    old_size:
+        lvl = f"lvl_{self.levels-1}"
+        for c in clusters.keys():
+            node = c
+            # if node in root[lvl].keys():
+            node_group = root[lvl][node]
+            # /lvl_{}/node_{}/embeddings
+            node_group.create_array(
+                name="embeddings",
+                shape=self.index[lvl][node]["embeddings"].shape,
+                dtype=self.index[lvl][node]["embeddings"].dtype,
+                chunks=self.chunk_size,
+            )
+            node_group["embeddings"][:] = self.index[lvl][node]["embeddings"][:]
+            # /lvl_{}/node_{}/node_ids|item_ids
+            node_group["item_ids"] = np.array(
+                self.index[lvl][node]["item_ids"], dtype=np.uint32
+            )
+            # /lvl_{}/node_{}/border
+            node_group["border"] = np.array(
+                [
+                    self.index[lvl][node]["border"][0],
+                    self.index[lvl][node]["border"][1],
                 ]
-                node_group["border"][:] = self.index[lvl][node]["border"]
-            h5.close()
+            )
 
     @log_time
     def write_items_batch(

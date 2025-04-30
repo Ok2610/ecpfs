@@ -27,10 +27,12 @@ class ECPBuilder:
     """
 
     enable_time_logging = True
+
     def log_time(func):
         """
         Decorator to log the execution time of a function.
         """
+
         def wrapper(*args, **kwargs):
             if not ECPBuilder.enable_time_logging:
                 return func(*args, **kwargs)
@@ -38,10 +40,13 @@ class ECPBuilder:
             result = func(*args, **kwargs)
             end_time = time.time()
             elapsed_time = end_time - start_time
-            args[0].logger.info(f"Function '{func.__name__}' executed in {elapsed_time:.2f} seconds.")
+            args[0].logger.info(
+                f"Function '{func.__name__}' executed in {elapsed_time:.2f} seconds."
+            )
             return result
+
         return wrapper
-    
+
     def __init__(
         self,
         levels: int,
@@ -50,7 +55,7 @@ class ECPBuilder:
         metric=Metric.L2,
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
-        workers=4
+        workers=4,
     ):
         """
         Constructor.
@@ -551,19 +556,24 @@ class ECPBuilder:
                     )
                     root[level_key][n]["embeddings"][:] = node["embeddings"]
                     # /lvl_{}/node_{}/node_ids|item_ids
-                    root[level_key][n]["node_ids"] = np.array(node["node_ids"], dtype=np.uint32)
+                    root[level_key][n]["node_ids"] = np.array(
+                        node["node_ids"], dtype=np.uint32
+                    )
                     # /lvl_{}/node_{}/border
                     root[level_key][n]["border"] = np.array(
                         [node["border"][0], node["border"][1]]
                     )
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.workers
+            ) as executor:
                 futures = [
                     executor.submit(process_level, k, v)
-                    for k, v in self.index.items() if k.startswith("lvl_")
+                    for k, v in self.index.items()
+                    if k.startswith("lvl_")
                 ]
                 for future in concurrent.futures.as_completed(futures):
-                    future.result() 
+                    future.result()
 
         elif self.file_store == "h5":
             h5 = h5py.File(self.index_file, "a")
@@ -686,7 +696,9 @@ class ECPBuilder:
                 )
                 node_group["embeddings"][:] = self.index[lvl][node]["embeddings"][:]
                 # /lvl_{}/node_{}/node_ids|item_ids
-                node_group["item_ids"] = np.array(self.index[lvl][node]["item_ids"], dtype=np.uint32)
+                node_group["item_ids"] = np.array(
+                    self.index[lvl][node]["item_ids"], dtype=np.uint32
+                )
                 # /lvl_{}/node_{}/border
                 node_group["border"] = np.array(
                     [
@@ -802,7 +814,9 @@ class ECPBuilder:
                 # Get the chunk of data
                 chunk_data = embeddings[start_idx:end_idx][...]
                 # Submit the chunk to the executor for processing and append to the futures list
-                futures.append(executor.submit(self.determine_node_map, chunk_data, start_idx))
+                futures.append(
+                    executor.submit(self.determine_node_map, chunk_data, start_idx)
+                )
 
             # Wait for all futures to complete and gather the results
             for future in tqdm(
@@ -818,7 +832,7 @@ class ECPBuilder:
         # The higher batch number is to avoid scenarios where single or a few processes deal with large clusters
         # This is not unavoidable, without adding extra logic to the code
         # but it is a good tradeoff between performance and simplicity
-        clst_batches = int(self.total_clusters // (processes*4))
+        clst_batches = int(self.total_clusters // (processes * 4))
         with concurrent.futures.ThreadPoolExecutor(max_workers=processes) as executor:
             # Create a list of futures for each batch
             futures = []

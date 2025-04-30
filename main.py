@@ -28,7 +28,8 @@ def build_index(
     target_cluster_items: Annotated[
         int,
         typer.Option(
-            "--target-cluster-items", help="Preferred items for each cluster (no guarantees)"
+            "--target-cluster-items",
+            help="Preferred items for each cluster (no guarantees)",
         ),
     ] = 100,
     metric: Annotated[

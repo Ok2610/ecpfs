@@ -1,13 +1,13 @@
 import concurrent.futures
 import math
 import concurrent
+import time
 import h5py
 import zarr
 import numpy as np
 from pathlib import Path
 from typing import Tuple
 from tqdm import tqdm
-from enum import Enum
 from sklearn.cluster import MiniBatchKMeans
 
 from multiprocessing import cpu_count
@@ -26,14 +26,31 @@ class ECPBuilder:
     The class is designed to build a hierarchical index for fast nearest neighbor search in high-dimensional spaces.
     """
 
+    enable_time_logging = True
+    def log_time(func):
+        """
+        Decorator to log the execution time of a function.
+        """
+        def wrapper(*args, **kwargs):
+            if not ECPBuilder.enable_time_logging:
+                return func(*args, **kwargs)
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            args[0].logger.info(f"Function '{func.__name__}' executed in {elapsed_time:.2f} seconds.")
+            return result
+        return wrapper
+    
     def __init__(
         self,
         levels: int,
         logger,
-        target_cluster_size=100,
+        target_cluster_items=100,
         metric=Metric.L2,
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
+        workers=4
     ):
         """
         Constructor.
@@ -41,13 +58,13 @@ class ECPBuilder:
         Parameters:
 
             levels: Number of levels in the index hierarchy
-            target_cluster_size: Aim for clusters of this size (no guarantees)
+            target_cluster_items: Aim for clusters with this many items (no guarantees)
             metric: Metric to use when building the index [L2 (Euclidean) | IP (Inner Product) | cos (Cosine Similarity)]
             index_file: If a filename is specified, all index related data will be stored in a store. Default behaviour is to store it using a zarr.storage.LocalStore under the name "ecpfs_index.zarr". Set this to empty string if you do not want to store the index.
             file_store: The file format to store the representative cluster embeddings and ids. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
         """
         self.levels: int = levels
-        self.target_cluster_size: int = target_cluster_size
+        self.target_cluster_items: int = target_cluster_items
         self.logger = logger
         self.metric: Metric = metric
         self.index_file = index_file
@@ -56,10 +73,12 @@ class ECPBuilder:
         self.representative_embeddings: np.ndarray | None = None
         # self.item_to_cluster_map = {}
         self.chunk_size = (-1, -1)
+        self.workers = workers
 
         self.write_index_info()
         return
 
+    @log_time
     def select_cluster_representatives(
         self,
         embeddings_file: Path,
@@ -88,7 +107,7 @@ class ECPBuilder:
 
         # Determine sizes
         (total_items, total_features) = embeddings.shape
-        self.total_clusters = math.ceil(total_items / self.target_cluster_size)
+        self.total_clusters = math.ceil(total_items / self.target_cluster_items)
         self.node_size = math.ceil(self.total_clusters ** (1.0 / self.levels))
 
         self.chunk_size = calculate_chunk_size(
@@ -100,7 +119,7 @@ class ECPBuilder:
         # Select cluster centroids
         if option == "offset":
             all_item_ids = np.arange(total_items).astype(np.uint32)
-            self.representative_ids = all_item_ids[:: self.target_cluster_size]
+            self.representative_ids = all_item_ids[:: self.target_cluster_items]
             self.logger.info(
                 f"{len(self.representative_ids)} Cluster representatives selected"
             )
@@ -112,7 +131,7 @@ class ECPBuilder:
                     f"Number of representatives does not match the total clusters. {total_items, len(self.representative_ids), self.total_clusters}"
                 )
             self.logger.info(f"Getting representative embeddings from file")
-            self.representative_embeddings = embeddings[:: self.target_cluster_size]
+            self.representative_embeddings = embeddings[:: self.target_cluster_items]
         elif option == "random":
             if self.total_clusters > total_items:
                 self.logger.error(
@@ -153,11 +172,12 @@ class ECPBuilder:
 
         return self.representative_embeddings, self.representative_ids
 
+    @log_time
     def get_cluster_representatives_from_file(
         self,
         fp: Path,
-        emb_dsname="clst_embeddings",
-        ids_dsname="clst_item_ids",
+        emb_dsname="rep_embeddings",
+        ids_dsname="rep_item_ids",
         format="zarr_l",
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -167,8 +187,8 @@ class ECPBuilder:
 
         Parameters:
             fp (Path): File path to the zarr or HDF5 file.
-            emb_dsname (str): Dataset name of representative embeddings, default=clst_embeddings
-            ids_dsname (str): Dataset name of representative item ids, default=clst_item_ids
+            emb_dsname (str): Dataset name of representative embeddings, default=rep_embeddings
+            ids_dsname (str): Dataset name of representative item ids, default=rep_item_ids
             format (str): Format of the file. "zarr_l" (LocalStore), "zarr_z" (ZipStore), or "h5" (HDF5), default="zarr_l".
 
         Returns:
@@ -204,6 +224,7 @@ class ECPBuilder:
 
         return self.representative_embeddings, self.representative_ids
 
+    @log_time
     def write_index_info(self):
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":
             root = None
@@ -222,9 +243,10 @@ class ECPBuilder:
                 hf["info"]["levels"] = self.levels
                 hf["info"]["metric"] = self.metric.value
 
+    @log_time
     def write_cluster_representatives(self):
-        clst_ids_dsname = "clst_item_ids"
-        clst_emb_dsname = "clst_embeddings"
+        rep_ids_dsname = "rep_item_ids"
+        rep_emb_dsname = "rep_embeddings"
         if self.file_store == "zarr_l" or self.file_store == "zarr_z":
             root = None
             if self.file_store == "zarr_l":
@@ -234,18 +256,18 @@ class ECPBuilder:
                     zarr.storage.ZipStore(self.index_file, mode="a"), mode="a"
                 )
 
-            root[clst_ids_dsname] = self.representative_ids
+            root[rep_ids_dsname] = self.representative_ids
             root.create_array(
-                name=clst_emb_dsname,
+                name=rep_emb_dsname,
                 shape=self.representative_embeddings.shape,
                 dtype=self.representative_embeddings.dtype,
                 chunks=self.chunk_size,
             )
-            root[clst_emb_dsname] = self.representative_embeddings
+            root[rep_emb_dsname] = self.representative_embeddings
         elif self.file_store == "h5":
             with h5py.File(self.index_file, "a") as hf:
-                hf[clst_ids_dsname] = self.representative_ids
-                hf[clst_emb_dsname] = self.representative_embeddings
+                hf[rep_ids_dsname] = self.representative_ids
+                hf[rep_emb_dsname] = self.representative_embeddings
 
     def align_specific_node(self, lvl, node):
         """
@@ -324,6 +346,7 @@ class ECPBuilder:
             else:
                 lvl_range = lvl_range * self.node_size
 
+    @log_time
     def build_tree_fs(self) -> None:
         """
         Build the hierarchical eCP index tree for an and store it into a file.
@@ -479,12 +502,16 @@ class ECPBuilder:
         self.logger.info("Aligning arrays...")
         # Resize the embeddings and distance arrays of nodes to actual size
         self.align_node_embeddings_and_distances()
+        self.logger.info("Saving tree to file...")
+        self.write_tree_structure_to_file()
+        self.logger.info("Done building tree!")
 
-        # TODO: Move to own function
-        # self.write_tree_structure_to_file()
-        # TODO: Multiprocess this part
+    @log_time
+    def write_tree_structure_to_file(self):
+        """
+        Write the tree structure to a file.
+        """
         if "zarr" in self.file_store:
-            self.logger.info("Saving tree to file...")
             root = None
             if self.file_store == "zarr_l":
                 root = zarr.open(self.index_file)
@@ -502,36 +529,42 @@ class ECPBuilder:
                 dtype=self.index["root"]["embeddings"].dtype,
                 chunks=self.chunk_size,
             )
-            root["index_root"]["embeddings"] = self.index["root"]["embeddings"]
+            root["index_root"]["embeddings"][:] = self.index["root"]["embeddings"]
             # /index_root/node_ids (N,) uint32/uint64
             root["index_root"]["node_ids"] = np.array(self.index["root"]["node_ids"])
-            for k, v in self.index.items():
-                if not k.startswith("lvl_"):
-                    continue
-                level = int(k.split("_")[1])
-                if level == self.levels - 1:
-                    ids_key = "item_ids"
-                else:
-                    ids_key = "node_ids"
+
+            def process_level(level_key, data):
+                level = int(level_key.split("_")[1])
                 # /lvl_{}
-                root.create_group(k)
-                for n, node in v.items():
+                root.create_group(level_key)
+                for n, node in data.items():
                     # /lvl_{}/node_{}
-                    root[k].create_group(n)
+                    root[level_key].create_group(n)
+                    if level == self.levels - 1:
+                        continue
                     # /lvl_{}/node_{}/embeddings
-                    root[k][n].create_array(
+                    root[level_key][n].create_array(
                         name="embeddings",
                         shape=node["embeddings"].shape,
                         dtype=node["embeddings"].dtype,
                         chunks=self.chunk_size,
                     )
-                    root[k][n]["embeddings"][:] = node["embeddings"]
+                    root[level_key][n]["embeddings"][:] = node["embeddings"]
                     # /lvl_{}/node_{}/node_ids|item_ids
-                    root[k][n][ids_key] = np.array(node[ids_key], dtype=np.uint32)
+                    root[level_key][n]["node_ids"] = np.array(node["node_ids"], dtype=np.uint32)
                     # /lvl_{}/node_{}/border
-                    root[k][n]["border"] = np.array(
+                    root[level_key][n]["border"] = np.array(
                         [node["border"][0], node["border"][1]]
                     )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+                futures = [
+                    executor.submit(process_level, k, v)
+                    for k, v in self.index.items() if k.startswith("lvl_")
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    future.result() 
+
         elif self.file_store == "h5":
             h5 = h5py.File(self.index_file, "a")
             # /index_root
@@ -550,45 +583,40 @@ class ECPBuilder:
                 maxshape=(None,),
                 chunks=True,
             )
-            for k, v in self.index.items():
-                if not k.startswith("lvl_"):
-                    continue
-                level = int(k.split("_")[1])
-                if level == self.levels - 1:
-                    ids_key = "item_ids"
-                else:
-                    ids_key = "node_ids"
 
-                # /lvl_{}
-                lvl_group = h5.create_group(k)
-                for n, node in v.items():
-                    # /lvl_{}/node_{}
-                    node_group = lvl_group.create_group(n)
-                    # /lvl_{}/node_{}/embeddings
+            def process_level_h5(level_key, level_data):
+                """
+                Worker function to process a single level for HDF5.
+                """
+                level = int(level_key.split("_")[1])
+                ids_key = "item_ids" if level == self.levels - 1 else "node_ids"
+                lvl_group = h5.create_group(level_key)
+                for node_key, node_data in level_data.items():
+                    node_group = lvl_group.create_group(node_key)
                     node_group.create_dataset(
                         "embeddings",
-                        data=node["embeddings"],
-                        maxshape=(None, node["embeddings"].shape[1]),
+                        data=node_data["embeddings"],
+                        maxshape=(None, node_data["embeddings"].shape[1]),
                         chunks=True,
                     )
-                    # /lvl_{}/node_{}/node_ids|item_ids
                     node_group.create_dataset(
                         ids_key,
-                        data=node[ids_key],
+                        data=node_data[ids_key],
                         maxshape=(None,),
                         chunks=True,
                     )
-                    # /lvl_{}/node_{}/node_ids
-                    node_group.create_dataset(
-                        "node_ids",
-                        data=node["node_ids"],
-                        maxshape=(None,),
-                        chunks=True,
-                    )
-                    # /lvl_{}/node_{}/border
-                    node_group.create_dataset("border", data=node["border"])
+                    node_group.create_dataset("border", data=node_data["border"])
+
+            # Use ThreadPoolExecutor to process levels in parallel
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(process_level_h5, level_key, level_data)
+                    for level_key, level_data in self.index.items()
+                    if level_key.startswith("lvl_")
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    future.result()
             h5.close()
-        self.logger.info("Done building tree!")
 
     def determine_node_map(self, item_embeddings, offset=0):
         node_map = {}
@@ -629,12 +657,12 @@ class ECPBuilder:
                     lvl = f"lvl_{l+1}"
         return node_map
 
+    @log_time
     def write_cluster_items_to_file(self, clusters):
         """
         ### Parameters
         clusters: numpy.ndarray of cluster embeddings
         """
-        # TODO: Refactor this function into an ECPWriter class that has functions for the different formats
         if "zarr" in self.file_store:
             root = None
             if self.file_store == "zarr_l":
@@ -649,20 +677,17 @@ class ECPBuilder:
                 node = c
                 # if node in root[lvl].keys():
                 node_group = root[lvl][node]
-                old_size = node_group["embeddings"].shape[0]
-                new_size = self.index[lvl][node]["embeddings"].shape[0]
-                # Resize
-                node_group["embeddings"].resize(
-                    (new_size, node_group["embeddings"].shape[1])
+                # /lvl_{}/node_{}/embeddings
+                node_group.create_array(
+                    name="embeddings",
+                    shape=self.index[lvl][node]["embeddings"].shape,
+                    dtype=self.index[lvl][node]["embeddings"].dtype,
+                    chunks=self.chunk_size,
                 )
-                # node_group["distances"].resize((new_size,))
-                node_group["item_ids"].resize((new_size,))
-                # Insert
                 node_group["embeddings"][:] = self.index[lvl][node]["embeddings"][:]
-                # node_group["distances"][old_size:] = self.index[lvl][node][
-                #     "distances"
-                # ][old_size:]
-                node_group["item_ids"][:] = self.index[lvl][node]["item_ids"][:]
+                # /lvl_{}/node_{}/node_ids|item_ids
+                node_group["item_ids"] = np.array(self.index[lvl][node]["item_ids"], dtype=np.uint32)
+                # /lvl_{}/node_{}/border
                 node_group["border"] = np.array(
                     [
                         self.index[lvl][node]["border"][0],
@@ -696,7 +721,8 @@ class ECPBuilder:
                 node_group["border"][:] = self.index[lvl][node]["border"]
             h5.close()
 
-    def write_items_concurrent(
+    @log_time
+    def write_items_batch(
         self,
         embeddings: zarr.Array | h5py.Dataset,
         all_indices: list[int],
@@ -743,32 +769,21 @@ class ECPBuilder:
         self.logger.info(f"Writing batch (cluster {start_idx} to {end_idx})")
         self.write_cluster_items_to_file(clusters=clusters)
 
+    @log_time
     def add_items_concurrent(
         self,
         embeddings_file: Path,
-        chunk_size=250000,
-        workers=4,
+        chunk_size=100000,
         grp=False,
         grp_name="embeddings",
     ):
         """
         Get a map corresponding to which cluster node they will end up in on the last level
         """
-
-        def process_chunk(item_embeddings, offset):
-            """
-            Worker function to process an embeddings chunk.
-            For example, calls ecp.add_items_map on this chunk.
-            """
-            # ecp.add_items_map returns a dict where key is item id and value is (node, distance)
-            return self.determine_node_map(
-                item_embeddings=item_embeddings, offset=offset
-            )
-
-        if workers > cpu_count():
+        if self.workers > cpu_count():
             processes = cpu_count() - 1
         else:
-            processes = workers
+            processes = self.workers
 
         embeddings = None
         embeddings = get_source_embeddings(embeddings_file, grp, grp_name)
@@ -777,7 +792,7 @@ class ECPBuilder:
         partial_node_maps = []
         total_items = embeddings.shape[0]
         # Determine the level-1 clusters of items in batches (chunk_size)
-        with concurrent.futures.ProcessPoolExecutor(max_workers=processes) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=processes) as executor:
             # Create a list of futures for each chunk
             futures = []
             # Iterate over the chunks of data
@@ -786,22 +801,24 @@ class ECPBuilder:
                 end_idx = min(start_idx + chunk_size, total_items)
                 # Get the chunk of data
                 chunk_data = embeddings[start_idx:end_idx][...]
-                # Submit the chunk to the executor for processing
-                async_results = executor.submit(process_chunk, chunk_data, start_idx)
-                # Append the future to the list
-                futures.append(async_results)
+                # Submit the chunk to the executor for processing and append to the futures list
+                futures.append(executor.submit(self.determine_node_map, chunk_data, start_idx))
 
             # Wait for all futures to complete and gather the results
             for future in tqdm(
                 concurrent.futures.as_completed(futures),
-                desc="Gathering thread results",
+                desc="Gathering thread results (Determining node mappings)",
                 total=len(futures),
             ):
                 # Get the result from the future and append it to the list
                 partial_node_maps.append(future.result())
         del chunk_data
 
-        clst_batches = int(self.total_clusters // 20)
+        # This is the number of clusters to write per batch, it is set to 4 times the number of processes
+        # The higher batch number is to avoid scenarios where single or a few processes deal with large clusters
+        # This is not unavoidable, without adding extra logic to the code
+        # but it is a good tradeoff between performance and simplicity
+        clst_batches = int(self.total_clusters // (processes*4))
         with concurrent.futures.ThreadPoolExecutor(max_workers=processes) as executor:
             # Create a list of futures for each batch
             futures = []
@@ -843,18 +860,20 @@ class ECPBuilder:
                     )
 
                     # Submit the batch to the executor for processing
-                    executor.submit(
-                        self.write_items_concurrent,
-                        embeddings,
-                        all_indices,
-                        node_order,
-                        clusters,
-                        start_idx,
-                        end_idx,
+                    futures.append(
+                        executor.submit(
+                            self.write_items_batch,
+                            embeddings,
+                            all_indices,
+                            node_order,
+                            clusters,
+                            start_idx,
+                            end_idx,
+                        )
                     )
             for future in tqdm(
                 concurrent.futures.as_completed(futures),
-                desc="Gathering thread results",
+                desc="Gathering thread results (Writing clusters)",
                 total=len(futures),
             ):
                 # Do nothing, just wait for all futures to complete

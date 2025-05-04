@@ -45,13 +45,6 @@ def build_index(
         int,
         typer.Option(help="Number of threads involved (default = 4)"),
     ] = 4,
-    no_emb_grp: Annotated[
-        bool,
-        typer.Option(
-            "--no-emb-grp",
-            help="Indicates if the embeddings dataset is in a group in the file/store",
-        ),
-    ] = False,
     emb_grp_name: Annotated[
         str,
         typer.Option("--emb-grp-name", help="Group name for the embeddings dataset"),
@@ -130,7 +123,6 @@ def build_index(
         logger.info(f"Selecting cluster representatives using {rep_selection}...")
         ecp.select_cluster_representatives(
             embeddings_file=embeddings_file,
-            grp=False if no_emb_grp else True,
             grp_name=emb_grp_name,
             option=rep_selection,
         )
@@ -143,13 +135,9 @@ def build_index(
             format=rep_file_store,
         )
 
-    logger.info("Building tree...")
-    ecp.build_tree_fs()
-
-    logger.info("Adding items to index...")
-    ecp.add_items_concurrent(
+    logger.info("Building index...")
+    ecp.build_tree_fs(
         embeddings_file=embeddings_file,
-        grp=False if no_emb_grp else True,
         grp_name=emb_grp_name,
     )
 

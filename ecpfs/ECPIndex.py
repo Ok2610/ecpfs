@@ -1,12 +1,12 @@
 from pathlib import Path
 from queue import PriorityQueue
-import time
 from typing import List, Tuple
 import concurrent
 import numpy as np
 import zarr
 from zarr.storage import LocalStore
 
+from ecpfs import ECPNode
 from ecpfs.utils import Metric, calculate_distances
 
 
@@ -21,74 +21,6 @@ class ECPIndex:
         tree_pq (PriorityQueue): Priority queue for tree search.
         item_pq (PriorityQueue): Priority queue for item search.
     """
-
-    class _Node:
-        """
-        A class representing a node in the index tree.
-        It lazily loads its embeddings and children.
-        Attributes:
-            node_fp (zarr.Group): Zarr group for the node.
-            c_key (str): Key for children (node_ids | item_ids).
-            embeddings (np.ndarray): Cached embeddings.
-            children (np.ndarray): Cached children.
-            last_access (float): Last access time.
-            access_count (int): Access count.
-        """
-
-        def __init__(self, node_fp: zarr.Group, c_key: str):
-            """
-            Initializes the node with its zarr group and children key.
-            Parameters:
-                node_fp (zarr.Group): Zarr group for the node.
-                c_key (str): Key for children (node_ids | item_ids).
-            """
-            self._node_fp = node_fp
-            self._c_key = c_key
-            self._embeddings = None
-            self._children = None
-            self._last_access = 0
-            self._access_count = 0
-
-        @property
-        def embeddings(self):
-            """
-            This property will load and cache the embeddings of a node when accessed.
-            Returns:
-                np.ndarray: The embeddings of the node.
-            """
-            self._access_count += 1
-            self._last_access = time.time()
-            if self._embeddings is None:
-                self._embeddings = self._node_fp["embeddings"][:]
-            return self._embeddings
-
-        @property
-        def children(self):
-            """
-            This property will load and cache the children of a node when accessed.
-            Returns:
-                np.ndarray: The children of the node.
-            """
-            self._access_count += 1
-            self._last_access = time.time()
-            if self._children is None:
-                self._children = self._node_fp[self._c_key][:]
-            return self._children
-
-        def clear_cache(self):
-            """
-            Clears the cached embeddings and children of the node.
-            """
-            self._embeddings = None
-            self._children = None
-
-        def is_loaded(self):
-            """
-            Checks if the node's embeddings or children are loaded.
-            Returns:
-                bool: True if either embeddings or children are loaded, False otherwise.
-            """
-            return self._embeddings is not None or self._children is not None
 
     def __init__(self, index_path: Path, prefetch: int = -1, max_workers=4):
         """
@@ -109,9 +41,7 @@ class ECPIndex:
             lvl_nodes = [k for k in index_fp[lvl].keys() if "node" in k]
             c_key = "node_ids" if i + 1 < self.levels else "item_ids"
             for node in lvl_nodes:
-                self.nodes[i].append(
-                    self._Node(node_fp=index_fp[lvl][node], c_key=c_key)
-                )
+                self.nodes[i].append(ECPNode(node_fp=index_fp[lvl][node], c_key=c_key))
         if prefetch > -1:
             for i in range(prefetch + 1):
                 self.prefetch_level(i, max_workers=max_workers)

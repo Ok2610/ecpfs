@@ -9,7 +9,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import math
-import concurrent
 import time
 import h5py
 import zarr
@@ -18,7 +17,7 @@ from pathlib import Path
 from typing import Tuple
 from tqdm import tqdm
 from sklearn.cluster import MiniBatchKMeans
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 from ecpfs.utils import (
@@ -408,7 +407,7 @@ class ECPBuilder:
                 data_idxs=d_idxs,
                 workers=proc_workers,
                 mem_threshold=self.memory_threshold,
-                mem_limit=self.memory_limit,
+                mem_limit=int(self.memory_limit/self.workers),
                 est_mem_size=estimated_memory,
             )
 
@@ -526,8 +525,17 @@ class ECPBuilder:
                     proc_workers=P,
                 )
 
+            futures = []
             with ThreadPoolExecutor(max_workers=T) as pool:
-                pool.map(process_node, tasks)
+                for task in tasks:
+                    futures.append(pool.submit(process_node, task))
+
+                for fut in as_completed(futures):
+                    try:
+                        _ = fut.result()  
+                    except Exception as e:
+                        self.logger.exception(f"process_node failed for task {task}: {e}")
+                        raise
 
         to_remove = [f'save/{s}' for s in os.listdir('save') if 'temp' in s]
         for r in to_remove:

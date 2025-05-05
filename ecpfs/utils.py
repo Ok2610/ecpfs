@@ -9,7 +9,7 @@ import zarr
 from zarr.storage import ZipStore
 import h5py
 import math
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from sklearn.metrics.pairwise import cosine_similarity
 import json
@@ -75,7 +75,7 @@ def get_source_embeddings(
         embeddings_file.suffix == ".zip"
         or str.lower(embeddings_file.suffix) == ".zipstore"
     ):
-        embeddings = zarr.open(ZipStore(embeddings_file, mode="r"), mode="r")[grp_name]
+        embeddings = zarr.open(ZipStore(embeddings_file), mode="r")[grp_name]
     else:
         raise ValueError("Unknown embeddings file format")
 
@@ -234,6 +234,7 @@ def determine_node_assignments(
         name=arr_name, shape=(ds_size,), chunks=(w_batch_size,), dtype=np.uint32
     )
 
+    process_futures = []
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=init_worker,
@@ -249,7 +250,15 @@ def determine_node_assignments(
             mb_end = min((m_batch + 1) * memory_batch_size, ds_size)
             for d_start in range(mb_start, mb_end, w_batch_size):
                 d_end = min(d_start + w_batch_size, mb_end)
-                exe.submit(node_worker, d_start, d_end)
+                process_futures.append(exe.submit(node_worker, d_start, d_end))
+        
+        for fut in as_completed(process_futures):
+            try:
+                fut.result()
+            except Exception as e:
+                raise Exception(f"Failed in determine_node_assignments with {e}")
+                
+
         exe.shutdown(wait=True)
 
     offsets, data = group_by_assignments(
@@ -296,7 +305,7 @@ def group_by_assignments(
     offsets[1:] = np.cumsum(counts)
 
     # Allocate output arrays and cursors
-    data = np.empty(offsets[-1], dtype=np.uint32)
+    data = np.zeros(offsets[-1], dtype=np.uint32)
     cursor = offsets[:-1].copy()
 
     # Second pass: fill in the indices

@@ -418,7 +418,9 @@ class ECPBuilder:
                 start, end = offsets[child], offsets[child + 1]
                 if start == end:
                     continue
-                child_data = data[start:end]
+                # data eleemnts match local ids
+                # d_idxs have the global ids
+                child_data = d_idxs[data[start:end]]
                 nxt.append((lvl + 1, node_ids[child], child_data))
 
     @log_time
@@ -511,6 +513,7 @@ class ECPBuilder:
                 start, end = offsets[i], offsets[i + 1]
                 if start == end:
                     continue
+                # data elements match global ids
                 ids = data[start:end]
                 tasks.append((1, i, ids))
 

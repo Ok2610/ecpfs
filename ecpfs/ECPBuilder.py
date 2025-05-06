@@ -1,9 +1,4 @@
-from collections import deque
 import os
-import shutil
-
-from sklearn import metrics
-
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -19,14 +14,13 @@ from tqdm import tqdm
 from sklearn.cluster import MiniBatchKMeans
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
+from collections import deque
 
 from ecpfs.utils import (
     Metric,
     determine_node_assignments,
-    get_memory_size,
     get_source_embeddings,
     calculate_chunk_size,
-    pick_thread_proc_split,
 )
 
 
@@ -67,7 +61,6 @@ class ECPBuilder:
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
         workers=4,
-        memory_threshold=200 * 1024 * 1024,  # 200 MB
         memory_limit=4096 * 1024 * 1024,  # 4 GB
     ):
         """
@@ -93,7 +86,6 @@ class ECPBuilder:
         self.representative_embeddings: np.ndarray | None = None
         self.chunk_size = (-1, -1)
         self.workers = cpu_count() - 1 if workers > cpu_count() else workers
-        self.memory_threshold = memory_threshold
         self.memory_limit = memory_limit
 
         self.write_index_info()
@@ -337,11 +329,9 @@ class ECPBuilder:
 
     def add_data_to_index_level(
         self,
-        embeddings: zarr.Array | h5py.Dataset,
-        embeddings_file_path: Tuple[str, str],  # (file, group)
+        embeddings: np.ndarray,
         tasks: list,
         target_lvl,
-        tmp_file_path="save/temp.zarr",
         proc_workers=1,
     ):
         """
@@ -369,6 +359,12 @@ class ECPBuilder:
             # If target_lvl is reached write the node and continue
             if lvl == target_lvl:
                 ids_key = "node_ids" if target_lvl != self.levels else "item_ids"
+                if "embeddings" in self.index[lvl_s][node_s]:
+                    self.index[lvl_s][node_s]["embeddings"].append(embeddings[d_idxs])
+                    self.index[lvl_s][node_s][ids_key].append(
+                        self.batch_to_global_ids[d_idxs]
+                    )
+                    continue
                 zarr.create_array(
                     f"{self.index_file}/{lvl_s}/{node_s}",
                     name="embeddings",
@@ -378,7 +374,7 @@ class ECPBuilder:
                 zarr.create_array(
                     f"{self.index_file}/{lvl_s}/{node_s}",
                     name=ids_key,
-                    data=d_idxs,
+                    data=self.batch_to_global_ids[d_idxs],
                     chunks=(self.chunk_size[0]),
                 )
                 zarr.create_array(
@@ -392,23 +388,11 @@ class ECPBuilder:
             # If target_lvl has not been reached determine the next level assignments
             centroids = self.index[lvl_s][node_s]["embeddings"][:]
 
-            estimated_memory = get_memory_size(
-                ds_size=d_idxs.shape[0],
-                nd_size=centroids.shape[0],
-                dim_size=self.emb_dims,
-                bsize=self.itemsize,
-            )
             offsets, data = determine_node_assignments(
-                tmp_zarr_pth=tmp_file_path,
-                arr_name=f"{lvl_s}_{node_s}_data_ids",
                 node_embeddings=centroids,
-                data_emb_path=embeddings_file_path,
-                data_embeddings=embeddings,
-                data_idxs=d_idxs,
+                data_embeddings=embeddings[d_idxs],
                 workers=proc_workers,
-                mem_threshold=self.memory_threshold,
-                mem_limit=int(self.memory_limit/self.workers),
-                est_mem_size=estimated_memory,
+                metric=self.metric
             )
 
             node_ids = self.index[lvl_s][node_s]["node_ids"][:]
@@ -419,7 +403,7 @@ class ECPBuilder:
                 if start == end:
                     continue
                 # data eleemnts match local ids
-                # d_idxs have the global ids
+                # d_idxs have the batch ids
                 child_data = d_idxs[data[start:end]]
                 nxt.append((lvl + 1, node_ids[child], child_data))
 
@@ -475,72 +459,62 @@ class ECPBuilder:
         self.logger.info("Adding representatives top-down...")
         lvl_range = self.node_size
 
-        # T, P = pick_thread_proc_split(self.workers)
-        T = self.workers - 2
-        P = 2
+        T = self.workers
+        batch_bytes = self.memory_limit // 4
+        batch_size = batch_bytes // (self.emb_dims * self.itemsize)
         for l in range(1, self.levels + 1):
             if l == self.levels:
                 self.logger.info("Adding dataset items...")
                 embeddings = get_source_embeddings(embeddings_file, grp_name)
                 lvl_range = embeddings.shape[0]
-                emb_zarr_path = embeddings_file
-                emb_zarr_grp = grp_name
             else:
                 embeddings = self.representative_embeddings
                 lvl_range = min(lvl_range * self.node_size, self.total_clusters)
-                emb_zarr_path = self.index_file
-                emb_zarr_grp = self.rep_emb_dsname
 
-            estimated_memory = get_memory_size(
-                lvl_range, self.root_embeddings.shape[0], self.emb_dims, self.itemsize
-            )
-            tmp_file = f"save/temp_{l}.zarr"
-            offsets, data = determine_node_assignments(
-                tmp_zarr_pth=tmp_file,
-                node_embeddings=self.root_embeddings,
-                data_emb_path=(emb_zarr_path, emb_zarr_grp),
-                data_embeddings=embeddings,
-                data_idxs=np.arange(lvl_range, dtype=np.uint32),
-                workers=T,
-                mem_threshold=self.memory_threshold,
-                mem_limit=self.memory_limit,
-                est_mem_size=estimated_memory,
-            )
-            self.logger.info(f"Root done")
+            for start in range(0, lvl_range, batch_size):
+                end = min(start + batch_size, lvl_range)
+                batch_embeddings = embeddings[start:end]
+                # Set batch id to global id array
+                self.batch_to_global_ids = np.arange(start, end, dtype=np.uint32)
 
-            tasks = []
-            for i in range(offsets.shape[0] - 1):
-                start, end = offsets[i], offsets[i + 1]
-                if start == end:
-                    continue
-                # data elements match global ids
-                ids = data[start:end]
-                tasks.append((1, i, ids))
-
-            def process_node(task):
-                # this will only go as deep as target_lvl=l
-                self.add_data_to_index_level(
-                    embeddings=embeddings,
-                    embeddings_file_path=(emb_zarr_path, grp_name),
-                    tasks=[task],
-                    target_lvl=l,
-                    tmp_file_path=tmp_file,
-                    proc_workers=P,
+                offsets, data = determine_node_assignments(
+                    node_embeddings=self.root_embeddings,
+                    data_embeddings=batch_embeddings,
+                    workers=T,
+                    metric=self.metric
                 )
+                self.logger.info(f"Root done")
 
-            futures = []
-            with ThreadPoolExecutor(max_workers=T) as pool:
-                for task in tasks:
-                    futures.append(pool.submit(process_node, task))
+                tasks = []
+                for i in range(offsets.shape[0] - 1):
+                    start, end = offsets[i], offsets[i + 1]
+                    if start == end:
+                        continue
+                    # data elements match batch ids
+                    ids = data[start:end]
+                    tasks.append((1, i, ids))
 
-                for fut in as_completed(futures):
-                    try:
-                        _ = fut.result()  
-                    except Exception as e:
-                        self.logger.exception(f"process_node failed for task {task}: {e}")
-                        raise
+                def process_node(task):
+                    # this will only go as deep as target_lvl=l
+                    self.add_data_to_index_level(
+                        embeddings=batch_embeddings,
+                        tasks=[task],
+                        target_lvl=l,
+                        proc_workers=1,
+                    )
 
-        to_remove = [f'save/{s}' for s in os.listdir('save') if 'temp' in s]
-        for r in to_remove:
-            shutil.rmtree(r)
+                futures = []
+                with ThreadPoolExecutor(max_workers=T) as pool:
+                    for task in tasks:
+                        futures.append(pool.submit(process_node, task))
+
+                    for fut in as_completed(futures):
+                        try:
+                            _ = fut.result()
+                        except Exception as e:
+                            self.logger.exception(
+                                f"process_node failed for task {task}: {e}"
+                            )
+                            raise
+
         self.logger.info("Done building tree!")

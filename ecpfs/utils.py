@@ -182,10 +182,8 @@ def group_by_assignments(
     from the provided embeddings array.
     """
 
-    counts = np.zeros(num_reps, dtype=np.uint32)
     # bincount up to num_reps
-    bc = np.bincount(arr, minlength=num_reps).astype(np.uint32)
-    counts += bc
+    counts = np.bincount(arr, minlength=num_reps).astype(np.uint32)
 
     # Build offsets via prefix-sum
     offsets = np.zeros(num_reps + 1, dtype=np.uint32)

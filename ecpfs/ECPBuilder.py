@@ -255,26 +255,6 @@ class ECPBuilder:
         )
         root[self.rep_emb_dsname] = self.representative_embeddings
 
-    def align_specific_node(self, lvl, node):
-        """
-        Resize the embeddings and distances arrays of a node to match their actual size
-
-        Parameters:
-            lvl (str): The level of the node, ex. "lvl_0", "lvl_1"
-            node (str): The node to resize, ex. "node_0", "node_1"
-        """
-        self.index[lvl][node]["embeddings"].resize(
-            (
-                len(self.index[lvl][node]["item_ids"]),
-                self.index[lvl][node]["embeddings"].shape[1],
-            )
-        )
-        self.index[lvl][node]["distances"].resize(
-            len(self.index[lvl][node]["item_ids"])
-        )
-        if len(self.index[lvl][node]["item_ids"]) > 0:
-            self.update_node_border_info(lvl, node)
-
     def update_node_border_info(self, lvl: str, node: str):
         """
         Calculate and set the border item for the node at the provided level
@@ -298,34 +278,6 @@ class ECPBuilder:
                 new_border_dists[0],
                 self.index[lvl][node]["distances"][new_border_dists[0]],
             )
-
-    def align_node_embeddings(self):
-        """
-        Resize the embeddings and distances arrays of all nodes to match their actual size
-        """
-        lvl_range = self.node_size
-        for i in range(self.levels):
-            lvl = "lvl_" + str(i)
-            level = int(lvl.split("_")[1])
-            if level == self.levels - 1:
-                ids_key = "item_ids"
-            else:
-                ids_key = "node_ids"
-
-            for j in range(lvl_range):
-                node = "node_" + str(j)
-                self.index[lvl][node]["embeddings"].resize(
-                    (
-                        len(self.index[lvl][node][ids_key]),
-                        self.index[lvl][node]["embeddings"].shape[1],
-                    )
-                )
-                if len(self.index[lvl][node][ids_key]) > 0:
-                    self.update_node_border_info(lvl, node)
-            if i + 1 == self.levels - 1:
-                lvl_range = self.total_clusters
-            else:
-                lvl_range = lvl_range * self.node_size
 
     def add_data_to_index_level(
         self,

@@ -24,6 +24,7 @@ zarr = "^3.0.5"
 
 [tool.poetry.group.dev.dependencies]
 pylint = "^3.3.5"
+ipykernel = "^6.29.5"
 
 [build-system]
 requires = ["poetry-core"]

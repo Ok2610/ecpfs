@@ -103,7 +103,13 @@ class ECPIndex:
         executor.shutdown(wait=False)
 
     def search(
-        self, query: np.ndarray, k: int, search_exp=64, restart=True
+        self, 
+        query: np.ndarray, 
+        k: int, 
+        search_exp=64, 
+        restart=True, 
+        exclude=set(),
+        max_increments=-1
     ) -> Tuple[List[float], List[int]]:
         """
         Searches for the k nearest neighbors of the query embedding.
@@ -112,20 +118,46 @@ class ECPIndex:
             k (int): Number of nearest neighbors to find.
             search_exp (int): Number of leaf nodes to explore.
             restart (bool): Whether to restart the search.
+            exclude (bool): A set of item ids to exclude from the search
+            max_increments (int): Number of times to expand scope, default=-1 (full)
         Returns:
-            Tuple[List[float], List[int]]: A tuple containing:
-                - distances: The distances of the k nearest neighbors.
+            Tuple[List[int], List[float]]: A tuple containing:
                 - ids: The indices of the k nearest neighbors.
+                - distances: The distances of the k nearest neighbors.
         """
+        # Note: Since PriorityQueue, is a min priority,
+        # if Metric.IP is used then we negate the distances
+        # and negate them again when returning
+        sign = -1 if self.metric == Metric.IP else 1
+
+        def push_tree(dist, is_leaf, lvl, node):
+            self.tree_pq.put((sign * dist, is_leaf, lvl, node))
+
+        def push_item(dist, child):
+            self.item_pq.put((sign * dist, child))
+
+        def return_top_k(top_k):
+            ids = [idx for _,idx in top_k]
+            scores = [score for score,_ in top_k] 
+            return ids, scores
+
         leaf_cnt = 0
+        items_cnt = 0
+        increments = 0
+        top_k = []
         if restart:
             self.tree_pq = PriorityQueue()
             self.item_pq = PriorityQueue()
-        root_top, root_distances = calculate_distances(query, self.root, self.metric)
-        for t in root_top:
-            self.tree_pq.put((root_distances[t], False, 0, t))
+            root_top, root_distances = calculate_distances(query, self.root, self.metric)
+            for t in root_top:
+                push_tree(root_distances[t], False, 0, t)
+        elif not self.item_pq.empty():
+            top_k = [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
+            if len(top_k) == k:
+                return_top_k(top_k)
+            items_cnt = len(top_k)
 
-        while leaf_cnt != search_exp and not self.tree_pq.empty():
+        while not self.tree_pq.empty():
             _, is_leaf, lvl, node = self.tree_pq.get()
             top, distances = calculate_distances(
                 query, self.nodes[lvl][node].embeddings, self.metric
@@ -133,7 +165,10 @@ class ECPIndex:
             if is_leaf:
                 # radius = self.index[lvl][node]["border"][1]
                 for t in top:
-                    self.item_pq.put((distances[t], self.nodes[lvl][node].children[t]))
+                    item_id = self.nodes[lvl][node].children[t]
+                    if item_id not in exclude:
+                        push_item(distances[t], item_id)
+                        items_cnt += 1
                 leaf_cnt += 1
             else:
                 # Keep popping from queue and adding the next level and node to the queue
@@ -144,15 +179,18 @@ class ECPIndex:
                         # else distances[t] + radius
                     )
                     if lvl + 1 == self.levels - 1:
-                        self.tree_pq.put(
-                            (dist, True, lvl + 1, self.nodes[lvl][node].children[t])
-                        )
+                        push_tree(dist, True, lvl + 1, self.nodes[lvl][node].children[t])
                     else:
-                        self.tree_pq.put(
-                            (dist, False, lvl + 1, self.nodes[lvl][node].children[t])
-                        )
-        top_k = sorted(
-            [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()],
-            reverse=True,
-        )
-        return [t[0] for t in top_k], [t[1] for t in top_k]
+                        push_tree(dist, False, lvl + 1, self.nodes[lvl][node].children[t])
+
+            if leaf_cnt == search_exp:
+                if items_cnt >= k:
+                    break
+                if increments < max_increments or max_increments == -1:
+                    increments += 1
+                    search_exp *= 2
+                else:
+                    break
+                            
+        top_k += [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
+        return_top_k(top_k)

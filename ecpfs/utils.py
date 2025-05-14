@@ -1,25 +1,13 @@
 from enum import Enum
-from multiprocessing import cpu_count
-import os
 from pathlib import Path
-from typing import List, Tuple
+from typing import Tuple
 import numpy as np
 from threadpoolctl import threadpool_limits
 import zarr
 from zarr.storage import ZipStore
 import h5py
-import math
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from sklearn.metrics.pairwise import cosine_similarity
-import json
-
-# Module‑level globals (set in init_worker)
-GLOBAL_D_ZARR = None
-GLOBAL_D_IDXS = None
-GLOBAL_TMP_ZARR = None
-GLOBAL_R_ARRAY = None
-
 
 class Metric(Enum):
     L2 = 0

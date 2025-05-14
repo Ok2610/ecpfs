@@ -27,3 +27,8 @@ Currently, the collection group is not present, but will be an option in the fut
 Can be further extended and modified.
 
 
+### Still to be done
+
+1. Add tests
+2. Add missing documentation
+

@@ -22,12 +22,12 @@ class ECPIndex:
         item_pq (PriorityQueue): Priority queue for item search.
     """
 
-    def __init__(self, index_path: Path, prefetch: int = -1, max_workers=4):
+    def __init__(self, index_path: Path, prefetch: int = 1, max_workers=4):
         """
         Initializes the ECPIndex with the given index path.
         Parameters:
             index_path (Path): Path to the index file.
-            prefetch (int): Number of levels to prefetch (-1 for no prefetching).
+            prefetch (int): Number of levels to prefetch (default=1, prefetch first level).
             max_workers (int): Number of threads to use for prefetching.
         """
         store = LocalStore(index_path)
@@ -36,15 +36,15 @@ class ECPIndex:
         self.levels = index_fp["info"]["levels"][0]
         self.metric = Metric(index_fp["info"]["metric"][0])
         self.nodes = [[] for _ in range(self.levels)]
-        for i in range(self.levels):
+        for i in range(1, self.levels+1):
             lvl = f"lvl_{i}"
             lvl_nodes = [k for k in index_fp[lvl].keys() if "node" in k]
             c_key = "node_ids" if i + 1 < self.levels else "item_ids"
             for node in lvl_nodes:
                 self.nodes[i].append(ECPNode(node_fp=index_fp[lvl][node], c_key=c_key))
-        if prefetch > -1:
-            for i in range(prefetch + 1):
-                self.prefetch_level(i, max_workers=max_workers)
+        if prefetch > 0:
+            for i in range(prefetch):
+                self.prefetch_level(i+1, max_workers=max_workers)
 
     def cleanup_cache(self, max_loaded_nodes: int):
         """

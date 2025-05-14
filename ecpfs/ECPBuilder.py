@@ -5,7 +5,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import math
 import time
-import h5py
 import zarr
 import numpy as np
 from pathlib import Path
@@ -61,7 +60,7 @@ class ECPBuilder:
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
         workers=4,
-        memory_limit=4096 * 1024 * 1024,  # 4 GB
+        memory_limit=4,
     ):
         """
         Constructor.
@@ -74,7 +73,7 @@ class ECPBuilder:
             file_store: The file format to store the representative cluster embeddings and ids. "zarr_l" (LocalStore) or "zarr_z" (ZipStore), default="zarr_l".
             workers: Number of worker threads to use for parallel processing
             memory_threshold: Determines when to use multithreading when inserting data into the index. Default is 200 MB.
-            memory_limit: The amount of memory available for the process. Default is 4 GB.
+            memory_limit: The amount of memory available for the in GB. Default is 4 GB.
         """
         self.levels: int = levels
         self.target_cluster_items: int = target_cluster_items
@@ -86,7 +85,7 @@ class ECPBuilder:
         self.representative_embeddings: np.ndarray | None = None
         self.chunk_size = (-1, -1)
         self.workers = cpu_count() - 1 if workers > cpu_count() else workers
-        self.memory_limit = memory_limit
+        self.memory_limit = memory_limit * 1024 * 1024 * 1024
 
         self.write_index_info()
         return
@@ -412,7 +411,7 @@ class ECPBuilder:
         lvl_range = self.node_size
 
         T = self.workers
-        batch_bytes = self.memory_limit // 4
+        batch_bytes = self.memory_limit // 2
         batch_size = batch_bytes // (self.emb_dims * self.itemsize)
         for l in range(1, self.levels + 1):
             if l == self.levels:

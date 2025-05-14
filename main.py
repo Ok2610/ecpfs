@@ -93,6 +93,13 @@ def build_index(
             show_choices=["zarr_l", "zarr_z"],
         ),
     ] = "zarr_l",
+    memory_limit: Annotated[
+        int,
+        typer.Option(
+            "--memory-limit",
+            help="The amount of memory the build process should adhere to in GB. Not guaranteed. Default = 4 GB",
+        ),
+    ] = 4,
 ) -> None:
     if not embeddings_file.exists():
         logger.error("Embeddings file does not exist!")
@@ -117,6 +124,7 @@ def build_index(
         index_file=save_file,
         file_store=file_store,
         workers=workers,
+        memory_limit=memory_limit
     )
 
     if rep_file is None:

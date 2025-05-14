@@ -1,19 +1,12 @@
 import sys
 import typer
-from loguru import logger
 from typing import Annotated
 from pathlib import Path
 
-from ecpfs import ECPBuilder
-from ecpfs.ECPBuilder import Metric
+from ecpfs import Metric, ECPBuilder, ecp_enable_logging
+ecp_enable_logging()
 
 app = typer.Typer()
-logger.remove()  # Remove default logging handler
-logger.add(
-    sys.stderr,
-    format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}",
-)
-
 
 @app.command("build-index")
 def build_index(
@@ -102,7 +95,7 @@ def build_index(
     ] = 4,
 ) -> None:
     if not embeddings_file.exists():
-        logger.error("Embeddings file does not exist!")
+        print("Embeddings file does not exist!")
         exit(-1)
 
     _metric = None
@@ -113,29 +106,26 @@ def build_index(
     elif metric == Metric.COS.name:
         _metric = Metric.COS
     else:
-        logger.error("Invalid metric")
+        print("Invalid metric")
         exit(-1)
 
-    ecp = ECPBuilder.ECPBuilder(
+    ecp = ECPBuilder(
         levels=levels,
-        logger=logger,
         target_cluster_items=target_cluster_items,
         metric=_metric,
         index_file=save_file,
         file_store=file_store,
         workers=workers,
-        memory_limit=memory_limit
+        memory_limit=memory_limit,
     )
 
     if rep_file is None:
-        logger.info(f"Selecting cluster representatives using {rep_selection}...")
         ecp.select_cluster_representatives(
             embeddings_file=embeddings_file,
             grp_name=emb_grp_name,
             option=rep_selection,
         )
     else:
-        logger.info("Loading cluster representatives...")
         ecp.get_cluster_representatives_from_file(
             rep_file,
             emb_dsname=rep_emb_grp,
@@ -143,13 +133,10 @@ def build_index(
             format=rep_file_store,
         )
 
-    logger.info("Building index...")
     ecp.build_tree_fs(
         embeddings_file=embeddings_file,
         grp_name=emb_grp_name,
     )
-
-    logger.info("Index created")
 
     return
 

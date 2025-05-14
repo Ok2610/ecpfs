@@ -15,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from collections import deque
 
-from ecpfs.utils import (
+from ._logging import logger
+from .utils import (
     Metric,
     determine_node_assignments,
     get_source_embeddings,
@@ -54,13 +55,12 @@ class ECPBuilder:
     def __init__(
         self,
         levels: int,
-        logger,
         target_cluster_items=100,
         metric=Metric.L2,
         index_file="ecpfs_index.zarr",
         file_store="zarr_l",
         workers=4,
-        memory_limit=4,
+        memory_limit=4
     ):
         """
         Constructor.
@@ -113,6 +113,7 @@ class ECPBuilder:
                 - embeddings: 2D array of representative cluster embeddings.
                 - ids: 1D array of representative cluster ids.
         """
+        logger.info(f"Selecting cluster representatives using {option}...")
         embeddings = get_source_embeddings(embeddings_file, grp_name)
         self.itemsize = embeddings.dtype.itemsize
         self.emb_dtype = embeddings.dtype
@@ -204,6 +205,7 @@ class ECPBuilder:
                 - embeddings: 2D array of representative cluster embeddings.
                 - ids: 1D array of representative cluster ids.
         """
+        logger.info("Loading cluster representatives...")
 
         zf = zarr.open(fp, mode="r")
         self.representative_embeddings = zf[emb_dsname]
@@ -463,9 +465,9 @@ class ECPBuilder:
                         try:
                             _ = fut.result()
                         except Exception as e:
-                            self.logger.exception(
+                            self.logger.error(
                                 f"process_node failed for task {task}: {e}"
                             )
                             raise
 
-        self.logger.info("Done building tree!")
+        self.logger.info("Done building index!")

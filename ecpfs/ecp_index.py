@@ -6,8 +6,8 @@ import numpy as np
 import zarr
 from zarr.storage import LocalStore
 
-from ecpfs import ECPNode
-from ecpfs.utils import Metric, calculate_distances
+from .ecp_node import ECPNode
+from .utils import Metric, calculate_distances
 
 
 class ECPIndex:

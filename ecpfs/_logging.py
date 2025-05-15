@@ -1,7 +1,7 @@
-from loguru import Logger
+from loguru import logger
 import sys
 
-logger = Logger()
+logger = logger
 
 def ecp_enable_logging(
     sink=sys.stderr,

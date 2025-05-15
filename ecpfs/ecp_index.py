@@ -30,7 +30,9 @@ class ECPIndex:
             prefetch (int): Number of levels to prefetch (default=1, prefetch first level).
             max_workers (int): Number of threads to use for prefetching.
         """
-        store = LocalStore(index_path)
+        if not index_path.exists():
+            raise FileNotFoundError(f"Index file not found (Path: {index_path})")
+        store = LocalStore(index_path, read_only=True)
         index_fp = zarr.open(store, mode="r")
         self.root = index_fp["index_root"]["embeddings"]
         self.levels = index_fp["info"]["levels"][0]

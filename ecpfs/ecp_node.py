@@ -39,8 +39,10 @@ class ECPNode:
         self._access_count += 1
         self._last_access = time.time()
         if self._embeddings is None:
-            self._embeddings = self._node_fp["embeddings"][:]
+            if "embeddings" in self._node_fp:
+                self._embeddings = self._node_fp["embeddings"][:]
         return self._embeddings
+            
 
     @property
     def children(self):
@@ -52,7 +54,8 @@ class ECPNode:
         self._access_count += 1
         self._last_access = time.time()
         if self._children is None:
-            self._children = self._node_fp[self._c_key][:]
+            if self._c_key in self._node_fp:
+                self._children = self._node_fp[self._c_key][:]
         return self._children
 
     def clear_cache(self):

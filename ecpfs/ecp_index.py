@@ -164,13 +164,19 @@ class ECPIndex:
 
         while not self.tree_pq.empty():
             _, is_leaf, lvl, node = self.tree_pq.get()
+            if self.nodes[lvl][node].children is None:
+                # Empty node, skip
+                print(f"Skipping {lvl} {node}")
+                continue
             top, distances = calculate_distances(
                 query, self.nodes[lvl][node].embeddings, self.metric
             )
             if is_leaf:
                 # radius = self.index[lvl][node]["border"][1]
+                distances = distances.tolist()
+                items = self.nodes[lvl][node].children.tolist()
                 for t in top:
-                    item_id = self.nodes[lvl][node].children[t]
+                    item_id = items[t]
                     if item_id not in exclude:
                         push_item(distances[t], item_id)
                         items_cnt += 1

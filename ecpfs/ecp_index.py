@@ -38,12 +38,15 @@ class ECPIndex:
         self.levels = index_fp["info"]["levels"][0]
         self.metric = Metric(index_fp["info"]["metric"][0])
         self.nodes = [[] for _ in range(self.levels)]
-        for i in range(1, self.levels+1):
-            lvl = f"lvl_{i}"
-            lvl_nodes = [k for k in index_fp[lvl].keys() if "node" in k]
-            c_key = "node_ids" if i + 1 < self.levels else "item_ids"
+        for l in range(self.levels):
+            lvl = f"lvl_{l+1}" # Index structure starts with lvl_1 and up
+            lvl_nodes = sorted(
+                [k for k in index_fp[lvl].keys() if "node" in k],
+                key=lambda x: int(x.split('_')[1])
+            )
+            c_key = "node_ids" if l + 1 < self.levels else "item_ids"
             for node in lvl_nodes:
-                self.nodes[i].append(ECPNode(node_fp=index_fp[lvl][node], c_key=c_key))
+                self.nodes[l].append(ECPNode(node_fp=index_fp[lvl][node], c_key=c_key))
         if prefetch > 0:
             for i in range(prefetch):
                 self.prefetch_level(i+1, max_workers=max_workers)
@@ -96,7 +99,7 @@ class ECPIndex:
             _ = node.embeddings
             _ = node.children
 
-        nodes = self.nodes[level_index]
+        nodes = self.nodes[level_index - 1] # since file starts lvl with 1
 
         print(f"Prefetching {len(nodes)} nodes from level {level_index}...")
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
@@ -195,4 +198,4 @@ class ECPIndex:
                     break
                             
         top_k += [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
-        return_top_k(top_k)
+        return return_top_k(top_k)

@@ -10,8 +10,8 @@ The index format is stored in a versatile directory format, that enables flexibl
 -> "collection" -> "name": str
 -> "collection" -> "embeddings": np.ndarray, shape=(N, dim), dtype=ds.dtype
 
--> "index_info" -> "levels": int
--> "index_info" -> "metric": int (0=L2, 1=IP, 2=COS)
+-> "info" -> "levels": int
+-> "info" -> "metric": int (0=L2, 1=IP, 2=COS)
 -> "rep_embeddings": np.ndarray, shape=((N/tcs), dim), dtype=ds.dtype
 -> "rep_ids": np.ndarray, shape=((N/tcs),), dtype=np.uint32
 

@@ -143,7 +143,7 @@ class ECPIndex:
 
         def return_top_k(top_k):
             ids = [idx for _,idx in top_k]
-            scores = [score for score,_ in top_k] 
+            scores = [sign * score for score,_ in top_k] 
             return ids, scores
 
         leaf_cnt = 0

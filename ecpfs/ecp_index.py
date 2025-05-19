@@ -108,21 +108,57 @@ class ECPIndex:
         executor.shutdown(wait=False)
 
     def search(
-        self, 
-        query: np.ndarray, 
-        k: int, 
-        search_exp=64, 
-        restart=True, 
+        self,
+        query: np.ndarray,
+        k: int,
+        search_exp: int = 64,
         exclude=set(),
         max_increments=-1
-    ) -> Tuple[List[float], List[int]]:
+    ) -> Tuple[PriorityQueue, PriorityQueue]:
+        """
+        Initializes a new search for the k nearest neighbors of the query embedding.
+        Parameters:
+            query (np.ndarray): The query embedding.
+            k (int): Number of nearest neighbors to find.
+            search_exp (int): Number of leaf nodes to explore.
+            exclude (set): A set of item ids to exclude from the search.
+            max_increments (int): Number of times to expand scope, default=-1 (full).
+        Returns:
+            Tuple[PriorityQueue, PriorityQueue]: A tuple containing:
+                - tree_pq: Priority queue for tree search.
+                - item_pq: Priority queue for item search.
+        """
+        tree_pq = PriorityQueue()
+        item_pq = PriorityQueue()
+        self.incremental_search(
+            query=query,
+            tree_pq=tree_pq,
+            item_pq=item_pq,
+            k=k,
+            search_exp=search_exp,
+            exclude=exclude,
+            max_increments=max_increments
+        )
+        return tree_pq, item_pq
+
+    def incremental_search(
+        self, 
+        query: np.ndarray, 
+        tree_pq: PriorityQueue,
+        item_pq: PriorityQueue,
+        k: int, 
+        search_exp=64, 
+        exclude=set(),
+        max_increments=-1
+    ) -> None:
         """
         Searches for the k nearest neighbors of the query embedding.
         Parameters:
             query (np.ndarray): The query embedding.
             k (int): Number of nearest neighbors to find.
+            tree_pq: tree priority queue.
+            item_pq: item priority queue.
             search_exp (int): Number of leaf nodes to explore.
-            restart (bool): Whether to restart the search.
             exclude (bool): A set of item ids to exclude from the search
             max_increments (int): Number of times to expand scope, default=-1 (full)
         Returns:
@@ -136,37 +172,22 @@ class ECPIndex:
         sign = -1 if self.metric == Metric.IP else 1
 
         def push_tree(dist, is_leaf, lvl, node):
-            self.tree_pq.put((sign * dist, is_leaf, lvl, node))
+            tree_pq.put((sign * dist, is_leaf, lvl, node))
 
         def push_item(dist, child):
-            self.item_pq.put((sign * dist, child))
-
-        def return_top_k(top_k):
-            ids = [idx for _,idx in top_k]
-            scores = [sign * score for score,_ in top_k] 
-            return ids, scores
+            item_pq.put((sign * dist, child))
 
         leaf_cnt = 0
         items_cnt = 0
         increments = 0
-        top_k = []
-        if restart:
-            self.tree_pq = PriorityQueue()
-            self.item_pq = PriorityQueue()
+        if tree_pq.empty():
             root_top, root_distances = calculate_distances(query, self.root, self.metric)
             for t in root_top:
                 push_tree(root_distances[t], False, 0, t)
-        elif not self.item_pq.empty():
-            top_k = [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
-            if len(top_k) == k:
-                return_top_k(top_k)
-            items_cnt = len(top_k)
 
-        while not self.tree_pq.empty():
-            _, is_leaf, lvl, node = self.tree_pq.get()
+        while not tree_pq.empty():
+            _, is_leaf, lvl, node = tree_pq.get()
             if self.nodes[lvl][node].children is None:
-                # Empty node, skip
-                print(f"Skipping {lvl} {node}")
                 continue
             top, distances = calculate_distances(
                 query, self.nodes[lvl][node].embeddings, self.metric
@@ -202,6 +223,21 @@ class ECPIndex:
                     search_exp *= 2
                 else:
                     break
-                            
-        top_k += [self.item_pq.get() for _ in range(k) if not self.item_pq.empty()]
-        return return_top_k(top_k)
+
+    def extract_k_items(self, k, item_pq):
+        """
+        Extracts the top k items from the item priority queue.
+        Parameters:
+            k (int): Number of items to extract.
+            item_pq (PriorityQueue): The item priority queue.
+        Returns:
+            Tuple[List[int], List[float]]: A tuple containing:
+                - ids: The indices of the k nearest neighbors.
+                - scores: The distances of the k nearest neighbors.
+        """
+        sign = -1 if self.metric == Metric.IP else 1
+        top_k = [item_pq.get() for _ in range(k) if not item_pq.empty()]
+        ids = [idx for _,idx in top_k]
+        scores = [sign * score for score,_ in top_k] 
+        return ids, scores
+

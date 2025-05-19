@@ -162,3 +162,7 @@ cython_debug/
 #.idea/
 
 *.ps1
+
+# VS Code
+.vscode/
+.vscode-test/

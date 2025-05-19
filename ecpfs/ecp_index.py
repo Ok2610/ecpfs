@@ -224,7 +224,7 @@ class ECPIndex:
                 else:
                     break
 
-    def extract_k_items(self, k, item_pq):
+    def extract_k_items(self, k, item_pq) -> Tuple[List[int], List[float]]:
         """
         Extracts the top k items from the item priority queue.
         Parameters:

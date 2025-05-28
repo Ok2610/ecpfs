@@ -9,7 +9,6 @@ from zarr.storage import LocalStore
 from .ecp_node import ECPNode
 from .utils import Metric, calculate_distances
 
-
 class ECPIndex:
     """
     A class representing the eCP index for efficient nearest neighbor search.
@@ -34,7 +33,7 @@ class ECPIndex:
             raise FileNotFoundError(f"Index file not found (Path: {index_path})")
         store = LocalStore(index_path, read_only=True)
         index_fp = zarr.open(store, mode="r")
-        self.root = index_fp["index_root"]["embeddings"]
+        self.root = index_fp["index_root"]["embeddings"][:]
         self.levels = index_fp["info"]["levels"][0]
         self.metric = Metric(index_fp["info"]["metric"][0])
         self.nodes = [[] for _ in range(self.levels)]
@@ -129,23 +128,23 @@ class ECPIndex:
                 - item_pq: Priority queue for item search.
         """
         tree_pq = PriorityQueue()
-        item_pq = PriorityQueue()
+        items = []
         self.incremental_search(
             query=query,
             tree_pq=tree_pq,
-            item_pq=item_pq,
+            items=items,
             k=k,
             search_exp=search_exp,
             exclude=exclude,
             max_increments=max_increments
         )
-        return tree_pq, item_pq
+        return tree_pq, items
 
     def incremental_search(
         self, 
         query: np.ndarray, 
         tree_pq: PriorityQueue,
-        item_pq: PriorityQueue,
+        items: List[Tuple[float, int]],
         k: int, 
         search_exp=64, 
         exclude=set(),
@@ -170,12 +169,7 @@ class ECPIndex:
         # if Metric.IP is used then we negate the distances
         # and negate them again when returning
         sign = -1 if self.metric == Metric.IP else 1
-
-        def push_tree(dist, is_leaf, lvl, node):
-            tree_pq.put((sign * dist, is_leaf, lvl, node))
-
-        def push_item(dist, child):
-            item_pq.put((sign * dist, child))
+        items_append = items.append
 
         leaf_cnt = 0
         items_cnt = 0
@@ -183,7 +177,7 @@ class ECPIndex:
         if tree_pq.empty():
             root_top, root_distances = calculate_distances(query, self.root, self.metric)
             for t in root_top:
-                push_tree(root_distances[t], False, 0, t)
+                tree_pq.put((sign * root_distances[t], False, 0, t))
 
         while not tree_pq.empty():
             _, is_leaf, lvl, node = tree_pq.get()
@@ -194,12 +188,12 @@ class ECPIndex:
             )
             if is_leaf:
                 # radius = self.index[lvl][node]["border"][1]
-                distances = distances.tolist()
-                items = self.nodes[lvl][node].children.tolist()
+                # distances = distances.tolist()
+                children = self.nodes[lvl][node].children
                 for t in top:
-                    item_id = items[t]
+                    item_id = children[t]
                     if item_id not in exclude:
-                        push_item(distances[t], item_id)
+                        items_append((sign * dist, item_id))
                         items_cnt += 1
                 leaf_cnt += 1
             else:
@@ -211,12 +205,13 @@ class ECPIndex:
                         # else distances[t] + radius
                     )
                     if lvl + 1 == self.levels - 1:
-                        push_tree(dist, True, lvl + 1, self.nodes[lvl][node].children[t])
+                        tree_pq.put((sign * dist, True, lvl + 1, self.nodes[lvl][node].children[t]))
                     else:
-                        push_tree(dist, False, lvl + 1, self.nodes[lvl][node].children[t])
+                        tree_pq.put((sign * dist, False, lvl + 1, self.nodes[lvl][node].children[t]))
 
             if leaf_cnt == search_exp:
                 if items_cnt >= k:
+                    items = sorted(items, key=lambda x: x[0])
                     break
                 if increments < max_increments or max_increments == -1:
                     increments += 1
@@ -224,7 +219,7 @@ class ECPIndex:
                 else:
                     break
 
-    def extract_k_items(self, k, item_pq) -> Tuple[List[int], List[float]]:
+    def extract_k_items(self, k, items) -> Tuple[List[int], List[float]]:
         """
         Extracts the top k items from the item priority queue.
         Parameters:
@@ -236,8 +231,9 @@ class ECPIndex:
                 - scores: The distances of the k nearest neighbors.
         """
         sign = -1 if self.metric == Metric.IP else 1
-        top_k = [item_pq.get() for _ in range(k) if not item_pq.empty()]
-        ids = [idx for _,idx in top_k]
-        scores = [sign * score for score,_ in top_k] 
+        # top_k = [item_pq.get() for _ in range(k) if not item_pq.empty()]
+        ids = [idx for _,idx in items[:k]]
+        scores = [sign * score for score,_ in items[:k]] 
+        items = items[k:]
         return ids, scores
 

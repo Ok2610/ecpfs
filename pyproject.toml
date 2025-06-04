@@ -1,19 +1,53 @@
-[tool.poetry]
-name = "ecpfs"
-version = "0.9.0"
-description = ""
-authors = ["Omar Shahbaz Khan <omshkhan@gmail.com>"]
-readme = "README.md"
+[build-system]
+requires = ["maturin>=1.0"]
+build-backend = "maturin"
 
-[tool.poetry.dependencies]
-python = "^3.12"
-numpy = "^2.0.0"
-h5py = "^3.11.0"
-loguru = "^0.7.3"
-tqdm = "^4.67.1"
-scikit-learn = "^1.6.0"
-zarr = "^3.0.5"
-threadpoolctl = "^3.6.0"
+[project]
+name        = "ecpfs"
+version     = "0.9.0"
+description = ""
+authors     = [
+    { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
+]
+readme      = "README.md"
+license     = { file = "LICENSE" }
+requires-python = ">=3.12"
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
+dependencies = [
+  "numpy>=2.0.0",
+  "h5py>=3.11.0",
+  "loguru>=0.7.3",
+  "tqdm>=4.67.1",
+  "scikit-learn>=1.6.0",
+  "zarr>=3.0.5",
+  "threadpoolctl>=3.6.0"
+]
+
+[dependency-groups]
+dev = [
+  "sphinx>=6.0",
+  "pytest>=8.2.2",
+  "pylint>=3.3.5",
+  "ipykernel>=6.29.5",
+  "ipython>=8.25.0",
+  "click>=8.1.7",
+  "black>=24.10.0",
+  "deptry>=0.23.0",
+  "typer>=0.15.2"
+]
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "python"
+module-name   = "ecpfs.ecp_index_rs"
 
 [tool.poetry.group.dev.dependencies]
 sphinx = "^6.0"
@@ -25,7 +59,3 @@ click = "^8.1.7"
 black = "^24.10.0"
 deptry = "^0.23.0"
 typer = "^0.15.2"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

@@ -101,6 +101,7 @@ def calculate_distances(
     elif metric == Metric.COS:
         distances = cosine_similarity(embeddings, (q_emb,)).flatten()
         top = np.argsort(distances)[::-1]
+    
     return top, distances
 
 

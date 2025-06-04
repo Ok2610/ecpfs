@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from pathlib import Path
 from queue import PriorityQueue
 from typing import List, Tuple
@@ -9,7 +10,44 @@ from zarr.storage import LocalStore
 from .ecp_node import ECPNode
 from .utils import Metric, calculate_distances
 
-class ECPIndex:
+class BaseECPIndex(ABC):
+    def __init__(self, index_path: Path, prefetch: int = 1, max_workers = 4):
+        pass
+    
+    @abstractmethod
+    def search(
+        self,
+        query: np.ndarray,
+        k: int,
+        search_exp: int = 64,
+        exclude=set(),
+        max_increments=-1
+    ) -> Tuple[PriorityQueue, List[Tuple[float,int]]]:
+        pass
+
+    @abstractmethod
+    def incremental_search(
+        self, 
+        query_id: int, 
+        k: int, 
+        search_exp=64, 
+        exclude=set(),
+        max_increments=-1
+    ) -> None:
+        pass
+
+    @abstractmethod
+    def get_next_k_items(
+        self,
+        query_id: int,
+        k: int,
+        search_exp: int,
+        max_increments: int
+    ) -> List[Tuple[float, int]]:
+        pass
+    
+
+class ECPIndexPy(BaseECPIndex):
     """
     A class representing the eCP index for efficient nearest neighbor search.
     It uses a tree structure to organize the embeddings and allows for lazy loading of data.
@@ -37,6 +75,9 @@ class ECPIndex:
         self.levels = index_fp["info"]["levels"][0]
         self.metric = Metric(index_fp["info"]["metric"][0])
         self.nodes = [[] for _ in range(self.levels)]
+        self.queries = []
+        self.tree_qs = []
+        self.item_qs = []
         for l in range(self.levels):
             lvl = f"lvl_{l+1}" # Index structure starts with lvl_1 and up
             lvl_nodes = sorted(
@@ -113,7 +154,7 @@ class ECPIndex:
         search_exp: int = 64,
         exclude=set(),
         max_increments=-1
-    ) -> Tuple[PriorityQueue, PriorityQueue]:
+    ) -> Tuple[List[Tuple[float,int]], int]:
         """
         Initializes a new search for the k nearest neighbors of the query embedding.
         Parameters:
@@ -127,24 +168,30 @@ class ECPIndex:
                 - tree_pq: Priority queue for tree search.
                 - item_pq: Priority queue for item search.
         """
-        tree_pq = PriorityQueue()
-        items = []
+        self.tree_qs.append(PriorityQueue())
+        self.item_qs.append([])
+        self.queries.append(query)
+        query_id = len(self.queries)-1
         self.incremental_search(
-            query=query,
-            tree_pq=tree_pq,
-            items=items,
+            query_id=query_id,
             k=k,
             search_exp=search_exp,
             exclude=exclude,
             max_increments=max_increments
         )
-        return tree_pq, items
+        return (
+            self.get_next_k_items(
+                query_id, 
+                k, 
+                search_exp=search_exp, 
+                max_increments=max_increments
+            ),
+            query_id
+        )
 
     def incremental_search(
         self, 
-        query: np.ndarray, 
-        tree_pq: PriorityQueue,
-        items: List[Tuple[float, int]],
+        query_id: int, 
         k: int, 
         search_exp=64, 
         exclude=set(),
@@ -169,18 +216,19 @@ class ECPIndex:
         # if Metric.IP is used then we negate the distances
         # and negate them again when returning
         sign = -1 if self.metric == Metric.IP else 1
-        items_append = items.append
+
+        query = self.queries[query_id]
 
         leaf_cnt = 0
         items_cnt = 0
         increments = 0
-        if tree_pq.empty():
+        if self.tree_qs[query_id].empty():
             root_top, root_distances = calculate_distances(query, self.root, self.metric)
             for t in root_top:
-                tree_pq.put((sign * root_distances[t], False, 0, t))
+                self.tree_qs[query_id].put((sign * root_distances[t], False, 0, t))
 
-        while not tree_pq.empty():
-            _, is_leaf, lvl, node = tree_pq.get()
+        while not self.tree_qs[query_id].empty():
+            _, is_leaf, lvl, node = self.tree_qs[query_id].get()
             if self.nodes[lvl][node].children is None:
                 continue
             top, distances = calculate_distances(
@@ -193,7 +241,7 @@ class ECPIndex:
                 for t in top:
                     item_id = children[t]
                     if item_id not in exclude:
-                        items_append((sign * dist, item_id))
+                        self.item_qs[query_id].append((sign * distances[t], item_id))
                         items_cnt += 1
                 leaf_cnt += 1
             else:
@@ -205,35 +253,35 @@ class ECPIndex:
                         # else distances[t] + radius
                     )
                     if lvl + 1 == self.levels - 1:
-                        tree_pq.put((sign * dist, True, lvl + 1, self.nodes[lvl][node].children[t]))
+                        self.tree_qs[query_id].put((sign * dist, True, lvl + 1, self.nodes[lvl][node].children[t]))
                     else:
-                        tree_pq.put((sign * dist, False, lvl + 1, self.nodes[lvl][node].children[t]))
+                        self.tree_qs[query_id].put((sign * dist, False, lvl + 1, self.nodes[lvl][node].children[t]))
 
             if leaf_cnt == search_exp:
                 if items_cnt >= k:
-                    items = sorted(items, key=lambda x: x[0])
+                    self.item_qs[query_id] = sorted(self.item_qs[query_id], key=lambda x: x[0])
                     break
                 if increments < max_increments or max_increments == -1:
                     increments += 1
                     search_exp *= 2
                 else:
-                    break
-
-    def extract_k_items(self, k, items) -> Tuple[List[int], List[float]]:
-        """
-        Extracts the top k items from the item priority queue.
-        Parameters:
-            k (int): Number of items to extract.
-            item_pq (PriorityQueue): The item priority queue.
-        Returns:
-            Tuple[List[int], List[float]]: A tuple containing:
-                - ids: The indices of the k nearest neighbors.
-                - scores: The distances of the k nearest neighbors.
-        """
-        sign = -1 if self.metric == Metric.IP else 1
-        # top_k = [item_pq.get() for _ in range(k) if not item_pq.empty()]
-        ids = [idx for _,idx in items[:k]]
-        scores = [sign * score for score,_ in items[:k]] 
-        items = items[k:]
-        return ids, scores
+                    break 
+    
+    def get_next_k_items(
+        self,
+        query_id: int,
+        k: int,
+        search_exp: int,
+        max_increments: int
+    ) -> List[Tuple[float, int]]:
+        items = self.item_qs[query_id][:k]
+        if len(items) < k and not self.tree_qs[query_id].empty():
+            self.incremental_search(
+                query_id=query_id,
+                k=k,
+                search_exp=search_exp,
+                max_increments=max_increments
+            )
+        self.item_qs[query_id] = self.item_qs[query_id][k:]
+        return items
 

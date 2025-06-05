@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 // use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,7 +79,7 @@ impl Index
         k: usize,
         search_exp: u32,
         max_increments: i32,
-        // exclude: &HashSet<u32>,
+        exclude: &HashSet<u32>,
     ) -> (Vec<(NotNan<f32>, u32)>, usize) {
         self.queries.push(QueryState {
             query: query,
@@ -89,8 +90,8 @@ impl Index
         // self.items.push(Vec::new());
         // self.queries.push(query);
         let query_id = self.queries.len()-1;
-        self.incremental_search(query_id, k, search_exp, max_increments);
-        (self.get_next_k_items(query_id, k, search_exp, max_increments), query_id)
+        self.incremental_search(query_id, k, search_exp, max_increments, exclude);
+        (self.get_next_k_items(query_id, k, search_exp, max_increments, exclude), query_id)
     }
 
     pub fn incremental_search(
@@ -99,7 +100,7 @@ impl Index
         k: usize,
         search_exp: u32,
         max_increments: i32,
-        // exclude: &HashSet<u32>,
+        exclude: &HashSet<u32>,
     ) -> () {
         let QueryState{ 
             query,
@@ -117,7 +118,6 @@ impl Index
         let mut search_exp = search_exp;
 
         let mut leaf_cnt = 0;
-        let mut items_cnt = 0;
         let mut increments = 0;
 
         // Add root to tree if empty (new search)
@@ -153,7 +153,6 @@ impl Index
                 None => continue,
             };
 
-            // let (top, distances): (Vec<usize>, Array1<f32>) = calculate_distances(
             let distances: Array1<f32> = calculate_distances(
                 embeddings_f32,
                 &query,
@@ -163,8 +162,9 @@ impl Index
                 let children = self.nodes[lvl][node].children().as_ref().unwrap();
                 for i in 0..distances.len() {
                     // -1.0 * sign * distance : min sort Vec
-                    items.push((NotNan::new(-1.0 * sign * distances[i]).unwrap(), children[i]));
-                    items_cnt += 1;
+                    if !exclude.contains(&children[i]) {
+                        items.push((NotNan::new(-1.0 * sign * distances[i]).unwrap(), children[i]));
+                    }
                 }
                 leaf_cnt += 1;
             } else {
@@ -192,7 +192,7 @@ impl Index
             }
 
             if leaf_cnt == search_exp {
-                if items_cnt >= k {
+                if items.len() >= k {
                     items.sort_unstable_by_key(|&(first, _)| first);
                     // println!("Tree_PQ: {:?}, Items: {:?}", tree_pq.len(), items.len());
                     break
@@ -212,11 +212,12 @@ impl Index
         query_id: usize,
         k: usize,
         search_exp: u32,
-        max_increments: i32
+        max_increments: i32,
+        exclude: &HashSet<u32>
     ) -> Vec<(NotNan<f32>, u32)> {
         let cnt = self.queries[query_id].items.len().min(k);
         if cnt == 0 && !self.queries[query_id].tree_pq.is_empty() {
-            self.incremental_search(query_id, k, search_exp, max_increments);
+            self.incremental_search(query_id, k, search_exp, max_increments, exclude);
         }
         self.queries[query_id].items.drain(0..cnt).collect()
     }

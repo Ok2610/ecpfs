@@ -45,7 +45,7 @@ class ECPIndexRS():
         exclude=set(),
         max_increments=-1
     ) -> Tuple[List[Tuple[float, int, int, int]], List[Tuple[float,int]]]:
-        return self.index.new_search(query.astype(np.float32), k, search_exp, max_increments)
+        return self.index.new_search(query.astype(np.float32), k, search_exp, max_increments, list(exclude))
     
 
     def incremental_search(
@@ -56,4 +56,4 @@ class ECPIndexRS():
         exclude=set(),
         max_increments=-1
     ) -> Tuple[List[Tuple[float, int, int, int]], List[Tuple[float,int]]]:
-        return self.index.incremental_search(query_id, k, search_exp, max_increments)
+        return self.index.incremental_search(query_id, k, search_exp, max_increments, list(exclude))

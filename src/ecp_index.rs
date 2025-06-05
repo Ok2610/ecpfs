@@ -127,12 +127,16 @@ impl Index
                 &query,
                 &self.metric
             );
+            let level = match self.levels {
+                1 => 1,
+                _ => 0
+            };
             for i in 0..root_distances.len() {
                 tree_pq.push(
                     HeapEntry {
                         score: NotNan::new(sign * root_distances[i]).unwrap(), 
                         is_leaf: false as i32, 
-                        level: 0,
+                        level: level,
                         node_id: i as u32
                     });
             }

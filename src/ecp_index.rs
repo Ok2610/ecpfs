@@ -123,16 +123,17 @@ impl Index
                 &query,
                 &self.metric
             );
-            let level = match self.levels {
-                1 => 1,
-                _ => 0
-            };
+            // A 1-level index is IVF-style: node_size == total_clusters, so root
+            // already holds every leader and `nodes[0]` is the only (leaf) level.
+            // Root entries must be marked as leaves from the start in that case,
+            // since there is no intermediate level left to descend through.
+            let is_root_leaf = self.levels == 1;
             for i in 0..root_distances.len() {
                 tree_pq.push(
                     HeapEntry {
                         score: NotNan::new(sign * root_distances[i]).unwrap(),
-                        is_leaf: false as i32,
-                        level: level,
+                        is_leaf: is_root_leaf as i32,
+                        level: 0,
                         node_id: i as u32
                     });
             }
@@ -368,5 +369,52 @@ mod tests {
         // Second page: continues from where the first left off, same query_id.
         let second = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
         assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    /// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =
+    /// total_clusters, the root holds *every* leader directly, and the single
+    /// level (nodes[0]) holds the leaf clusters - there is no intermediate level
+    /// to descend through. Same 8 items/4 leaders as `build_test_index`, just
+    /// flattened: root = all 4 leaders, and each leader's cluster is looked up
+    /// directly by its global id.
+    fn build_ivf_style_index(metric: Metric) -> Index {
+        let store = new_memory_store();
+
+        write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
+        write_node(&store, "/lvl_1/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
+        write_node(&store, "/lvl_1/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
+        write_node(&store, "/lvl_1/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+
+        let leaf_clusters = vec![
+            Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_1/node_2".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_1/node_3".to_string(), "item_ids".to_string()),
+        ];
+
+        Index {
+            metric,
+            levels: 1,
+            root: array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]], // all 4 leaders
+            nodes: vec![leaf_clusters],
+            queries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn levels_1_index_searches_like_ivf_without_panicking() {
+        let mut index = build_ivf_style_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        // In a levels=1 tree every popped node is a leaf, so leaf_cnt (what
+        // search_exp actually counts) advances once per cluster regardless of
+        // how many total node lookups that involves - search_exp=4 here means
+        // "don't stop before all 4 clusters have been scanned", not "check 4
+        // nodes" in general (those only coincide because there's nothing but
+        // leaves in this particular tree).
+        let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3]);
     }
 }

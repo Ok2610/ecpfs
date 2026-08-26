@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # extension-module refuses to link against libpython (Python provides those
+      # symbols at dlopen time), which breaks cargo test's own test binary - see
+      # the comment on the `extension-module` feature in Cargo.toml.
+      - name: cargo test
+        run: cargo test --no-default-features --verbose

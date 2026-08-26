@@ -2,7 +2,6 @@
 use zarrs::array::DataType;
 use zarrs::storage::ReadableListableStorage;
 use zarrs::array::Array;
-// use zarrs::array::ElementOwned;
 use ndarray::{Array2, Array1};
 
 use half::f16;
@@ -17,7 +16,7 @@ pub struct Node {
     checked_childs: bool,
 }
 
-impl Node 
+impl Node
 {
     /// Creates a new Node instance.
     /// Returns:
@@ -49,7 +48,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -58,7 +57,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -68,7 +67,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -107,9 +106,12 @@ impl Node
 
     /// Clears the cached embeddings and children of the node.
     /// This method is useful to free up memory if the node's data is no longer needed.
+    /// A subsequent call to `embeddings()`/`children()` will re-fetch from the store.
     pub fn clear_cache(&mut self) {
         self.embeddings = None;
         self.children = None;
+        self.checked_embs = false;
+        self.checked_childs = false;
     }
 
     /// Checks if the node's embeddings or children are loaded.
@@ -117,5 +119,51 @@ impl Node
     ///     bool: True if either embeddings and/or children are loaded, False otherwise.
     pub fn is_loaded(&self) -> bool {
         self.embeddings.is_some() || self.children.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::{as_readable_listable, new_memory_store, write_node};
+    use ndarray::{array, Array1, Array2};
+
+    #[test]
+    fn loads_and_caches_embeddings_and_children() {
+        let store = new_memory_store();
+        let embeddings: Array2<f32> = array![[1.0, 2.0], [3.0, 4.0]];
+        let children: Array1<u32> = array![10, 20];
+        write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_0".to_string(),
+            "node_ids".to_string(),
+        );
+
+        assert!(!node.is_loaded());
+
+        assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+        assert!(node.is_loaded());
+        assert_eq!(node.children().as_ref().unwrap(), &children);
+
+        node.clear_cache();
+        assert!(!node.is_loaded());
+        // Lazily reloads from the store after a cache clear.
+        assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+    }
+
+    #[test]
+    fn missing_node_yields_none_without_panicking() {
+        let store = new_memory_store();
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_absent".to_string(),
+            "item_ids".to_string(),
+        );
+
+        assert!(node.embeddings().is_none());
+        assert!(node.children().is_none());
+        assert!(!node.is_loaded());
     }
 }

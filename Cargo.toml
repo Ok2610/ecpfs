@@ -20,16 +20,22 @@ exclude = [
 
 [lib]
 name="ecp_index_rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["extension-module"]
+# `pyo3/extension-module` refuses to link against libpython (Python provides the
+# symbols at dlopen time), which breaks `cargo test`'s own test binary. Build
+# tests with `cargo test --no-default-features` to drop it.
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 half = "2.6.0"
 ndarray = "0.16.1"
-ndarray-linalg = { version = "0.17", default-features = false, features = ["openblas-system"] }
 num-traits = "0.2.19"
 numpy = { version = "0.25.0", features = ["half"] }
 ordered-float = "5.0.0"
-pyo3 = { version = "0.25.0", features = ["extension-module"] }
+pyo3 = { version = "0.25.0" }
 zarrs = "0.20.0"
 
 [profile.release]

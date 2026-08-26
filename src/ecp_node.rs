@@ -106,9 +106,12 @@ impl Node
 
     /// Clears the cached embeddings and children of the node.
     /// This method is useful to free up memory if the node's data is no longer needed.
+    /// A subsequent call to `embeddings()`/`children()` will re-fetch from the store.
     pub fn clear_cache(&mut self) {
         self.embeddings = None;
         self.children = None;
+        self.checked_embs = false;
+        self.checked_childs = false;
     }
 
     /// Checks if the node's embeddings or children are loaded.
@@ -122,7 +125,33 @@ impl Node
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{as_readable_listable, new_memory_store};
+    use crate::test_util::{as_readable_listable, new_memory_store, write_node};
+    use ndarray::{array, Array1, Array2};
+
+    #[test]
+    fn loads_and_caches_embeddings_and_children() {
+        let store = new_memory_store();
+        let embeddings: Array2<f32> = array![[1.0, 2.0], [3.0, 4.0]];
+        let children: Array1<u32> = array![10, 20];
+        write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_0".to_string(),
+            "node_ids".to_string(),
+        );
+
+        assert!(!node.is_loaded());
+
+        assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+        assert!(node.is_loaded());
+        assert_eq!(node.children().as_ref().unwrap(), &children);
+
+        node.clear_cache();
+        assert!(!node.is_loaded());
+        // Lazily reloads from the store after a cache clear.
+        assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+    }
 
     #[test]
     fn missing_node_yields_none_without_panicking() {

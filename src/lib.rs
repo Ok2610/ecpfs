@@ -2,6 +2,8 @@
 pub mod ecp_node;
 pub mod ecp_index;
 mod utils;
+#[cfg(test)]
+mod test_util;
 
 // import the PyO3 machinery
 use pyo3::prelude::*;

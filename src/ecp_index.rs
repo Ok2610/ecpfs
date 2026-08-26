@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-// use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,12 +27,9 @@ pub struct Index {
     root: Array2<f32>,
     nodes: Vec<Vec<Node>>,
     queries: Vec<QueryState>,
-    // queries: Vec<Array1<f32>>,
-    // tree_pq: Vec<BinaryHeap<HeapEntry>>,
-    // items: Vec<Vec<(NotNan<f32>, u32)>>,
 }
 
-impl Index 
+impl Index
 {
     /// Creates a new Index instance.
     /// Returns:
@@ -43,13 +39,13 @@ impl Index
         metric: Metric,
         levels: u32,
         root: Array2<f32>,
-        node_paths: Vec<Vec<String>>, 
+        node_paths: Vec<Vec<String>>,
     ) -> Self {
         let mut nodes = Vec::new();
         let store: ReadableListableStorage = Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
         for i in 0..levels {
             nodes.push(Vec::new());
-            let mut c_key = "node_ids".to_string(); 
+            let mut c_key = "node_ids".to_string();
             if i+1 == levels {
                 c_key = "item_ids".to_string();
             }
@@ -84,7 +80,7 @@ impl Index
         self.queries.push(QueryState {
             query: query,
             tree_pq: BinaryHeap::new(),
-            items: Vec::new() 
+            items: Vec::new()
         });
         // self.tree_pq.push(BinaryHeap::new());
         // self.items.push(Vec::new());
@@ -102,7 +98,7 @@ impl Index
         max_increments: i32,
         exclude: &HashSet<u32>,
     ) -> () {
-        let QueryState{ 
+        let QueryState{
             query,
             tree_pq,
             items
@@ -134,8 +130,8 @@ impl Index
             for i in 0..root_distances.len() {
                 tree_pq.push(
                     HeapEntry {
-                        score: NotNan::new(sign * root_distances[i]).unwrap(), 
-                        is_leaf: false as i32, 
+                        score: NotNan::new(sign * root_distances[i]).unwrap(),
+                        is_leaf: false as i32,
                         level: level,
                         node_id: i as u32
                     });
@@ -147,7 +143,7 @@ impl Index
             let HeapEntry {
                 score: _,
                 is_leaf,
-                level, 
+                level,
                 node_id
             } = tree_pq.pop().unwrap();
             let lvl = level as usize;
@@ -185,9 +181,9 @@ impl Index
                             });
                     } else {
                         tree_pq.push(
-                            HeapEntry { 
+                            HeapEntry {
                                 score: NotNan::new(sign * distances[i]).unwrap(),
-                                is_leaf: false as i32, 
+                                is_leaf: false as i32,
                                 level: level + 1,
                                 node_id: children[i],
                             });
@@ -224,5 +220,153 @@ impl Index
             self.incremental_search(query_id, k, search_exp, max_increments, exclude);
         }
         self.queries[query_id].items.drain(0..cnt).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::{as_readable_listable, new_memory_store, write_node};
+    use ndarray::array;
+
+    /// A small 2-level eCP tree, sized and derived the way `ECPBuilder` would for
+    /// 8 items with target_cluster_items=2 and levels=2:
+    ///   total_clusters = ceil(N / target_cluster_items) = ceil(8 / 2) = 4 leaders
+    ///   node_size      = ceil(total_clusters ** (1/levels)) = ceil(sqrt(4)) = 2
+    ///
+    /// Leaders are picked by striding, exactly like `select_cluster_representatives`'s
+    /// default "offset" option (`representative_ids = item_ids[::target_cluster_items]`):
+    /// every 2nd item id, i.e. item ids 0, 2, 4, 6. A leader's *global id* (0..3, its
+    /// position in that strided list) is what lvl_1's "node_ids" and lvl_2's group
+    /// number refer to - it is not the same number as the item id it was struck from.
+    ///
+    ///   items (id=vector):  0=(0,0)  1=(0.4,0.4)  2=(1,1)  3=(1.4,1.4)
+    ///                       4=(10,10) 5=(10.4,10.4) 6=(11,11) 7=(11.4,11.4)
+    ///   leaders (global id = item id):  0=item 0   1=item 2   2=item 4   3=item 6
+    ///   root:  first node_size (2) leaders -> [leader 0, leader 1]
+    ///
+    /// lvl_1 buckets every leader under its nearest root leader (striding doesn't
+    /// promise a balanced split, so this one naturally comes out 1-vs-3):
+    ///   lvl_1/node_0 = {leader 0}            (root leader 0 is its own only member)
+    ///   lvl_1/node_1 = {leader 1, 2, 3}
+    ///
+    /// lvl_2 (leaf) buckets every real item under its nearest leader overall, which
+    /// does come out even here (2 items per leader, matching target_cluster_items):
+    ///   lvl_2/node_0 = {items 0,1}   lvl_2/node_1 = {items 2,3}
+    ///   lvl_2/node_2 = {items 4,5}   lvl_2/node_3 = {items 6,7}
+    ///
+    /// Nearest-to-farthest from the origin query (0,0) is therefore item id order:
+    /// 0, 1, 2, 3, 4, 5, 6, 7.
+    fn build_test_index(metric: Metric) -> Index {
+        let store = new_memory_store();
+
+        // lvl_1: node_ids are the *global leader ids* assigned to that root leader.
+        write_node(
+            &store,
+            "/lvl_1/node_0",
+            &array![[0.0f32, 0.0]], // leader 0 (item 0)
+            "node_ids",
+            &array![0u32],
+        );
+        write_node(
+            &store,
+            "/lvl_1/node_1",
+            &array![[1.0f32, 1.0], [10.0, 10.0], [11.0, 11.0]], // leaders 1, 2, 3 (items 2, 4, 6)
+            "node_ids",
+            &array![1u32, 2, 3],
+        );
+
+        // lvl_2: leaf level, so children are "item_ids" (dataset ids) instead.
+        // Group numbers 0/1/2/3 line up with leader global ids 0/1/2/3 above.
+        write_node(
+            &store,
+            "/lvl_2/node_0",
+            &array![[0.0f32, 0.0], [0.4, 0.4]],
+            "item_ids",
+            &array![0u32, 1],
+        );
+        write_node(
+            &store,
+            "/lvl_2/node_1",
+            &array![[1.0f32, 1.0], [1.4, 1.4]],
+            "item_ids",
+            &array![2u32, 3],
+        );
+        write_node(
+            &store,
+            "/lvl_2/node_2",
+            &array![[10.0f32, 10.0], [10.4, 10.4]],
+            "item_ids",
+            &array![4u32, 5],
+        );
+        write_node(
+            &store,
+            "/lvl_2/node_3",
+            &array![[11.0f32, 11.0], [11.4, 11.4]],
+            "item_ids",
+            &array![6u32, 7],
+        );
+
+        let lvl_1 = vec![
+            Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string()),
+        ];
+        let lvl_2 = vec![
+            Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string()),
+        ];
+
+        // Constructed as a struct literal (rather than through `Index::new`) so the
+        // fixture can use an in-memory store instead of a real `FilesystemStore`.
+        Index {
+            metric,
+            levels: 2,
+            root: array![[0.0f32, 0.0], [1.0, 1.0]], // leader 0 (item 0), leader 1 (item 2)
+            nodes: vec![lvl_1, lvl_2],
+            queries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn l2_search_returns_nearest_items_in_order() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
+        let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3]);
+
+        let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
+        assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
+    }
+
+    #[test]
+    fn l2_search_respects_exclude_set() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+        let exclude: HashSet<u32> = [0].into_iter().collect();
+
+        let (items, _query_id) = index.new_search(query, 4, 4, -1, &exclude);
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![1, 2, 3, 4], "excluded item 0 must not appear");
+    }
+
+    #[test]
+    fn incremental_search_resumes_and_drains_remaining_items() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        // First page: nearest 2 items.
+        let (first, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
+        assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0, 1]);
+
+        // Second page: continues from where the first left off, same query_id.
+        let second = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
+        assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
     }
 }

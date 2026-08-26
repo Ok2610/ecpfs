@@ -2,7 +2,6 @@
 use zarrs::array::DataType;
 use zarrs::storage::ReadableListableStorage;
 use zarrs::array::Array;
-// use zarrs::array::ElementOwned;
 use ndarray::{Array2, Array1};
 
 use half::f16;
@@ -17,7 +16,7 @@ pub struct Node {
     checked_childs: bool,
 }
 
-impl Node 
+impl Node
 {
     /// Creates a new Node instance.
     /// Returns:
@@ -49,7 +48,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -58,7 +57,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -68,7 +67,7 @@ impl Node
                                 array.retrieve_array_subset_ndarray(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .into_shape_clone(
-                                    (array.shape()[0] as usize, 
+                                    (array.shape()[0] as usize,
                                     array.shape()[1] as usize)
                                 )
                                 .expect("Failed to reshape embeddings array")
@@ -117,5 +116,25 @@ impl Node
     ///     bool: True if either embeddings and/or children are loaded, False otherwise.
     pub fn is_loaded(&self) -> bool {
         self.embeddings.is_some() || self.children.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::{as_readable_listable, new_memory_store};
+
+    #[test]
+    fn missing_node_yields_none_without_panicking() {
+        let store = new_memory_store();
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_absent".to_string(),
+            "item_ids".to_string(),
+        );
+
+        assert!(node.embeddings().is_none());
+        assert!(node.children().is_none());
+        assert!(!node.is_loaded());
     }
 }

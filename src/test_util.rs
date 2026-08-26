@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use ndarray::{Array1, Array2};
-use zarrs::array::{ArrayBuilder, DataType, FillValue};
+use zarrs::array::data_type::{float32, uint32};
+use zarrs::array::ArrayBuilder;
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::ReadableListableStorage;
 
@@ -19,32 +20,22 @@ pub fn write_node(
 ) {
     let emb_path = format!("{group_path}/embeddings");
     let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
-    let emb_array = ArrayBuilder::new(
-        emb_shape.clone(),
-        DataType::Float32,
-        emb_shape.clone().try_into().unwrap(),
-        FillValue::from(0.0f32),
-    )
-    .build(store.clone(), &emb_path)
-    .expect("failed to build embeddings array");
+    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, float32(), 0.0f32)
+        .build(store.clone(), &emb_path)
+        .expect("failed to build embeddings array");
     emb_array.store_metadata().expect("failed to store embeddings metadata");
     emb_array
-        .store_chunk_ndarray(&[0, 0], embeddings.clone())
+        .store_chunk(&[0, 0], embeddings)
         .expect("failed to store embeddings chunk");
 
     let child_path = format!("{group_path}/{child_key}");
     let child_shape = vec![children.len() as u64];
-    let child_array = ArrayBuilder::new(
-        child_shape.clone(),
-        DataType::UInt32,
-        child_shape.clone().try_into().unwrap(),
-        FillValue::from(0u32),
-    )
-    .build(store.clone(), &child_path)
-    .expect("failed to build children array");
+    let child_array = ArrayBuilder::new(child_shape.clone(), child_shape, uint32(), 0u32)
+        .build(store.clone(), &child_path)
+        .expect("failed to build children array");
     child_array.store_metadata().expect("failed to store children metadata");
     child_array
-        .store_chunk_ndarray(&[0], children.clone())
+        .store_chunk(&[0], children)
         .expect("failed to store children chunk");
 }
 

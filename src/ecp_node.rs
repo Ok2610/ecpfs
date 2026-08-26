@@ -1,5 +1,5 @@
 
-use zarrs::array::DataType;
+use zarrs::array::data_type::{float16, float32, float64};
 use zarrs::storage::ReadableListableStorage;
 use zarrs::array::Array;
 use ndarray::{Array2, Array1};
@@ -42,38 +42,21 @@ impl Node
             let arr = Array::open(self.store.clone(), &embeddings_path);
             match arr {
                 Ok(array) => {
+                    let dtype = array.data_type();
                     self.embeddings = Some(
-                        match array.data_type() {
-                            DataType::Float32 => {
-                                array.retrieve_array_subset_ndarray(&array.subset_all())
+                        if *dtype == float32() {
+                            array.retrieve_array_subset::<Array2<f32>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
-                                .into_shape_clone(
-                                    (array.shape()[0] as usize,
-                                    array.shape()[1] as usize)
-                                )
-                                .expect("Failed to reshape embeddings array")
-                            },
-                            DataType::Float16 => {
-                                array.retrieve_array_subset_ndarray(&array.subset_all())
+                        } else if *dtype == float16() {
+                            array.retrieve_array_subset::<Array2<f16>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
-                                .into_shape_clone(
-                                    (array.shape()[0] as usize,
-                                    array.shape()[1] as usize)
-                                )
-                                .expect("Failed to reshape embeddings array")
-                                .mapv(|x:f16| x.to_f32())
-                            },
-                            DataType::Float64 => {
-                                array.retrieve_array_subset_ndarray(&array.subset_all())
+                                .mapv(|x: f16| x.to_f32())
+                        } else if *dtype == float64() {
+                            array.retrieve_array_subset::<Array2<f64>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
-                                .into_shape_clone(
-                                    (array.shape()[0] as usize,
-                                    array.shape()[1] as usize)
-                                )
-                                .expect("Failed to reshape embeddings array")
-                                .mapv(|x:f64| x as f32)
-                            },
-                            _ => panic!("unknown datatype")
+                                .mapv(|x: f64| x as f32)
+                        } else {
+                            panic!("unknown datatype")
                         }
                     )
                 },
@@ -91,10 +74,8 @@ impl Node
             let arr = Array::open(self.store.clone(), &ids_path);
             match arr {
                 Ok(array) => self.children = Some(
-                        array.retrieve_array_subset_ndarray(&array.subset_all())
+                        array.retrieve_array_subset::<Array1<u32>>(&array.subset_all())
                         .expect("Failed to retrieve ids array")
-                        .into_shape_clone(array.shape()[0] as usize)
-                        .expect("Failed to reshape ids array")
                     ),
                 Err(_) => self.children = None,
             };

@@ -12,7 +12,8 @@ use zarrs::storage::ReadableListableStorage;
 fn write_children(store: &Arc<MemoryStore>, group_path: &str, child_key: &str, children: &Array1<u32>) {
     let child_path = format!("{group_path}/{child_key}");
     let child_shape = vec![children.len() as u64];
-    let child_array = ArrayBuilder::new(child_shape.clone(), child_shape, uint32(), 0u32)
+    let child_array = 
+        ArrayBuilder::new(child_shape.clone(), child_shape, uint32(), 0u32)
         .build(store.clone(), &child_path)
         .expect("failed to build children array");
     child_array.store_metadata().expect("failed to store children metadata");
@@ -33,7 +34,8 @@ pub fn write_node(
 ) {
     let emb_path = format!("{group_path}/embeddings");
     let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
-    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, float32(), 0.0f32)
+    let emb_array = 
+        ArrayBuilder::new(emb_shape.clone(), emb_shape, float32(), 0.0f32)
         .build(store.clone(), &emb_path)
         .expect("failed to build embeddings array");
     emb_array.store_metadata().expect("failed to store embeddings metadata");
@@ -57,7 +59,8 @@ pub fn write_node_f16(
     let embeddings_f16 = embeddings.mapv(f16::from_f32);
     let emb_path = format!("{group_path}/embeddings");
     let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
-    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, float16(), f16::from_f32(0.0))
+    let emb_array = 
+        ArrayBuilder::new(emb_shape.clone(), emb_shape, float16(), f16::from_f32(0.0))
         .build(store.clone(), &emb_path)
         .expect("failed to build embeddings array");
     emb_array.store_metadata().expect("failed to store embeddings metadata");
@@ -82,7 +85,8 @@ pub fn write_node_unsupported_dtype(
     let embeddings_f64 = embeddings.mapv(|x| x as f64);
     let emb_path = format!("{group_path}/embeddings");
     let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
-    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, float64(), 0.0f64)
+    let emb_array = 
+        ArrayBuilder::new(emb_shape.clone(), emb_shape, float64(), 0.0f64)
         .build(store.clone(), &emb_path)
         .expect("failed to build embeddings array");
     emb_array.store_metadata().expect("failed to store embeddings metadata");

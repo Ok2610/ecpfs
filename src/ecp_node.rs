@@ -1,5 +1,5 @@
 
-use zarrs::array::data_type::{float16, float32, float64};
+use zarrs::array::data_type::{float16, float32};
 use zarrs::storage::ReadableListableStorage;
 use zarrs::array::Array;
 use ndarray::{Array2, Array1};
@@ -51,10 +51,6 @@ impl Node
                             array.retrieve_array_subset::<Array2<f16>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .mapv(|x: f16| x.to_f32())
-                        } else if *dtype == float64() {
-                            array.retrieve_array_subset::<Array2<f64>>(&array.subset_all())
-                                .expect("Failed to retrieve embeddings array")
-                                .mapv(|x: f64| x as f32)
                         } else {
                             panic!("unknown datatype")
                         }
@@ -106,7 +102,7 @@ impl Node
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{as_readable_listable, new_memory_store, write_node};
+    use crate::test_util::{as_readable_listable, new_memory_store, write_node, write_node_f16, write_node_unsupported_dtype};
     use ndarray::{array, Array1, Array2};
 
     #[test]
@@ -132,6 +128,44 @@ mod tests {
         assert!(!node.is_loaded());
         // Lazily reloads from the store after a cache clear.
         assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+    }
+
+    /// Values chosen to be exactly representable in f16 (10 mantissa bits), so the
+    /// upcast to f32 via `mapv(|x: f16| x.to_f32())` is exact, not approximate.
+    #[test]
+    fn loads_f16_embeddings_upcast_to_f32() {
+        let store = new_memory_store();
+        let embeddings: Array2<f32> = array![[1.0, 2.0], [3.5, -1.25]];
+        let children: Array1<u32> = array![10, 20];
+        write_node_f16(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_0".to_string(),
+            "node_ids".to_string(),
+        );
+
+        assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+    }
+
+    /// f16 and f32 are the only supported embedding dtypes; anything else (e.g. an
+    /// embeddings array left as float64 by an upstream caller that never cast it)
+    /// must fail loudly at load time rather than silently truncating precision.
+    #[test]
+    #[should_panic(expected = "unknown datatype")]
+    fn unsupported_dtype_panics_instead_of_silently_truncating() {
+        let store = new_memory_store();
+        let embeddings: Array2<f32> = array![[1.0, 2.0], [3.5, -1.25]];
+        let children: Array1<u32> = array![10, 20];
+        write_node_unsupported_dtype(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+        let mut node = Node::new(
+            as_readable_listable(&store),
+            "/lvl_1/node_0".to_string(),
+            "node_ids".to_string(),
+        );
+
+        node.embeddings();
     }
 
     #[test]

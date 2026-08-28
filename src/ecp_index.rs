@@ -429,6 +429,42 @@ mod tests {
         );
     }
 
+    /// `Index.queries: Vec<QueryState>` holds every in-flight query, keyed by the
+    /// `query_id` returned from `new_search`. Every other test so far only ever
+    /// runs one query at a time, so cross-query indexing bugs (e.g. a query's
+    /// `tree_pq`/`items` bleeding into another's) would go unnoticed. This test
+    /// opens two queries against the *same* `Index` from opposite corners of the
+    /// fixture - query A from the origin (nearest-to-farthest: 0,1,2,3,4,5,6,7),
+    /// query B from (11,11), exactly item 6's position (nearest-to-farthest:
+    /// 6,7,5,4,3,2,1,0) - and interleaves `get_next_k_items` calls on both
+    /// `query_id`s, asserting each stream stays independent throughout.
+    #[test]
+    fn interleaved_queries_on_the_same_index_stay_independent() {
+        let mut index = build_test_index(Metric::L2);
+        let query_a: Array1<f32> = array![0.0, 0.0];
+        let query_b: Array1<f32> = array![11.0, 11.0];
+
+        let (first_a, query_id_a) = index.new_search(query_a, 2, 4, -1, &HashSet::new());
+        assert_eq!(first_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0, 1]);
+
+        let (first_b, query_id_b) = index.new_search(query_b, 2, 4, -1, &HashSet::new());
+        assert_eq!(first_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![6, 7]);
+        assert_ne!(query_id_a, query_id_b);
+
+        // Interleaved: resume A, then B, then A again.
+        let second_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+        assert_eq!(second_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
+
+        let second_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+        assert_eq!(second_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![5, 4]);
+
+        let third_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+        assert_eq!(third_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![4, 5]);
+
+        let third_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+        assert_eq!(third_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![3, 2]);
+    }
+
     /// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =
     /// total_clusters, the root holds *every* leader directly, and the single
     /// level (nodes[0]) holds the leaf clusters - there is no intermediate level

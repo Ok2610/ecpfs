@@ -198,7 +198,7 @@ impl Index
                     // println!("Tree_PQ: {:?}, Items: {:?}", tree_pq.len(), items.len());
                     break
                 }
-                if increments > max_increments || max_increments == -1 {
+                if increments < max_increments || max_increments == -1 {
                     increments += 1;
                     search_exp *= 2;
                 } else {
@@ -369,6 +369,64 @@ mod tests {
         // Second page: continues from where the first left off, same query_id.
         let second = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
         assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    /// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
+    /// ids 0,1) - not enough for k=4. With max_increments=-1 (unlimited), the
+    /// retry path at ecp_index.rs's `leaf_cnt == search_exp` check must double
+    /// search_exp (1 -> 2) and keep going, exploring a 2nd cluster (ids 2,3) to
+    /// reach k. Never exercised before: every existing fixture used a search_exp
+    /// large enough to satisfy k on the first pass.
+    #[test]
+    fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3], "doubling search_exp should eventually surface all 4 nearest items");
+    }
+
+    /// Same setup as the unlimited-retry test above, but with a *finite*
+    /// max_increments=1 - i.e. "at most 1 retry" - which should be just enough
+    /// to go from search_exp=1 to 2 and reach k=4, identically to the unlimited
+    /// case. This isolates the finite-counter comparison (`increments >
+    /// max_increments`) from the `max_increments == -1` special case, which is
+    /// the only branch the test above exercises.
+    #[test]
+    fn finite_max_increments_still_allows_configured_number_of_retries() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2, 3],
+            "max_increments=1 should permit the single retry needed to reach k=4"
+        );
+    }
+
+    /// Same fixture, but k=8 (all items) needs 2 doublings (search_exp 1 -> 2 -> 4)
+    /// to satisfy, while max_increments=1 permits only 1. The search must stop
+    /// once its retry budget is exhausted rather than looping until k is met -
+    /// returning fewer than k items (the 2 clusters/4 items reachable after the
+    /// single permitted retry), not all 8.
+    #[test]
+    fn search_stops_once_max_increments_is_exhausted() {
+        let mut index = build_test_index(Metric::L2);
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2, 3],
+            "should stop after its 1 permitted retry (2 clusters explored), not find all 8 items"
+        );
     }
 
     /// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =

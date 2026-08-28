@@ -120,5 +120,5 @@ impl Ord for HeapEntry {
 }
 
 #[cfg(test)]
-#[path = "utils_tests.rs"]
+#[path = "utests/utils.rs"]
 mod tests;

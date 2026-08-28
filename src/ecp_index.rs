@@ -226,5 +226,5 @@ impl Index
 }
 
 #[cfg(test)]
-#[path = "ecp_index_tests.rs"]
+#[path = "utests/ecp_index.rs"]
 mod tests;

@@ -43,17 +43,18 @@ impl Node
             match arr {
                 Ok(array) => {
                     let dtype = array.data_type();
+                    if *dtype != float32() && *dtype != float16() {
+                        panic!("unknown datatype")
+                    }
                     self.embeddings = Some(
                         if *dtype == float32() {
                             array.retrieve_array_subset::<Array2<f32>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
-                        } else if *dtype == float16() {
+                        } else {
                             array.retrieve_array_subset::<Array2<f16>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .mapv(|x: f16| x.to_f32())
-                        } else {
-                            panic!("unknown datatype")
-                        }
+                        } 
                     )
                 },
                 Err(_) => self.embeddings = None,

@@ -488,6 +488,76 @@ mod tests {
         }
     }
 
+    /// A 3-level tree: root -> lvl_1 -> lvl_2 -> lvl_3 (leaf). Every fixture so
+    /// far tops out at levels=2, where the intermediate level (nodes[0]) always
+    /// has `(level + 1) == (levels - 1)`, so its children are pushed straight as
+    /// leaves (ecp_index.rs's `if` branch of that check). With levels=3, lvl_1's
+    /// children (into lvl_2) instead take the `else` branch - pushed as another
+    /// non-leaf level - which no existing test reaches. Only lvl_2's children
+    /// (into lvl_3) hit the leaf branch.
+    ///
+    /// Kept deliberately linear (one child per intermediate node) so the descent
+    /// path is unambiguous: root has 2 leaders, each lvl_1 node fans out to 2
+    /// lvl_2 nodes, and each lvl_2 node has exactly 1 lvl_3 child - 4 items total,
+    /// laid out on a line so nearest-to-farthest from the origin query is item
+    /// id order, same shape of assertion as `l2_search_returns_nearest_items_in_order`.
+    fn build_three_level_test_index() -> Index {
+        let store = new_memory_store();
+
+        write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [1.0, 1.0]], "node_ids", &array![0u32, 1]);
+        write_node(&store, "/lvl_1/node_1", &array![[10.0f32, 10.0], [11.0, 11.0]], "node_ids", &array![2u32, 3]);
+
+        write_node(&store, "/lvl_2/node_0", &array![[0.0f32, 0.0]], "node_ids", &array![0u32]);
+        write_node(&store, "/lvl_2/node_1", &array![[1.0f32, 1.0]], "node_ids", &array![1u32]);
+        write_node(&store, "/lvl_2/node_2", &array![[10.0f32, 10.0]], "node_ids", &array![2u32]);
+        write_node(&store, "/lvl_2/node_3", &array![[11.0f32, 11.0]], "node_ids", &array![3u32]);
+
+        write_node(&store, "/lvl_3/node_0", &array![[0.0f32, 0.0]], "item_ids", &array![0u32]);
+        write_node(&store, "/lvl_3/node_1", &array![[1.0f32, 1.0]], "item_ids", &array![1u32]);
+        write_node(&store, "/lvl_3/node_2", &array![[10.0f32, 10.0]], "item_ids", &array![2u32]);
+        write_node(&store, "/lvl_3/node_3", &array![[11.0f32, 11.0]], "item_ids", &array![3u32]);
+
+        let lvl_1 = vec![
+            Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string()),
+        ];
+        let lvl_2 = vec![
+            Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "node_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "node_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "node_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "node_ids".to_string()),
+        ];
+        let lvl_3 = vec![
+            Node::new(as_readable_listable(&store), "/lvl_3/node_0".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_3/node_1".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_3/node_2".to_string(), "item_ids".to_string()),
+            Node::new(as_readable_listable(&store), "/lvl_3/node_3".to_string(), "item_ids".to_string()),
+        ];
+
+        Index {
+            metric: Metric::L2,
+            levels: 3,
+            root: array![[0.0f32, 0.0], [10.0, 10.0]],
+            nodes: vec![lvl_1, lvl_2, lvl_3],
+            queries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn three_level_tree_descends_through_intermediate_level() {
+        let mut index = build_three_level_test_index();
+        let query: Array1<f32> = array![0.0, 0.0];
+
+        // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
+        let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+        let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3]);
+
+        let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
+        assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
+    }
+
     #[test]
     fn levels_1_index_searches_like_ivf_without_panicking() {
         let mut index = build_ivf_style_index(Metric::L2);

@@ -257,16 +257,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "ecp_index_rs"
+name = "ecp-core"
 version = "0.1.0"
 dependencies = [
  "half",
  "ndarray",
  "num-traits",
+ "ordered-float",
+ "zarrs",
+]
+
+[[package]]
+name = "ecp-py"
+version = "0.1.0"
+dependencies = [
+ "ecp-core",
+ "ndarray",
  "numpy",
  "ordered-float",
  "pyo3",
- "zarrs",
 ]
 
 [[package]]

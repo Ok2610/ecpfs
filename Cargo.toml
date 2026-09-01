@@ -1,42 +1,6 @@
-[package]
-name = "ecp_index_rs"
-version = "0.1.0"
-edition = "2024"
-readme = "README.md"
-license = "AGPL"
-license-file = "LICENSE"
-description = ""
-exclude = [
-    "data/**",
-    "examples/**",
-    "dist/**",
-    ".venv/**",
-    "save/**",
-    "tests/**",
-    "target/**",
-    "main.py",
-    "test.py"
-]
-
-[lib]
-name="ecp_index_rs"
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["extension-module"]
-# `pyo3/extension-module` refuses to link against libpython (Python provides the
-# symbols at dlopen time), which breaks `cargo test`'s own test binary. Build
-# tests with `cargo test --no-default-features` to drop it.
-extension-module = ["pyo3/extension-module"]
-
-[dependencies]
-half = "2.7.1"
-ndarray = "0.17.2"
-num-traits = "0.2.19"
-numpy = { version = "0.29.0", features = ["half"] }
-ordered-float = "5.5.0"
-pyo3 = { version = "0.29.2" }
-zarrs = "0.23.14"
+[workspace]
+resolver = "2"
+members = ["ecp-core", "ecp-py"]
 
 [profile.release]
 lto = "thin"

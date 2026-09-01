@@ -7,7 +7,7 @@ import zarr
 from zarr.storage import LocalStore
 
 from .utils import Metric
-from ecpfs import ecp_index_rs
+from ecpfs import engine
 
 class ECPIndexRS():
     def __init__(self, index_path: Path, prefetch: int = 1, max_workers=4, dtype=None):
@@ -35,7 +35,7 @@ class ECPIndexRS():
             for node in lvl_nodes:
                 nodes[l].append(f"/{lvl}/{node}") #ECPNode(node_fp=index_fp[lvl][node], c_key=c_key))
 
-        self.index = ecp_index_rs.IndexWrapper(str(index_path), metric.name, levels, root, nodes)
+        self.index = engine.IndexWrapper(str(index_path), metric.name, levels, root, nodes)
     
     def search(
         self,

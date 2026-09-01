@@ -6,8 +6,8 @@
 //! works, not just the generic zarr-store logic.
 
 use ndarray::array;
-use zarrs::array::data_type::{float32, string, uint32};
-use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type::{bool, float32, string, uint32};
+use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::filesystem::FilesystemStore;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -32,6 +32,15 @@ fn write_scalar_string(store: &Arc<FilesystemStore>, path: &str, value: &str) {
     array
         .store_chunk(&[], vec![value.to_string()])
         .expect("failed to store scalar chunk");
+}
+
+fn write_scalar_bool(store: &Arc<FilesystemStore>, path: &str, value: bool) {
+    let shape: Vec<u64> = vec![];
+    let array = ArrayBuilder::new(shape.clone(), shape, bool(), FillValueMetadata::Bool(false))
+        .build(store.clone(), path)
+        .expect("failed to build scalar bool array");
+    array.store_metadata().expect("failed to store scalar metadata");
+    array.store_chunk(&[], vec![value]).expect("failed to store scalar chunk");
 }
 
 fn write_node(store: &Arc<FilesystemStore>, group_path: &str, embeddings: &ndarray::Array2<f32>, child_key: &str, children: &ndarray::Array1<u32>) {
@@ -60,6 +69,7 @@ fn load_reads_a_real_index_from_disk_and_searches_correctly() {
 
     write_scalar_u32(&store, "/info/levels", 1);
     write_scalar_string(&store, "/info/metric", "L2");
+    write_scalar_bool(&store, "/info/is_normalized", false);
 
     let root_shape = vec![2u64, 2];
     let root_array = ArrayBuilder::new(root_shape.clone(), root_shape, float32(), 0.0f32)

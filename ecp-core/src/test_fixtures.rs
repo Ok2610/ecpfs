@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{Array1, Array2};
-use zarrs::array::data_type::{float16, float32, float64, string, uint32};
-use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type::{bool, float16, float32, float64, string, uint32};
+use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::ReadableListableStorage;
 
@@ -97,10 +97,10 @@ pub fn write_node_unsupported_dtype(
     write_children(store, group_path, child_key, children);
 }
 
-/// Writes `info/levels` and `info/metric` as rank-0 (scalar) arrays,
-/// mirroring the two scalar fields `ECPBuilder.write_index_info` puts at the
-/// root of a real index.
-pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str) {
+/// Writes `info/levels`, `info/metric`, and `info/is_normalized` as rank-0
+/// (scalar) arrays, mirroring the fields `ECPBuilder.write_index_info` puts
+/// at the root of a real index.
+pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
     let scalar_shape: Vec<u64> = vec![];
 
     let levels_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), uint32(), 0u32)
@@ -111,13 +111,21 @@ pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str) {
         .store_chunk(&[], vec![levels])
         .expect("failed to store info/levels chunk");
 
-    let metric_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, string(), "")
+    let metric_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), string(), "")
         .build(store.clone(), "/info/metric")
         .expect("failed to build info/metric array");
     metric_array.store_metadata().expect("failed to store info/metric metadata");
     metric_array
         .store_chunk(&[], vec![metric.to_string()])
         .expect("failed to store info/metric chunk");
+
+    let is_normalized_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, bool(), FillValueMetadata::Bool(false))
+        .build(store.clone(), "/info/is_normalized")
+        .expect("failed to build info/is_normalized array");
+    is_normalized_array.store_metadata().expect("failed to store info/is_normalized metadata");
+    is_normalized_array
+        .store_chunk(&[], vec![is_normalized])
+        .expect("failed to store info/is_normalized chunk");
 }
 
 /// Writes `index_root/embeddings`, mirroring what `ECPBuilder.build_tree_fs`

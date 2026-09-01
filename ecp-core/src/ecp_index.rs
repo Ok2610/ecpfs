@@ -25,6 +25,7 @@ struct QueryState {
 
 pub struct Index {
     metric: Metric,
+    is_normalized: bool,
     levels: u32,
     root: Array2<f32>,
     nodes: Vec<Vec<Node>>,
@@ -58,6 +59,12 @@ impl Index
             .remove(0);
         let metric = Metric::from_str(&metric_str)
             .unwrap_or_else(|e| panic!("info/metric holds an unrecognized metric: {e}"));
+
+        let is_normalized_array = Array::open(store.clone(), "/info/is_normalized")
+            .expect("Failed to open info/is_normalized");
+        let is_normalized: bool = is_normalized_array
+            .retrieve_array_subset::<Vec<bool>>(&is_normalized_array.subset_all())
+            .expect("Failed to retrieve info/is_normalized")[0];
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
@@ -94,7 +101,7 @@ impl Index
             );
         }
 
-        Index { metric, levels, root, nodes, queries: Vec::new() }
+        Index { metric, is_normalized, levels, root, nodes, queries: Vec::new() }
     }
 
     pub fn new_search(
@@ -137,7 +144,6 @@ impl Index
         let sign = match self.metric {
             Metric::L2 => -1.0,
             Metric::IP => 1.0,
-            Metric::Cos => 1.0,
         };
         let mut search_exp = search_exp;
 
@@ -149,7 +155,8 @@ impl Index
             let root_distances: Array1<f32> = calculate_distances(
                 &self.root,
                 &query,
-                &self.metric
+                &self.metric,
+                self.is_normalized,
             );
             // A 1-level index is IVF-style: node_size == total_clusters, so root
             // already holds every leader and `nodes[0]` is the only (leaf) level.
@@ -186,6 +193,7 @@ impl Index
                 embeddings_f32,
                 &query,
                 &self.metric,
+                self.is_normalized,
             );
             if is_leaf == 1 {
                 let children = self.nodes[lvl][node].children().as_ref().unwrap();

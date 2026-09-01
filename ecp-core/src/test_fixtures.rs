@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{Array1, Array2};
-use zarrs::array::data_type::{float16, float32, float64, uint32};
+use zarrs::array::data_type::{float16, float32, float64, string, uint32};
 use zarrs::array::ArrayBuilder;
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::ReadableListableStorage;
@@ -95,6 +95,42 @@ pub fn write_node_unsupported_dtype(
         .expect("failed to store embeddings chunk");
 
     write_children(store, group_path, child_key, children);
+}
+
+/// Writes `info/levels` and `info/metric` as rank-0 (scalar) arrays,
+/// mirroring the two scalar fields `ECPBuilder.write_index_info` puts at the
+/// root of a real index.
+pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str) {
+    let scalar_shape: Vec<u64> = vec![];
+
+    let levels_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), uint32(), 0u32)
+        .build(store.clone(), "/info/levels")
+        .expect("failed to build info/levels array");
+    levels_array.store_metadata().expect("failed to store info/levels metadata");
+    levels_array
+        .store_chunk(&[], vec![levels])
+        .expect("failed to store info/levels chunk");
+
+    let metric_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, string(), "")
+        .build(store.clone(), "/info/metric")
+        .expect("failed to build info/metric array");
+    metric_array.store_metadata().expect("failed to store info/metric metadata");
+    metric_array
+        .store_chunk(&[], vec![metric.to_string()])
+        .expect("failed to store info/metric chunk");
+}
+
+/// Writes `index_root/embeddings`, mirroring what `ECPBuilder.build_tree_fs`
+/// writes for the top-level cluster leaders.
+pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
+    let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let root_array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)
+        .build(store.clone(), "/index_root/embeddings")
+        .expect("failed to build index_root/embeddings array");
+    root_array.store_metadata().expect("failed to store index_root/embeddings metadata");
+    root_array
+        .store_chunk(&[0, 0], embeddings)
+        .expect("failed to store index_root/embeddings chunk");
 }
 
 pub fn new_memory_store() -> Arc<MemoryStore> {

@@ -1,6 +1,21 @@
 use super::*;
 use ndarray::array;
 use std::collections::BinaryHeap;
+use std::str::FromStr;
+
+#[test]
+fn metric_as_str_and_from_str_round_trip() {
+    for (metric, s) in [(Metric::L2, "L2"), (Metric::IP, "IP"), (Metric::Cos, "COS")] {
+        assert_eq!(metric.as_str(), s);
+        assert_eq!(Metric::from_str(s), Ok(metric));
+    }
+}
+
+#[test]
+fn metric_from_str_rejects_unknown_values() {
+    assert!(Metric::from_str("l2").is_err(), "case must match exactly, like the PyO3 layer's existing parse_metric");
+    assert!(Metric::from_str("euclidean").is_err());
+}
 
 #[test]
 fn l2_distances_are_euclidean_norms() {

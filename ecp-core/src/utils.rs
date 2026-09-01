@@ -3,10 +3,41 @@ use ordered_float::NotNan;
 
 use ndarray::{Array1, Array2, Axis};
 
+/// `as_str`/`FromStr` round-trip through the same strings a built index's
+/// `info/metric` zarr array stores (a `string`-dtype array, not an integer -
+/// self-describing on disk rather than an ordinal that would silently
+/// misread if a metric were ever inserted out of variant order), and that
+/// the PyO3 layer already accepts from Python callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
     L2,
     IP,
     Cos,
+}
+
+impl Metric {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Metric::L2 => "L2",
+            Metric::IP => "IP",
+            Metric::Cos => "COS",
+        }
+    }
+}
+
+impl std::str::FromStr for Metric {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "L2" => Ok(Metric::L2),
+            "IP" => Ok(Metric::IP),
+            "COS" => Ok(Metric::Cos),
+            other => Err(format!(
+                "unknown metric `{other}` (use \"L2\", \"IP\", or \"COS\")"
+            )),
+        }
+    }
 }
 
 pub fn calculate_distances(

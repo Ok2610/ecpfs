@@ -1,23 +1,10 @@
 use pyo3::prelude::*;
-use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyArrayMethods};
-use ndarray::{Array1, Array2};
+use numpy::{PyReadonlyArray1, PyArrayMethods};
+use ndarray::Array1;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use ordered_float::NotNan;
 use ecp_core::ecp_index::Index;
-use ecp_core::utils::Metric;
-
-fn parse_metric(s: &str) -> PyResult<Metric> {
-    match s {
-        "L2"  => Ok(Metric::L2),
-        "IP"  => Ok(Metric::IP),
-        "COS" => Ok(Metric::Cos),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "unknown metric `{}` (use \"L2\", \"IP\", or \"Cos\")",
-            other
-        ))),
-    }
-}
 
 #[pyclass(module = "engine.index")]
 pub struct IndexWrapper {
@@ -26,24 +13,13 @@ pub struct IndexWrapper {
 
 #[pymethods]
 impl IndexWrapper {
-    /// __new__(index_path: PathBuf, metric: str, levels: int,
-    ///        root: np.ndarray[f32, 2], node_paths: List[List[str]])
+    /// __new__(index_path: PathBuf)
+    ///
+    /// Loads an index from disk, deriving its metric/levels/nodes from the
+    /// store itself.
     #[new]
-    fn new(
-        index_path: PathBuf,
-        metric: &str,
-        levels: u32,
-        root: PyReadonlyArray2<f32>,
-        node_paths: Vec<Vec<String>>,
-    ) -> PyResult<Self> {
-        // parse your metric string into whatever enum/struct you use
-        let metric = parse_metric(metric)?;
-        // convert the numpy array into an owned `ndarray::Array2<f32>`
-        let root: Array2<f32> = root.to_owned_array();
-
-        // build your Index (now always f32)
-        let inner = Index::new(index_path, metric, levels, root, node_paths);
-        Ok(IndexWrapper { inner })
+    fn new(index_path: PathBuf) -> PyResult<Self> {
+        Ok(IndexWrapper { inner: Index::load(index_path) })
     }
 
     /// new_search(self, query: np.ndarray[f32, 1], k: int,

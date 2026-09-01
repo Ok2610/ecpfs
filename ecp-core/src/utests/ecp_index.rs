@@ -1,6 +1,60 @@
 use super::*;
-use crate::test_fixtures::{as_readable_listable, new_memory_store, write_node};
+use crate::test_fixtures::{
+    as_readable_listable, new_memory_store, write_index_info, write_index_root, write_node,
+};
 use ndarray::array;
+
+#[test]
+fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
+    let store = new_memory_store();
+    write_index_info(&store, 1, "L2");
+    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]]);
+
+    write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
+    write_node(&store, "/lvl_1/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
+    write_node(&store, "/lvl_1/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
+    write_node(&store, "/lvl_1/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+
+    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3]);
+}
+
+/// `node_1` is written before `node_0` on purpose - if `load_from_store`
+/// ordered nodes by whatever order the store happens to list them in rather
+/// than parsing each `node_N` path's own numeric suffix, this would surface
+/// it as search returning items in the wrong order. Also exercises the
+/// "COS" string round-tripping through `info/metric` correctly.
+#[test]
+fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order() {
+    let store = new_memory_store();
+    write_index_info(&store, 2, "COS");
+    write_index_root(&store, &array![[1.0f32, 0.0], [1.0, 1.0]]);
+
+    write_node(
+        &store,
+        "/lvl_1/node_1",
+        &array![[1.0f32, 1.0], [0.0, 1.0], [-0.8660254, 0.5]],
+        "node_ids",
+        &array![1u32, 2, 3],
+    );
+    write_node(&store, "/lvl_1/node_0", &array![[1.0f32, 0.0]], "node_ids", &array![0u32]);
+
+    write_node(&store, "/lvl_2/node_0", &array![[1.0f32, 0.0], [0.9396926, 0.3420201]], "item_ids", &array![0u32, 1]);
+    write_node(&store, "/lvl_2/node_1", &array![[1.0f32, 1.0], [0.5, 0.8660254]], "item_ids", &array![2u32, 3]);
+    write_node(&store, "/lvl_2/node_2", &array![[0.0f32, 1.0], [-0.5, 0.8660254]], "item_ids", &array![4u32, 5]);
+    write_node(&store, "/lvl_2/node_3", &array![[-0.8660254f32, 0.5], [-1.0, 0.0]], "item_ids", &array![6u32, 7]);
+
+    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let query: Array1<f32> = array![1.0, 0.0];
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+}
 
 /// A small 2-level eCP tree, sized and derived the way `ECPBuilder` would for
 /// 8 items with target_cluster_items=2 and levels=2:

@@ -1,0 +1,19 @@
+[package]
+name = "ecp-core"
+version = "0.1.0"
+edition = "2024"
+readme = "../README.md"
+license = "AGPL"
+license-file = "../LICENSE"
+description = "Core eCP ANN index: tree search over lazily-loaded, Zarr-backed nodes"
+
+[lib]
+name = "ecp_core"
+crate-type = ["rlib"]
+
+[dependencies]
+half = "2.7.1"
+ndarray = "0.17.2"
+num-traits = "0.2.19"
+ordered-float = "5.5.0"
+zarrs = "0.23.14"

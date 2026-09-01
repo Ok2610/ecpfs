@@ -48,7 +48,8 @@ dev = [
 [tool.maturin]
 bindings = "pyo3"
 python-source = "python"
-module-name   = "ecpfs.ecp_index_rs"
+module-name   = "ecpfs.engine"
+manifest-path = "ecp-py/Cargo.toml"
 
 [tool.poetry.group.dev.dependencies]
 sphinx = "^6.0"

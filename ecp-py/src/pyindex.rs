@@ -4,8 +4,8 @@ use ndarray::{Array1, Array2};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use ordered_float::NotNan;
-use crate::ecp_index::Index;
-use crate::utils::Metric;
+use ecp_core::ecp_index::Index;
+use ecp_core::utils::Metric;
 
 fn parse_metric(s: &str) -> PyResult<Metric> {
     match s {
@@ -19,7 +19,7 @@ fn parse_metric(s: &str) -> PyResult<Metric> {
     }
 }
 
-#[pyclass(module = "ecp_index_rs.index")]
+#[pyclass(module = "engine.index")]
 pub struct IndexWrapper {
     inner: Index,
 }

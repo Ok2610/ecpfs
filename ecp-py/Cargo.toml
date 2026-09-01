@@ -1,0 +1,26 @@
+[package]
+name = "ecp-py"
+version = "0.1.0"
+edition = "2024"
+readme = "../README.md"
+license = "AGPL"
+license-file = "../LICENSE"
+description = "PyO3 bindings exposing ecp-core's Index to Python"
+
+[lib]
+name = "engine"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["extension-module"]
+# `pyo3/extension-module` refuses to link against libpython (Python provides the
+# symbols at dlopen time), which breaks `cargo test`'s own test binary. Build
+# tests with `cargo test --no-default-features` to drop it.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+ecp-core = { path = "../ecp-core" }
+ndarray = "0.17.2"
+numpy = { version = "0.29.0", features = ["half"] }
+ordered-float = "5.5.0"
+pyo3 = { version = "0.29.2" }

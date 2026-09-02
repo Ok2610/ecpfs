@@ -17,6 +17,7 @@ ndarray = "0.17.2"
 num-traits = "0.2.19"
 ordered-float = "5.5.0"
 rand = "0.10.2"
+rust-hdf5 = "0.5.1"
 zarrs = "0.23.14"
 
 [dev-dependencies]

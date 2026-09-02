@@ -285,6 +285,7 @@ dependencies = [
  "num-traits",
  "ordered-float",
  "rand",
+ "rust-hdf5",
  "tempfile",
  "zarrs",
 ]
@@ -1184,6 +1185,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "rust-hdf5"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6944dd9a338f0cc79d1b291f2216765669cc129ab5713451a7e6295d5c240a1"
+dependencies = [
+ "flate2",
+ "zlib-rs",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2074,6 +2085,12 @@ dependencies = [
  "quote",
  "syn 2.0.101",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
 
 [[package]]
 name = "zstd"

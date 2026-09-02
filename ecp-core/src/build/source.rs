@@ -68,17 +68,18 @@ impl EmbeddingsSource {
                     0..dim,
                 ]);
                 let dtype = array.data_type();
+                if *dtype != float32() && *dtype != float16() {
+                    panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
+                }
                 if *dtype == float32() {
                     array
                         .retrieve_array_subset::<Array2<f32>>(&subset)
                         .expect("Failed to read zarr row range")
-                } else if *dtype == float16() {
+                } else {
                     array
                         .retrieve_array_subset::<Array2<f16>>(&subset)
                         .expect("Failed to read zarr row range")
                         .mapv(|x| x.to_f32())
-                } else {
-                    panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
                 }
             }
         }

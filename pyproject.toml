@@ -48,7 +48,7 @@ dev = [
 [tool.maturin]
 bindings = "pyo3"
 python-source = "python"
-module-name   = "ecpfs.engine"
+module-name   = "ecpfs.ecp"
 manifest-path = "ecp-py/Cargo.toml"
 
 [tool.poetry.group.dev.dependencies]

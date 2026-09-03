@@ -1,4 +1,5 @@
 use ndarray::{s, Array1, Array2, Axis};
+use rayon::prelude::*;
 use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{Array, ArrayBuilder, ArraySubset, FillValueMetadata};
 use zarrs::storage::ReadableWritableListableStorage;
@@ -147,17 +148,17 @@ fn add_data(
             config.is_normalized
         );
 
-    for child in 0..centroids.nrows() {
+    (0..centroids.nrows()).into_par_iter().for_each(|child| {
         let start = offsets[child] as usize;
         let end = offsets[child + 1] as usize;
         if start == end {
-            continue;
+            return;
         }
         let rows: Vec<usize> = assignment.slice(s![start..end]).iter().map(|&i| i as usize).collect();
         let child_embeddings = data_embeddings.select(Axis(0), &rows);
         let child_ids_batch = Array1::from_iter(rows.iter().map(|&i| data_ids[i]));
         add_data(config, level + 1, child_ids[child], &child_embeddings, &child_ids_batch);
-    }
+    });
 }
 
 /// Builds every level of the tree under `root_embeddings`: for each level
@@ -199,17 +200,17 @@ pub fn build_tree(
             let (offsets, assignment) =
                 determine_node_assignments(root_embeddings, &batch_embeddings, metric, is_normalized);
 
-            for root_node in 0..root_embeddings.nrows() {
+            (0..root_embeddings.nrows()).into_par_iter().for_each(|root_node| {
                 let s = offsets[root_node] as usize;
                 let e = offsets[root_node + 1] as usize;
                 if s == e {
-                    continue;
+                    return;
                 }
                 let rows: Vec<usize> = assignment.slice(s![s..e]).iter().map(|&i| i as usize).collect();
                 let node_embeddings = batch_embeddings.select(Axis(0), &rows);
                 let node_ids = Array1::from_iter(rows.iter().map(|&i| batch_ids[i]));
                 add_data(&config, 1, root_node as u32, &node_embeddings, &node_ids);
-            }
+            });
 
             start = end;
         }

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use half::f16;
-use ndarray::Array2;
+use ndarray::{s, Array2};
 use rust_hdf5::{H5Dataset, H5File};
 use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArraySubset};
@@ -14,6 +14,8 @@ use zarrs::storage::ReadableListableStorage;
 pub enum EmbeddingsSource {
     Hdf5(H5Dataset),
     Zarr { store: ReadableListableStorage, path: String },
+    /// Already resident; `read_rows` is a plain slice, no I/O.
+    Memory(Array2<f32>),
 }
 
 impl EmbeddingsSource {
@@ -34,6 +36,11 @@ impl EmbeddingsSource {
         }
     }
 
+    /// Wraps an array at `path` in an already-open store.
+    pub fn from_zarr(store: ReadableListableStorage, path: String) -> Self {
+        EmbeddingsSource::Zarr { store, path }
+    }
+
     /// `(total_items, dim)`.
     pub fn shape(&self) -> (usize, usize) {
         match self {
@@ -46,14 +53,12 @@ impl EmbeddingsSource {
                 let shape = array.shape();
                 (shape[0] as usize, shape[1] as usize)
             }
+            EmbeddingsSource::Memory(embeddings) => (embeddings.nrows(), embeddings.ncols()),
         }
     }
 
-    /// The row count of one on-disk chunk, if the source is chunked -
-    /// `read_rows` on a range aligned to this size touches exactly one
-    /// chunk. `fallback` is used when there's no such alignment to exploit
-    /// (HDF5 contiguous storage, where a partial read is already a plain
-    /// byte-range read with no decompression unit to align to).
+    /// The row count of one on-disk chunk; `fallback` is used where
+    /// there's no chunking to align to.
     pub fn natural_batch_rows(&self, fallback: usize) -> usize {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
@@ -65,6 +70,7 @@ impl EmbeddingsSource {
                     .chunk_shape_usize(&[0, 0])
                     .expect("Failed to read zarr chunk shape")[0]
             }
+            EmbeddingsSource::Memory(_) => fallback,
         }
     }
 
@@ -101,6 +107,7 @@ impl EmbeddingsSource {
                         .mapv(|x| x.to_f32())
                 }
             }
+            EmbeddingsSource::Memory(embeddings) => embeddings.slice(s![start..end, ..]).to_owned(),
         }
     }
 }

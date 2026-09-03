@@ -44,7 +44,7 @@ fn builder_produces_a_structure_that_searches_correctly() {
     );
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
 
-    let mut builder = Builder::new(store.clone(), 2, Metric::L2, false, 1_000_000_000);
+    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000);
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 

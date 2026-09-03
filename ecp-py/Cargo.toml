@@ -8,7 +8,7 @@ license-file = "../LICENSE"
 description = "PyO3 bindings exposing ecp-core's Index to Python"
 
 [lib]
-name = "engine"
+name = "ecp"
 crate-type = ["cdylib", "rlib"]
 
 [features]

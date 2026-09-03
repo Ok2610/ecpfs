@@ -1,4 +1,8 @@
+use std::path::Path;
+use std::sync::Arc;
+
 use ndarray::{s, Array1, Array2};
+use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableWritableListableStorage;
 
 use crate::build::representatives::{
@@ -60,6 +64,13 @@ impl Builder {
             representatives: None,
             node_size: 0,
         }
+    }
+
+    /// Creates a fresh `FilesystemStore` at `index_path` and builds into it.
+    pub fn create(index_path: &Path, levels: u32, metric: Metric, is_normalized: bool, memory_limit_bytes: usize) -> Self {
+        let store: ReadableWritableListableStorage =
+            Arc::new(FilesystemStore::new(index_path).expect("Failed to create store"));
+        Self::new(store, levels, metric, is_normalized, memory_limit_bytes)
     }
 
     /// Picks leaders out of `source` via `strategy` and persists them to

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use ordered_float::NotNan;
 use ecp_core::search::Index;
 
-#[pyclass(module = "engine.index")]
+#[pyclass(module = "ecp.index")]
 pub struct IndexWrapper {
     inner: Index,
 }

@@ -7,7 +7,7 @@ use ndarray::{Array1, Array2};
 use zarrs::array::data_type::{bool, float16, float32, float64, string, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
-use zarrs::storage::ReadableListableStorage;
+use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
 fn write_children(store: &Arc<MemoryStore>, group_path: &str, child_key: &str, children: &Array1<u32>) {
     let child_path = format!("{group_path}/{child_key}");
@@ -146,5 +146,9 @@ pub fn new_memory_store() -> Arc<MemoryStore> {
 }
 
 pub fn as_readable_listable(store: &Arc<MemoryStore>) -> ReadableListableStorage {
+    store.clone()
+}
+
+pub fn as_readable_writable_listable(store: &Arc<MemoryStore>) -> ReadableWritableListableStorage {
     store.clone()
 }

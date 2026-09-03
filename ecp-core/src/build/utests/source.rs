@@ -58,3 +58,29 @@ fn zarr_source_reports_its_actual_on_disk_chunk_row_count() {
 
     assert_eq!(source.natural_batch_rows(999), 2, "fallback must be ignored when the source is chunked");
 }
+
+#[test]
+fn from_zarr_reads_the_same_as_the_zarr_variant() {
+    let store = new_memory_store();
+    write_embeddings(&store, &array![[0.0f32, 1.0], [2.0, 3.0]]);
+
+    let source = EmbeddingsSource::from_zarr(as_readable_listable(&store), "/embeddings".to_string());
+
+    assert_eq!(source.shape(), (2, 2));
+    assert_eq!(source.read_rows(0, 2), array![[0.0f32, 1.0], [2.0, 3.0]]);
+}
+
+#[test]
+fn memory_source_reports_shape_and_reads_row_ranges_with_no_io() {
+    let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0], [2.0, 3.0], [4.0, 5.0]]);
+
+    assert_eq!(source.shape(), (3, 2));
+    assert_eq!(source.read_rows(1, 3), array![[2.0f32, 3.0], [4.0, 5.0]]);
+}
+
+#[test]
+fn memory_source_natural_batch_rows_is_always_the_fallback() {
+    let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
+
+    assert_eq!(source.natural_batch_rows(7), 7);
+}

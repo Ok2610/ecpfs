@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "ecp-core"
-version = "0.1.0"
+version = "0.9.5"
 dependencies = [
  "half",
  "ndarray",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "ecp-py"
-version = "0.1.0"
+version = "0.9.5"
 dependencies = [
  "ecp-core",
  "ndarray",

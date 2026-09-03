@@ -15,7 +15,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::build::tree::{build_tree, write_index_info, write_index_root};
-use ecp_core::ecp_index::Index;
+use ecp_core::search::Index;
 use ecp_core::utils::Metric;
 
 fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarray::Array2<f32>) {
@@ -29,7 +29,7 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
         .expect("failed to store embeddings");
 }
 
-/// Same geometry `ecp_index::tests::build_test_index` hand-builds: leaders
+/// Same geometry `search::index::tests::build_test_index` hand-builds: leaders
 /// 0-3 = items 0,2,4,6; root = leaders 0-1; two well-separated clusters of
 /// 4 items each - but built here via `build_tree` instead of a struct
 /// literal.

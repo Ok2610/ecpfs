@@ -203,7 +203,7 @@ fn incremental_search_resumes_and_drains_remaining_items() {
 
 /// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
 /// ids 0,1) - not enough for k=4. With max_increments=-1 (unlimited), the
-/// retry path at ecp_index.rs's `leaf_cnt == search_exp` check must double
+/// retry path at index.rs's `leaf_cnt == search_exp` check must double
 /// search_exp (1 -> 2) and keep going, exploring a 2nd cluster (ids 2,3) to
 /// reach k. Never exercised before: every existing fixture used a search_exp
 /// large enough to satisfy k on the first pass.
@@ -362,7 +362,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
 /// A 3-level tree: root -> lvl_1 -> lvl_2 -> lvl_3 (leaf). Every fixture so
 /// far tops out at levels=2, where the intermediate level (nodes[0]) always
 /// has `(level + 1) == (levels - 1)`, so its children are pushed straight as
-/// leaves (ecp_index.rs's `if` branch of that check). With levels=3, lvl_1's
+/// leaves (index.rs's `if` branch of that check). With levels=3, lvl_1's
 /// children (into lvl_2) instead take the `else` branch - pushed as another
 /// non-leaf level - which no existing test reaches. Only lvl_2's children
 /// (into lvl_3) hit the leaf branch.

@@ -1,6 +1,6 @@
 use ndarray::{Array1, Array2, Axis};
 
-use crate::utils::Metric;
+use crate::utils::{negative_squared_distances, Metric};
 
 /// Determines which representative each data point should be clustered under.
 pub fn determine_node_assignments(
@@ -27,23 +27,6 @@ fn assign_to_nearest(
         Metric::L2 => negative_squared_distances(node_embeddings, data_embeddings),
     };
     argmax_axis0(&scores)
-}
-
-/// How close every representative is to every data point, as a negated
-/// squared Euclidean distance (higher = closer, matching `IP`'s scale).
-fn negative_squared_distances(
-    node_embeddings: &Array2<f32>,
-    data_embeddings: &Array2<f32>,
-) -> Array2<f32> {
-    let representative_norms_sq = node_embeddings.map_axis(Axis(1), |embedding| embedding.dot(&embedding));
-    let data_point_norms_sq = data_embeddings.map_axis(Axis(1), |embedding| embedding.dot(&embedding));
-    let cross = node_embeddings.dot(&data_embeddings.t());
-
-    // ‖a−b‖² = ‖a‖² − 2·a·b + ‖b‖², negated.
-    let mut neg_dist_sq = 2.0 * cross;
-    neg_dist_sq -= &representative_norms_sq.insert_axis(Axis(1));
-    neg_dist_sq -= &data_point_norms_sq.insert_axis(Axis(0));
-    neg_dist_sq
 }
 
 /// Picks the winning representative for each data point (column) of a score matrix.

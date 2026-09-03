@@ -56,10 +56,26 @@ pub fn calculate_distances(
             (1.0 - 2.0 * dots + q_norm_sq).mapv(f32::sqrt)
         }
         Metric::L2 => {
-            let diffs = embeddings - &q.broadcast((embeddings.nrows(), q.len())).unwrap();
-            diffs.map_axis(Axis(1), |row| row.dot(&row).sqrt())
+            let q_2d = q.clone().insert_axis(Axis(0));
+            let neg_dist_sq = negative_squared_distances(embeddings, &q_2d);
+            neg_dist_sq.column(0).mapv(|v| (-v).sqrt())
         }
     }
+}
+
+/// `‖a−b‖² = ‖a‖² − 2·a·b + ‖b‖²`, negated so higher is always better -
+/// shape `(a.nrows(), b.nrows())`. Shared by `calculate_distances` (search)
+/// and `build::assign` (clustering), so the two never disagree on what L2
+/// distance means.
+pub fn negative_squared_distances(a: &Array2<f32>, b: &Array2<f32>) -> Array2<f32> {
+    let a_norms_sq = a.map_axis(Axis(1), |row| row.dot(&row));
+    let b_norms_sq = b.map_axis(Axis(1), |row| row.dot(&row));
+    let cross = a.dot(&b.t());
+
+    let mut neg_dist_sq = 2.0 * cross;
+    neg_dist_sq -= &a_norms_sq.insert_axis(Axis(1));
+    neg_dist_sq -= &b_norms_sq.insert_axis(Axis(0));
+    neg_dist_sq
 }
 
 // pub trait AsF32 {

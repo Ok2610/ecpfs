@@ -1,9 +1,12 @@
-use ndarray::{Array1, Array2};
+use ndarray::{s, Array1, Array2, Axis};
 use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{Array, ArrayBuilder, ArraySubset, FillValueMetadata};
 use zarrs::storage::ReadableWritableListableStorage;
 
+use crate::build::assign::determine_node_assignments;
+use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
+use crate::ecp_node::Node;
 use crate::utils::Metric;
 
 /// Writes `info/levels`, `info/metric`, and `info/is_normalized`.
@@ -80,6 +83,136 @@ pub fn append_node_batch(
             .build(store.clone(), &format!("{group_path}/border"))
             .expect("Failed to build border array");
         border_array.store_metadata().expect("Failed to store border metadata");
+    }
+}
+
+/// Parameters that stay constant across one `build_tree` call's whole
+/// recursive descent, bundled to keep `add_data`'s signature manageable.
+struct BuildConfig<'a> {
+    store: &'a ReadableWritableListableStorage,
+    target_level: u32,
+    total_levels: u32,
+    metric: Metric,
+    is_normalized: bool,
+    chunk_shape: &'a [u64],
+}
+
+/// Routes a batch of data points (already known to belong under `node_idx`
+/// at `level`) toward `config.target_level`: writes them if this is that
+/// level, otherwise reads `node_idx`'s own centroids/children (written by
+/// an earlier `target_level` pass), splits the batch by nearest centroid,
+/// and recurses into each non-empty child.
+fn add_data(
+    config: &BuildConfig, 
+    level: u32,
+    node_idx: u32,
+    data_embeddings: &Array2<f32>,
+    data_ids: &Array1<u32>) {
+    let group_path = format!("/lvl_{level}/node_{node_idx}");
+
+    if level == config.target_level {
+        let child_key = if level == config.total_levels { "item_ids" } else { "node_ids" };
+        append_node_batch(
+            config.store, 
+            &group_path,
+            child_key,
+            data_embeddings,
+            data_ids,
+            config.chunk_shape
+        );
+        return;
+    }
+
+    let mut node = Node::new(
+        config.store.clone().readable_listable(),
+        group_path, 
+        "node_ids".to_string()
+    );
+    let centroids = node
+        .embeddings()
+        .as_ref()
+        .expect("intermediate node must already have embeddings from an earlier level pass")
+        .clone();
+    let child_ids = node
+        .children()
+        .as_ref()
+        .expect("intermediate node must already have children from an earlier level pass")
+        .clone();
+
+    let (offsets, assignment) =
+        determine_node_assignments(
+            &centroids, 
+            data_embeddings,
+            config.metric,
+            config.is_normalized
+        );
+
+    for child in 0..centroids.nrows() {
+        let start = offsets[child] as usize;
+        let end = offsets[child + 1] as usize;
+        if start == end {
+            continue;
+        }
+        let rows: Vec<usize> = assignment.slice(s![start..end]).iter().map(|&i| i as usize).collect();
+        let child_embeddings = data_embeddings.select(Axis(0), &rows);
+        let child_ids_batch = Array1::from_iter(rows.iter().map(|&i| data_ids[i]));
+        add_data(config, level + 1, child_ids[child], &child_embeddings, &child_ids_batch);
+    }
+}
+
+/// Builds every level of the tree under `root_embeddings`: for each level
+/// but the last, redistributes `representatives` (the full representative
+/// set); for the last (leaf) level, redistributes `dataset` the same way -
+/// both one on-disk chunk at a time. A level's nodes must already exist
+/// (written by the previous level's pass) before the next level can read
+/// their centroids to descend further, so levels build strictly in order.
+pub fn build_tree(
+    store: &ReadableWritableListableStorage,
+    root_embeddings: &Array2<f32>,
+    representatives: &EmbeddingsSource,
+    dataset: &EmbeddingsSource,
+    total_levels: u32,
+    metric: Metric,
+    is_normalized: bool,
+    fallback_batch_rows: usize,
+    chunk_shape: &[u64],
+) {
+    for target_level in 1..=total_levels {
+        let source = if target_level == total_levels { dataset } else { representatives };
+        let (row_count, _dim) = source.shape();
+        let batch_rows = source.natural_batch_rows(fallback_batch_rows);
+        let config = 
+            BuildConfig { 
+                store,
+                target_level,
+                total_levels, metric,
+                is_normalized,
+                chunk_shape 
+            };
+
+        let mut start = 0;
+        while start < row_count {
+            let end = (start + batch_rows).min(row_count);
+            let batch_embeddings = source.read_rows(start, end);
+            let batch_ids: Array1<u32> = (start as u32..end as u32).collect();
+
+            let (offsets, assignment) =
+                determine_node_assignments(root_embeddings, &batch_embeddings, metric, is_normalized);
+
+            for root_node in 0..root_embeddings.nrows() {
+                let s = offsets[root_node] as usize;
+                let e = offsets[root_node + 1] as usize;
+                if s == e {
+                    continue;
+                }
+                let rows: Vec<usize> = assignment.slice(s![s..e]).iter().map(|&i| i as usize).collect();
+                let node_embeddings = batch_embeddings.select(Axis(0), &rows);
+                let node_ids = Array1::from_iter(rows.iter().map(|&i| batch_ids[i]));
+                add_data(&config, 1, root_node as u32, &node_embeddings, &node_ids);
+            }
+
+            start = end;
+        }
     }
 }
 

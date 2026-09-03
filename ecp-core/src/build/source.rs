@@ -49,6 +49,25 @@ impl EmbeddingsSource {
         }
     }
 
+    /// The row count of one on-disk chunk, if the source is chunked -
+    /// `read_rows` on a range aligned to this size touches exactly one
+    /// chunk. `fallback` is used when there's no such alignment to exploit
+    /// (HDF5 contiguous storage, where a partial read is already a plain
+    /// byte-range read with no decompression unit to align to).
+    pub fn natural_batch_rows(&self, fallback: usize) -> usize {
+        match self {
+            EmbeddingsSource::Hdf5(dataset) => {
+                dataset.chunk_dims().map(|dims| dims[0]).unwrap_or(fallback)
+            }
+            EmbeddingsSource::Zarr { store, path } => {
+                let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
+                array
+                    .chunk_shape_usize(&[0, 0])
+                    .expect("Failed to read zarr chunk shape")[0]
+            }
+        }
+    }
+
     /// Reads rows `start..end` (all columns) as `f32`.
     pub fn read_rows(&self, start: usize, end: usize) -> Array2<f32> {
         match self {

@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use ndarray::Array2;
 use ndarray::Array1;
 
+use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::ReadableListableStorage;
+use zarrs::storage::{ListableStorageTraits, ReadableListableStorage, StorePrefix};
 
 use std::collections::BinaryHeap;
 use ordered_float::NotNan;
@@ -23,6 +25,7 @@ struct QueryState {
 
 pub struct Index {
     metric: Metric,
+    is_normalized: bool,
     levels: u32,
     root: Array2<f32>,
     nodes: Vec<Vec<Node>>,
@@ -31,43 +34,74 @@ pub struct Index {
 
 impl Index
 {
-    /// Creates a new Index instance.
-    /// Returns:
-    ///     Index<T>: A new instance of Index with the specified metric, levels, root, and nodes.
-    pub fn new(
-        index_path: PathBuf,
-        metric: Metric,
-        levels: u32,
-        root: Array2<f32>,
-        node_paths: Vec<Vec<String>>,
-    ) -> Self {
-        let mut nodes = Vec::new();
-        let store: ReadableListableStorage = 
+    /// Loads an index from `index_path`, deriving `metric`, `levels`,
+    /// `root`, and every level's node paths from the store itself
+    /// (`info/levels`, `info/metric`, `index_root/embeddings`, and each
+    /// `lvl_N/node_M` group).
+    pub fn load(index_path: PathBuf) -> Self {
+        let store: ReadableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
-        for i in 0..levels {
-            nodes.push(Vec::new());
-            let mut c_key = "node_ids".to_string();
-            if i+1 == levels {
-                c_key = "item_ids".to_string();
-            }
-            for node_path in &node_paths[i as usize] {
-                let node = Node::new(
-                    store.clone(),
-                    node_path.clone(),
-                    c_key.clone(),
-                );
-                nodes[i as usize].push(node);
-            }
+        Self::load_from_store(store)
+    }
+
+    fn load_from_store(store: ReadableListableStorage) -> Self {
+        let levels_array =
+            Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
+        let levels: u32 = levels_array
+            .retrieve_array_subset::<Vec<u32>>(&levels_array.subset_all())
+            .expect("Failed to retrieve info/levels")[0];
+
+        let metric_array =
+            Array::open(store.clone(), "/info/metric").expect("Failed to open info/metric");
+        let metric_str = metric_array
+            .retrieve_array_subset::<Vec<String>>(&metric_array.subset_all())
+            .expect("Failed to retrieve info/metric")
+            .remove(0);
+        let metric = Metric::from_str(&metric_str)
+            .unwrap_or_else(|e| panic!("info/metric holds an unrecognized metric: {e}"));
+
+        let is_normalized_array = Array::open(store.clone(), "/info/is_normalized")
+            .expect("Failed to open info/is_normalized");
+        let is_normalized: bool = is_normalized_array
+            .retrieve_array_subset::<Vec<bool>>(&is_normalized_array.subset_all())
+            .expect("Failed to retrieve info/is_normalized")[0];
+
+        let root_array = Array::open(store.clone(), "/index_root/embeddings")
+            .expect("Failed to open index_root/embeddings");
+        let root: Array2<f32> = root_array
+            .retrieve_array_subset::<Array2<f32>>(&root_array.subset_all())
+            .expect("Failed to retrieve index_root/embeddings");
+
+        let mut nodes = Vec::with_capacity(levels as usize);
+        for l in 0..levels {
+            let lvl_name = format!("lvl_{}", l + 1);
+            let prefix = StorePrefix::new(format!("{lvl_name}/"))
+                .expect("level name produces an invalid store prefix");
+            let listing = store
+                .list_dir(&prefix)
+                .unwrap_or_else(|e| panic!("Failed to list {lvl_name}: {e}"));
+
+            let mut level_nodes: Vec<(u32, String)> = listing
+                .prefixes()
+                .iter()
+                .filter_map(|p| {
+                    let name = p.as_str().trim_end_matches('/').rsplit('/').next()?;
+                    let idx: u32 = name.strip_prefix("node_")?.parse().ok()?;
+                    Some((idx, format!("/{lvl_name}/{name}")))
+                })
+                .collect();
+            level_nodes.sort_unstable_by_key(|(idx, _)| *idx);
+
+            let c_key = if l + 1 == levels { "item_ids" } else { "node_ids" };
+            nodes.push(
+                level_nodes
+                    .into_iter()
+                    .map(|(_, path)| Node::new(store.clone(), path, c_key.to_string()))
+                    .collect(),
+            );
         }
-        Index {
-            metric: metric.into(),
-            levels: levels,
-            root: root,
-            nodes: nodes,
-            queries: Vec::new(),
-            // tree_pq: Vec::new(),
-            // items: Vec::new(),
-        }
+
+        Index { metric, is_normalized, levels, root, nodes, queries: Vec::new() }
     }
 
     pub fn new_search(
@@ -110,7 +144,6 @@ impl Index
         let sign = match self.metric {
             Metric::L2 => -1.0,
             Metric::IP => 1.0,
-            Metric::Cos => 1.0,
         };
         let mut search_exp = search_exp;
 
@@ -122,7 +155,8 @@ impl Index
             let root_distances: Array1<f32> = calculate_distances(
                 &self.root,
                 &query,
-                &self.metric
+                &self.metric,
+                self.is_normalized,
             );
             // A 1-level index is IVF-style: node_size == total_clusters, so root
             // already holds every leader and `nodes[0]` is the only (leaf) level.
@@ -159,6 +193,7 @@ impl Index
                 embeddings_f32,
                 &query,
                 &self.metric,
+                self.is_normalized,
             );
             if is_leaf == 1 {
                 let children = self.nodes[lvl][node].children().as_ref().unwrap();

@@ -1,3 +1,4 @@
+pub mod build;
 pub mod ecp_node;
 pub mod ecp_index;
 pub mod utils;

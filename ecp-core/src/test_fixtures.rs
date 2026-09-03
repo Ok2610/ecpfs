@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{Array1, Array2};
-use zarrs::array::data_type::{float16, float32, float64, uint32};
-use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type::{bool, float16, float32, float64, string, uint32};
+use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
-use zarrs::storage::ReadableListableStorage;
+use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
 fn write_children(store: &Arc<MemoryStore>, group_path: &str, child_key: &str, children: &Array1<u32>) {
     let child_path = format!("{group_path}/{child_key}");
@@ -97,10 +97,58 @@ pub fn write_node_unsupported_dtype(
     write_children(store, group_path, child_key, children);
 }
 
+/// Writes `info/levels`, `info/metric`, and `info/is_normalized` as rank-0
+/// (scalar) arrays, mirroring the fields `ECPBuilder.write_index_info` puts
+/// at the root of a real index.
+pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
+    let scalar_shape: Vec<u64> = vec![];
+
+    let levels_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), uint32(), 0u32)
+        .build(store.clone(), "/info/levels")
+        .expect("failed to build info/levels array");
+    levels_array.store_metadata().expect("failed to store info/levels metadata");
+    levels_array
+        .store_chunk(&[], vec![levels])
+        .expect("failed to store info/levels chunk");
+
+    let metric_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), string(), "")
+        .build(store.clone(), "/info/metric")
+        .expect("failed to build info/metric array");
+    metric_array.store_metadata().expect("failed to store info/metric metadata");
+    metric_array
+        .store_chunk(&[], vec![metric.to_string()])
+        .expect("failed to store info/metric chunk");
+
+    let is_normalized_array = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, bool(), FillValueMetadata::Bool(false))
+        .build(store.clone(), "/info/is_normalized")
+        .expect("failed to build info/is_normalized array");
+    is_normalized_array.store_metadata().expect("failed to store info/is_normalized metadata");
+    is_normalized_array
+        .store_chunk(&[], vec![is_normalized])
+        .expect("failed to store info/is_normalized chunk");
+}
+
+/// Writes `index_root/embeddings`, mirroring what `ECPBuilder.build_tree_fs`
+/// writes for the top-level cluster leaders.
+pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
+    let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let root_array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)
+        .build(store.clone(), "/index_root/embeddings")
+        .expect("failed to build index_root/embeddings array");
+    root_array.store_metadata().expect("failed to store index_root/embeddings metadata");
+    root_array
+        .store_chunk(&[0, 0], embeddings)
+        .expect("failed to store index_root/embeddings chunk");
+}
+
 pub fn new_memory_store() -> Arc<MemoryStore> {
     Arc::new(MemoryStore::new())
 }
 
 pub fn as_readable_listable(store: &Arc<MemoryStore>) -> ReadableListableStorage {
+    store.clone()
+}
+
+pub fn as_readable_writable_listable(store: &Arc<MemoryStore>) -> ReadableWritableListableStorage {
     store.clone()
 }

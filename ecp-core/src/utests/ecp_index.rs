@@ -1,6 +1,59 @@
 use super::*;
-use crate::test_fixtures::{as_readable_listable, new_memory_store, write_node};
+use crate::test_fixtures::{
+    as_readable_listable, new_memory_store, write_index_info, write_index_root, write_node,
+};
 use ndarray::array;
+
+#[test]
+fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
+    let store = new_memory_store();
+    write_index_info(&store, 1, "L2", false);
+    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]]);
+
+    write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
+    write_node(&store, "/lvl_1/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
+    write_node(&store, "/lvl_1/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
+    write_node(&store, "/lvl_1/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+
+    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3]);
+}
+
+/// `node_1` is written before `node_0` on purpose - if `load_from_store`
+/// ordered nodes by whatever order the store happens to list them in rather
+/// than parsing each `node_N` path's own numeric suffix, this would surface
+/// it as search returning items in the wrong order.
+#[test]
+fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order() {
+    let store = new_memory_store();
+    write_index_info(&store, 2, "L2", false);
+    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0]]);
+
+    write_node(
+        &store,
+        "/lvl_1/node_1",
+        &array![[1.0f32, 1.0], [10.0, 10.0], [11.0, 11.0]],
+        "node_ids",
+        &array![1u32, 2, 3],
+    );
+    write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0]], "node_ids", &array![0u32]);
+
+    write_node(&store, "/lvl_2/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
+    write_node(&store, "/lvl_2/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
+    write_node(&store, "/lvl_2/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
+    write_node(&store, "/lvl_2/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+
+    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+}
 
 /// A small 2-level eCP tree, sized and derived the way `ECPBuilder` would for
 /// 8 items with target_cluster_items=2 and levels=2:
@@ -91,10 +144,11 @@ fn build_test_index(metric: Metric) -> Index {
         Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string()),
     ];
 
-    // Constructed as a struct literal (rather than through `Index::new`) so the
-    // fixture can use an in-memory store instead of a real `FilesystemStore`.
+    // Struct literal, not `Index::load`, so the fixture can use an
+    // in-memory store instead of a real `FilesystemStore`.
     Index {
         metric,
+        is_normalized: false,
         levels: 2,
         root: array![[0.0f32, 0.0], [1.0, 1.0]], // leader 0 (item 0), leader 1 (item 2)
         nodes: vec![lvl_1, lvl_2],
@@ -297,128 +351,11 @@ fn build_ivf_style_index(metric: Metric) -> Index {
 
     Index {
         metric,
+        is_normalized: false,
         levels: 1,
         root: array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]], // all 4 leaders
         nodes: vec![leaf_clusters],
         queries: Vec::new(),
-    }
-}
-
-/// A 2-level tree like `build_test_index`, but sized for `Metric::Cos` instead
-/// of `Metric::L2`: cosine similarity is undefined for a zero vector (division
-/// by zero) and degenerate for collinear vectors (identical similarity), both
-/// of which `build_test_index`'s geometry hits (item 0 is the origin; items
-/// 1-7 all lie on the same ray). So this fixture uses 8 unit-ish vectors at
-/// distinct angles from the x-axis instead, giving each item a distinct,
-/// hand-computable cosine similarity against the query (1, 0):
-///
-///   item id : angle : cos(angle) (= expected similarity to query (1,0))
-///       0    :   0°  :  1.0
-///       1    :  20°  :  0.9396926
-///       2    :  45°  :  0.7071068
-///       3    :  60°  :  0.5
-///       4    :  90°  :  0.0
-///       5    : 120°  : -0.5
-///       6    : 150°  : -0.8660254
-///       7    : 180°  : -1.0
-///
-/// Tree topology mirrors `build_test_index` (root -> lvl_1 -> lvl_2 leaves,
-/// items 0,1 / 2,3 / 4,5 / 6,7 grouped one pair per leaf), with each leader's
-/// embedding reused from the first item in its cluster (so nothing is zero).
-fn build_cos_test_index() -> Index {
-    let store = new_memory_store();
-
-    write_node(
-        &store,
-        "/lvl_1/node_0",
-        &array![[1.0f32, 0.0]],
-        "node_ids",
-        &array![0u32],
-    );
-    write_node(
-        &store,
-        "/lvl_1/node_1",
-        &array![[1.0f32, 1.0], [0.0, 1.0], [-0.8660254, 0.5]],
-        "node_ids",
-        &array![1u32, 2, 3],
-    );
-
-    write_node(
-        &store,
-        "/lvl_2/node_0",
-        &array![[1.0f32, 0.0], [0.9396926, 0.3420201]],
-        "item_ids",
-        &array![0u32, 1],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_1",
-        &array![[1.0f32, 1.0], [0.5, 0.8660254]],
-        "item_ids",
-        &array![2u32, 3],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_2",
-        &array![[0.0f32, 1.0], [-0.5, 0.8660254]],
-        "item_ids",
-        &array![4u32, 5],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_3",
-        &array![[-0.8660254f32, 0.5], [-1.0, 0.0]],
-        "item_ids",
-        &array![6u32, 7],
-    );
-
-    let lvl_1 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string()),
-    ];
-    let lvl_2 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string()),
-    ];
-
-    Index {
-        metric: Metric::Cos,
-        levels: 2,
-        root: array![[1.0f32, 0.0], [1.0, 1.0]],
-        nodes: vec![lvl_1, lvl_2],
-        queries: Vec::new(),
-    }
-}
-
-#[test]
-fn cos_search_returns_items_ordered_by_similarity_descending() {
-    let mut index = build_cos_test_index();
-    let query: Array1<f32> = array![1.0, 0.0];
-
-    // search_exp=4 explores all 4 leaf nodes, so this is an exact top-8.
-    let (items, _query_id) =
-        index.new_search(query, 8, 4, -1, &HashSet::new());
-
-    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(
-        ids,
-        vec![0, 1, 2, 3, 4, 5, 6, 7],
-        "items should be ordered by descending cosine similarity to the query, most similar first"
-    );
-
-    // Cos should rank like IP (higher similarity = better), so the stored key
-    // is the negated similarity - ascending key order means descending
-    // similarity order, same convention as the IP metric.
-    let expected_cos: [f32; 8] = [1.0, 0.9396926, 0.7071068, 0.5, 0.0, -0.5, -0.8660254, -1.0];
-    let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
-    for (score, expected) in scores.iter().zip(expected_cos.iter()) {
-        assert!(
-            (score - (-expected)).abs() < 1e-5,
-            "score {score} should be -cos = {}",
-            -expected
-        );
     }
 }
 
@@ -530,6 +467,7 @@ fn build_three_level_test_index() -> Index {
 
     Index {
         metric: Metric::L2,
+        is_normalized: false,
         levels: 3,
         root: array![[0.0f32, 0.0], [10.0, 10.0]],
         nodes: vec![lvl_1, lvl_2, lvl_3],

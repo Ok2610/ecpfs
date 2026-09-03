@@ -1,6 +1,4 @@
-from ._logging import logger, ecp_enable_logging
+from . import ecp
+from .ecp import IndexWrapper as Index, BuilderWrapper as Builder, Metric
 
-from .ecp_builder import ECPBuilder
-from .ecp_index import ECPIndexPy
-from .ecp_rs_index import ECPIndexRS
-from .utils import Metric 
+__all__ = ["ecp", "Index", "Builder", "Metric"]

@@ -4,13 +4,13 @@ build-backend = "maturin"
 
 [project]
 name        = "ecpfs"
-version     = "0.9.0"
+version     = "0.9.5"
 description = ""
 authors     = [
     { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
 ]
 readme      = "README.md"
-license     = { file = "LICENSE" }
+license     = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.12"
 
 classifiers = [
@@ -18,30 +18,23 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Rust",
   "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent"
 ]
 
 dependencies = [
   "numpy>=2.0.0",
-  "h5py>=3.11.0",
-  "loguru>=0.7.3",
-  "tqdm>=4.67.1",
-  "scikit-learn>=1.6.0",
   "zarr>=3.0.5",
-  "threadpoolctl>=3.6.0"
+  "typer>=0.15.2"
 ]
 
 [dependency-groups]
 dev = [
   "sphinx>=6.0",
   "pytest>=8.2.2",
-  "pylint>=3.3.5",
   "ipykernel>=6.29.5",
   "ipython>=8.25.0",
-  "click>=8.1.7",
-  "black>=24.10.0",
   "deptry>=0.23.0",
-  "typer>=0.15.2",
   "maturin>=1.0"
 ]
 
@@ -50,14 +43,3 @@ bindings = "pyo3"
 python-source = "python"
 module-name   = "ecpfs.ecp"
 manifest-path = "ecp-py/Cargo.toml"
-
-[tool.poetry.group.dev.dependencies]
-sphinx = "^6.0"
-pytest = "^8.2.2"
-pylint = "^3.3.5"
-ipykernel = "^6.29.5"
-ipython = "^8.25.0"
-click = "^8.1.7"
-black = "^24.10.0"
-deptry = "^0.23.0"
-typer = "^0.15.2"

@@ -4,7 +4,7 @@ use ndarray::Array1;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use ordered_float::NotNan;
-use ecp_core::ecp_index::Index;
+use ecp_core::search::Index;
 
 #[pyclass(module = "engine.index")]
 pub struct IndexWrapper {

@@ -13,7 +13,7 @@ use zarrs::storage::{ListableStorageTraits, ReadableListableStorage, StorePrefix
 use std::collections::BinaryHeap;
 use ordered_float::NotNan;
 
-use crate::ecp_node::Node;
+use crate::search::node::Node;
 use crate::utils::HeapEntry;
 use crate::utils::{calculate_distances, Metric};
 
@@ -261,5 +261,5 @@ impl Index
 }
 
 #[cfg(test)]
-#[path = "utests/ecp_index.rs"]
+#[path = "utests/index.rs"]
 mod tests;

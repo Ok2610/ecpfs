@@ -1,6 +1,6 @@
 //! Exercises `Index::load` against a real on-disk `FilesystemStore`, since
 //! every other test in this crate uses an in-memory store instead (see
-//! `ecp_index::tests::load_from_store_*` for the fast, storage-agnostic
+//! `search::index::tests::load_from_store_*` for the fast, storage-agnostic
 //! coverage of the same parsing logic). This is the one place that proves
 //! the real filesystem code path - directory listing, path handling - also
 //! works, not just the generic zarr-store logic.
@@ -12,7 +12,7 @@ use zarrs::filesystem::FilesystemStore;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use ecp_core::ecp_index::Index;
+use ecp_core::search::Index;
 
 fn write_scalar_u32(store: &Arc<FilesystemStore>, path: &str, value: u32) {
     let shape: Vec<u64> = vec![];

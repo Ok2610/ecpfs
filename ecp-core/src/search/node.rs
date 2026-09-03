@@ -101,5 +101,5 @@ impl Node
 }
 
 #[cfg(test)]
-#[path = "utests/ecp_node.rs"]
+#[path = "utests/node.rs"]
 mod tests;

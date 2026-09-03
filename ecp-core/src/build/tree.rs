@@ -6,7 +6,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use crate::build::assign::determine_node_assignments;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
-use crate::ecp_node::Node;
+use crate::search::Node;
 use crate::utils::Metric;
 
 /// Writes `info/levels`, `info/metric`, and `info/is_normalized`.

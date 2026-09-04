@@ -23,17 +23,11 @@ classifiers = [
 ]
 
 dependencies = [
-  "numpy>=2.0.0",
-  "zarr>=3.0.5",
-  "typer>=0.15.2"
+  "numpy>=2.5.2"
 ]
 
 [dependency-groups]
 dev = [
-  "sphinx>=6.0",
-  "pytest>=8.2.2",
-  "ipykernel>=6.29.5",
-  "ipython>=8.25.0",
   "deptry>=0.23.0",
   "maturin>=1.0"
 ]

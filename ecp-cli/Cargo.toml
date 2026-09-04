@@ -1,0 +1,15 @@
+[package]
+name = "ecp-cli"
+version = "0.9.5"
+edition = "2024"
+readme = "../README.md"
+license = "MIT OR Apache-2.0"
+description = "Native CLI for building and searching eCP indexes"
+
+[[bin]]
+name = "ecp"
+path = "src/main.rs"
+
+[dependencies]
+ecp-core = { path = "../ecp-core" }
+clap = { version = "4", features = ["derive"] }

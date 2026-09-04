@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ecp-core", "ecp-py"]
+members = ["ecp-core", "ecp-py", "ecp-cli"]
 
 [profile.release]
 lto = "thin"

@@ -12,6 +12,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 half = "2.7.1"
+log = { version = "0.4.28", features = ["std"] }
+lru = "0.18.4"
 ndarray = "0.17.2"
 num-traits = "0.2.19"
 ordered-float = "5.5.0"

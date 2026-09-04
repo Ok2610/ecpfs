@@ -6,6 +6,7 @@ use std::sync::Arc;
 use ndarray::Array2;
 use ndarray::Array1;
 
+use lru::LruCache;
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::{ListableStorageTraits, ReadableListableStorage, StorePrefix};
@@ -30,6 +31,9 @@ pub struct Index {
     root: Array2<f32>,
     nodes: Vec<Vec<Node>>,
     queries: Vec<QueryState>,
+    memory_limit_bytes: Option<usize>,
+    lru: LruCache<(usize, usize), usize>,
+    resident_bytes: usize,
 }
 
 impl Index
@@ -37,14 +41,15 @@ impl Index
     /// Loads an index from `index_path`, deriving `metric`, `levels`,
     /// `root`, and every level's node paths from the store itself
     /// (`info/levels`, `info/metric`, `index_root/embeddings`, and each
-    /// `lvl_N/node_M` group).
-    pub fn load(index_path: PathBuf) -> Self {
+    /// `lvl_N/node_M` group). `memory_limit_bytes` sets the upper limit
+    /// for how many nodes can be held in memory (LRU).
+    pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Self {
         let store: ReadableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
-        Self::load_from_store(store)
+        Self::load_from_store(store, memory_limit_bytes)
     }
 
-    fn load_from_store(store: ReadableListableStorage) -> Self {
+    fn load_from_store(store: ReadableListableStorage, memory_limit_bytes: Option<usize>) -> Self {
         let levels_array =
             Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
         let levels: u32 = levels_array
@@ -101,7 +106,69 @@ impl Index
             );
         }
 
-        Index { metric, is_normalized, levels, root, nodes, queries: Vec::new() }
+        Index {
+            metric,
+            is_normalized,
+            levels,
+            root,
+            nodes,
+            queries: Vec::new(),
+            memory_limit_bytes,
+            lru: LruCache::unbounded(),
+            resident_bytes: 0,
+        }
+    }
+
+    /// Changes the memory limit on an already-loaded index, so a caller can
+    /// raise or lower it without reloading. A lower limit that's already
+    /// exceeded by what's currently resident evicts immediately rather than
+    /// waiting for the next touch.
+    pub fn set_memory_limit_bytes(&mut self, memory_limit_bytes: Option<usize>) {
+        self.memory_limit_bytes = memory_limit_bytes;
+        if let Some(limit) = memory_limit_bytes {
+            Self::evict_to_ratio(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, limit);
+        }
+    }
+
+    /// LRU-tracks `(lvl, node)` so `resident_bytes` reflects what's
+    /// actually resident, regardless of whether a limit is set. Takes
+    /// disjoint field borrows instead of `&mut self` because `self.queries`
+    /// is already borrowed for the whole loop in `incremental_search`, the
+    /// caller.
+    fn touch(nodes: &mut [Vec<Node>], lru: &mut LruCache<(usize, usize), usize>, resident_bytes: &mut usize, lvl: usize, node: usize) {
+        let bytes = nodes[lvl][node].resident_bytes();
+        if bytes == 0 {
+            return;
+        }
+        // A node's cached size never changes between touches, so only a
+        // first-time insert adds to the running total; a re-touch just
+        // refreshes recency via `put`.
+        if lru.put((lvl, node), bytes).is_none() {
+            *resident_bytes += bytes;
+        }
+    }
+
+    /// Evicts least-recently-touched nodes (via `Node::clear_cache`) down to
+    /// `EVICT_TO_RATIO` of `limit` rather than just under it, since a cache
+    /// sitting right at the limit would otherwise evict again on almost
+    /// every subsequent touch. No-ops if already under `limit`.
+    fn evict_to_ratio(nodes: &mut [Vec<Node>], lru: &mut LruCache<(usize, usize), usize>, resident_bytes: &mut usize, limit: usize) {
+        if *resident_bytes <= limit {
+            return;
+        }
+
+        const EVICT_TO_RATIO: f64 = 0.9;
+        let target = (limit as f64 * EVICT_TO_RATIO) as usize;
+        let mut evicted_count = 0;
+        let mut freed_bytes = 0;
+        while *resident_bytes > target {
+            let Some(((evict_lvl, evict_node), evicted)) = lru.pop_lru() else { break };
+            nodes[evict_lvl][evict_node].clear_cache();
+            *resident_bytes -= evicted;
+            evicted_count += 1;
+            freed_bytes += evicted;
+        }
+        log::debug!("evicted {evicted_count} node(s), freed {freed_bytes} bytes, resident now {resident_bytes}/{limit}");
     }
 
     pub fn new_search(
@@ -184,6 +251,7 @@ impl Index
             } = tree_pq.pop().unwrap();
             let lvl = level as usize;
             let node = node_id as usize;
+            log::trace!("visiting node lvl={lvl} node={node} is_leaf={is_leaf}");
             let embeddings_f32: &Array2<f32> = match self.nodes[lvl][node].embeddings() {
                 Some(embs) => embs,
                 None => continue,
@@ -228,6 +296,11 @@ impl Index
                 }
             }
 
+            Self::touch(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, lvl, node);
+            if let Some(limit) = self.memory_limit_bytes {
+                Self::evict_to_ratio(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, limit);
+            }
+
             if leaf_cnt == search_exp {
                 if items.len() >= k {
                     items.sort_unstable_by_key(|&(first, _)| first);
@@ -252,6 +325,10 @@ impl Index
         max_increments: i32,
         exclude: &HashSet<u32>
     ) -> Vec<(NotNan<f32>, u32)> {
+        log::debug!(
+            "get_next_k_items: query_id={query_id} query={:?} k={k} search_exp={search_exp} max_increments={max_increments} exclude={exclude:?}",
+            self.queries[query_id].query.to_vec()
+        );
         let cnt = self.queries[query_id].items.len().min(k);
         if cnt == 0 && !self.queries[query_id].tree_pq.is_empty() {
             self.incremental_search(query_id, k, search_exp, max_increments, exclude);

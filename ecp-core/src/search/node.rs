@@ -98,6 +98,14 @@ impl Node
     pub fn is_loaded(&self) -> bool {
         self.embeddings.is_some() || self.children.is_some()
     }
+
+    /// Bytes currently held by this node's cached embeddings/children, for
+    /// eviction-policy accounting.
+    pub fn resident_bytes(&self) -> usize {
+        let emb_bytes = self.embeddings.as_ref().map_or(0, |e| e.len() * size_of::<f32>());
+        let child_bytes = self.children.as_ref().map_or(0, |c| c.len() * size_of::<u32>());
+        emb_bytes + child_bytes
+    }
 }
 
 #[cfg(test)]

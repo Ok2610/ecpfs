@@ -139,10 +139,16 @@ struct SearchArgs {
     /// Item ids to exclude, comma-separated.
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<u32>,
+
+    /// Bounds how many touched nodes stay cached (LRU-evicted), in GB.
+    /// Unset means every touched node stays cached for the process's life.
+    #[arg(long)]
+    memory_limit_gb: Option<usize>,
 }
 
 fn search(args: SearchArgs) {
-    let mut index = Index::load(args.index_path);
+    let memory_limit_bytes = args.memory_limit_gb.map(|gb| gb * 1024 * 1024 * 1024);
+    let mut index = Index::load(args.index_path, memory_limit_bytes);
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
     let query = source.read_rows(args.query_row, args.query_row + 1).row(0).to_owned();
     let exclude = args.exclude.into_iter().collect();

@@ -83,7 +83,7 @@ fn load_reads_a_real_index_from_disk_and_searches_correctly() {
     write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
     write_node(&store, "/lvl_1/node_1", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![2u32, 3]);
 
-    let mut index = Index::load(index_path);
+    let mut index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 

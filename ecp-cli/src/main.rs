@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ecp_core::build::builder::Builder;
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
+use ecp_core::logging;
 use ecp_core::search::Index;
 use ecp_core::utils::Metric;
 
@@ -48,6 +49,56 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
             RepSelectionArg::Offset => RepresentativeStrategy::Offset,
             RepSelectionArg::Random => RepresentativeStrategy::Random,
         }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LogLevelArg {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<LogLevelArg> for log::LevelFilter {
+    fn from(level: LogLevelArg) -> Self {
+        match level {
+            LogLevelArg::Off => log::LevelFilter::Off,
+            LogLevelArg::Error => log::LevelFilter::Error,
+            LogLevelArg::Warn => log::LevelFilter::Warn,
+            LogLevelArg::Info => log::LevelFilter::Info,
+            LogLevelArg::Debug => log::LevelFilter::Debug,
+            LogLevelArg::Trace => log::LevelFilter::Trace,
+        }
+    }
+}
+
+/// Logging flags shared by every subcommand. Off by default; when
+/// `with_logging` is set, writes JSONL to `log_dir` (default `ecp_logs/`).
+#[derive(clap::Args)]
+struct LoggingArgs {
+    /// Turn on file-based logging for this run.
+    #[arg(long)]
+    with_logging: bool,
+
+    /// Directory to write the log file into.
+    #[arg(long)]
+    log_dir: Option<PathBuf>,
+
+    /// Log verbosity. `trace` also logs every node visited during search.
+    #[arg(long, value_enum, default_value_t = LogLevelArg::Debug)]
+    log_level: LogLevelArg,
+}
+
+impl LoggingArgs {
+    fn init_if_requested(&self) {
+        if !self.with_logging {
+            return;
+        }
+        let path = logging::init(self.log_dir.as_deref(), self.log_level.into());
+        eprintln!("logging to {}", path.display());
     }
 }
 
@@ -96,9 +147,13 @@ struct BuildIndexArgs {
     /// Row batch size used when a source has no natural on-disk chunk to align to.
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
+
+    #[command(flatten)]
+    logging: LoggingArgs,
 }
 
 fn build_index(args: BuildIndexArgs) {
+    args.logging.init_if_requested();
     let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
     let mut builder = Builder::create(&args.save_file, args.levels, args.metric.into(), args.is_normalized, memory_limit_bytes);
@@ -144,9 +199,13 @@ struct SearchArgs {
     /// Unset means every touched node stays cached for the process's life.
     #[arg(long)]
     memory_limit_gb: Option<usize>,
+
+    #[command(flatten)]
+    logging: LoggingArgs,
 }
 
 fn search(args: SearchArgs) {
+    args.logging.init_if_requested();
     let memory_limit_bytes = args.memory_limit_gb.map(|gb| gb * 1024 * 1024 * 1024);
     let mut index = Index::load(args.index_path, memory_limit_bytes);
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);

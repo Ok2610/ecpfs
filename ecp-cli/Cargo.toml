@@ -1,6 +1,6 @@
 [package]
 name = "ecp-cli"
-version = "0.9.6"
+version = "0.9.7"
 edition = "2024"
 readme = "../README.md"
 license = "MIT OR Apache-2.0"
@@ -13,3 +13,4 @@ path = "src/main.rs"
 [dependencies]
 ecp-core = { path = "../ecp-core" }
 clap = { version = "4", features = ["derive"] }
+log = "0.4.28"

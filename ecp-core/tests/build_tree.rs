@@ -59,7 +59,7 @@ fn build_tree_produces_a_structure_that_searches_correctly() {
     write_index_root(&store_rw, &root_embeddings, &[100, 2]);
     build_tree(&store_rw, &root_embeddings, &representatives, &dataset, 2, Metric::L2, false, 100, &[100, 2]);
 
-    let mut index = Index::load(index_path);
+    let mut index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 

@@ -8,6 +8,7 @@ use crate::build::writer::zarrs_append;
 /// How to pick which items become cluster leaders. `"custom"` (the caller
 /// already has their own leader ids/embeddings) needs no algorithm here -
 /// it's handled by the builder directly.
+#[derive(Debug, Clone, Copy)]
 pub enum RepresentativeStrategy {
     Offset,
     Random,
@@ -84,6 +85,7 @@ pub fn collect_representatives(
             start = end;
             continue;
         }
+        log::debug!("processing chunk rows {start}..{end} ({} matched representatives)", matched_ids.len());
 
         let batch = source.read_rows(start, end);
         let matched_rows: Vec<usize> = matched_ids.iter().map(|&id| id as usize - start).collect();

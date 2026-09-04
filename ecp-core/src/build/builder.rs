@@ -68,6 +68,7 @@ impl Builder {
 
     /// Creates a fresh `FilesystemStore` at `index_path` and builds into it.
     pub fn create(index_path: &Path, levels: u32, metric: Metric, is_normalized: bool, memory_limit_bytes: usize) -> Self {
+        log::info!("creating index at {}", index_path.display());
         let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(index_path).expect("Failed to create store"));
         Self::new(store, levels, metric, is_normalized, memory_limit_bytes)
@@ -87,6 +88,10 @@ impl Builder {
         self.chunk_shape = vec![calculate_chunk_size(dim, DEFAULT_MAX_CHUNK_BYTES), dim as u64];
 
         let selected_ids = select_representative_ids(total_items, target_cluster_items, strategy);
+        log::info!(
+            "selected {} representatives via {strategy:?} from {total_items} items (target_cluster_items={target_cluster_items})",
+            selected_ids.len()
+        );
         self.node_size = node_size_for(selected_ids.len(), self.levels);
         self.representatives = Some(collect_representatives(
             &self.store,
@@ -116,6 +121,7 @@ impl Builder {
 
     /// Writes `index_root` and descends the full tree over `dataset`.
     pub fn build(&mut self, dataset: &EmbeddingsSource, fallback_batch_rows: usize) {
+        log::info!("building tree: {} levels, metric={:?}", self.levels, self.metric);
         let representatives =
             self.representatives.take().expect("call select_representatives before build");
 

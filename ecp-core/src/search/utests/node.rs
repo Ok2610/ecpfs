@@ -66,6 +66,26 @@ fn unsupported_dtype_panics_instead_of_silently_truncating() {
 }
 
 #[test]
+fn resident_bytes_reflects_whats_actually_loaded() {
+    let store = new_memory_store();
+    let embeddings: Array2<f32> = array![[1.0, 2.0], [3.0, 4.0]];
+    let children: Array1<u32> = array![10, 20];
+    write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+    let mut node = Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string());
+    assert_eq!(node.resident_bytes(), 0, "nothing loaded yet");
+
+    node.embeddings();
+    assert_eq!(node.resident_bytes(), 2 * 2 * 4, "2x2 f32 embeddings only");
+
+    node.children();
+    assert_eq!(node.resident_bytes(), 2 * 2 * 4 + 2 * 4, "embeddings + 2 u32 children");
+
+    node.clear_cache();
+    assert_eq!(node.resident_bytes(), 0);
+}
+
+#[test]
 fn missing_node_yields_none_without_panicking() {
     let store = new_memory_store();
     let mut node = Node::new(

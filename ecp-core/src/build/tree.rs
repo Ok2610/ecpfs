@@ -194,6 +194,7 @@ pub fn build_tree(
         let mut start = 0;
         while start < row_count {
             let end = (start + batch_rows).min(row_count);
+            log::debug!("target_level={target_level}: processing rows {start}..{end}");
             let batch_embeddings = source.read_rows(start, end);
             let batch_ids: Array1<u32> = (start as u32..end as u32).collect();
 

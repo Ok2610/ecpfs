@@ -15,7 +15,7 @@ fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
     write_node(&store, "/lvl_1/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
     write_node(&store, "/lvl_1/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
 
-    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let mut index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
@@ -47,7 +47,7 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
     write_node(&store, "/lvl_2/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
     write_node(&store, "/lvl_2/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
 
-    let mut index = Index::load_from_store(as_readable_listable(&store));
+    let mut index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -153,6 +153,9 @@ fn build_test_index(metric: Metric) -> Index {
         root: array![[0.0f32, 0.0], [1.0, 1.0]], // leader 0 (item 0), leader 1 (item 2)
         nodes: vec![lvl_1, lvl_2],
         queries: Vec::new(),
+        memory_limit_bytes: None,
+        lru: LruCache::unbounded(),
+        resident_bytes: 0,
     }
 }
 
@@ -170,6 +173,39 @@ fn l2_search_returns_nearest_items_in_order() {
 
     let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
     assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
+}
+
+#[test]
+fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
+    let mut index = build_test_index(Metric::L2);
+    // Smaller than the ~144 bytes all 6 nodes would take resident at once,
+    // but at least as large as the biggest single node (36 bytes), so the
+    // node just touched is never itself evicted.
+    index.set_memory_limit_bytes(Some(40));
+    let query: Array1<f32> = array![0.0, 0.0];
+
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3], "eviction must not change search results");
+    assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit", index.resident_bytes);
+
+    let still_loaded = index.nodes.iter().flatten().filter(|n| n.is_loaded()).count();
+    assert!(still_loaded < 6, "expected eviction to have freed at least one of the 6 touched nodes");
+}
+
+#[test]
+fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
+    let mut index = build_test_index(Metric::L2);
+    let query: Array1<f32> = array![0.0, 0.0];
+    index.new_search(query, 4, 4, -1, &HashSet::new());
+    assert_eq!(index.nodes.iter().flatten().filter(|n| n.is_loaded()).count(), 6, "sanity check: all 6 nodes loaded with no limit set");
+
+    index.set_memory_limit_bytes(Some(40));
+
+    assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit right after lowering it", index.resident_bytes);
+    let still_loaded = index.nodes.iter().flatten().filter(|n| n.is_loaded()).count();
+    assert!(still_loaded < 6, "lowering the limit below current usage must evict immediately, not lazily");
 }
 
 #[test]
@@ -356,6 +392,9 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         root: array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]], // all 4 leaders
         nodes: vec![leaf_clusters],
         queries: Vec::new(),
+        memory_limit_bytes: None,
+        lru: LruCache::unbounded(),
+        resident_bytes: 0,
     }
 }
 
@@ -472,6 +511,9 @@ fn build_three_level_test_index() -> Index {
         root: array![[0.0f32, 0.0], [10.0, 10.0]],
         nodes: vec![lvl_1, lvl_2, lvl_3],
         queries: Vec::new(),
+        memory_limit_bytes: None,
+        lru: LruCache::unbounded(),
+        resident_bytes: 0,
     }
 }
 

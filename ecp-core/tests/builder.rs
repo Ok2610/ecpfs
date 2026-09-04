@@ -48,7 +48,7 @@ fn builder_produces_a_structure_that_searches_correctly() {
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 
-    let mut index = Index::load(index_path);
+    let mut index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 

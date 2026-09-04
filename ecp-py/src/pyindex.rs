@@ -13,13 +13,24 @@ pub struct IndexWrapper {
 
 #[pymethods]
 impl IndexWrapper {
-    /// __new__(index_path: PathBuf)
+    /// __new__(index_path: PathBuf, memory_limit_bytes: Optional[int] = None)
     ///
     /// Loads an index from disk, deriving its metric/levels/nodes from the
-    /// store itself.
+    /// store itself. memory_limit_bytes bounds how many touched nodes stay
+    /// cached (LRU-evicted); None keeps every touched node cached forever.
     #[new]
-    fn new(index_path: PathBuf) -> PyResult<Self> {
-        Ok(IndexWrapper { inner: Index::load(index_path) })
+    #[pyo3(signature = (index_path, memory_limit_bytes=None))]
+    fn new(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> PyResult<Self> {
+        Ok(IndexWrapper { inner: Index::load(index_path, memory_limit_bytes) })
+    }
+
+    /// set_memory_limit_bytes(self, memory_limit_bytes: Optional[int])
+    ///
+    /// Raises or lowers the memory limit on an already-loaded index, no
+    /// reload needed. Lowering below what's currently resident evicts
+    /// immediately.
+    fn set_memory_limit_bytes(&mut self, memory_limit_bytes: Option<usize>) {
+        self.inner.set_memory_limit_bytes(memory_limit_bytes);
     }
 
     /// new_search(self, query: np.ndarray[f32, 1], k: int,

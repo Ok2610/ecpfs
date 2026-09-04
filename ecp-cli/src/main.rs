@@ -54,6 +54,9 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
 /// Selects cluster representatives from `embeddings_file`, then builds the
 /// full tree over it into `save_file`.
 #[derive(clap::Args)]
+#[command(after_help = "Thread count is controlled by the RAYON_NUM_THREADS environment variable \
+(e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies process-wide, for the \
+lifetime of the run.")]
 struct BuildIndexArgs {
     /// Embeddings file with data vectors. Zarr or HDF5 file.
     embeddings_file: PathBuf,

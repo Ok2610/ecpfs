@@ -7,6 +7,7 @@ use ecp_core::build::builder::Builder;
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 
+use crate::pydtype::PyEmbeddingDtype;
 use crate::pymetric::PyMetric;
 
 /// Builds a new eCP index: select representatives, then build the tree.
@@ -25,15 +26,33 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
 
 #[pymethods]
 impl BuilderWrapper {
-    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=4 GiB)
+    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=4 GiB, embedding_dtype=None)
     ///
     /// Creates a fresh index at `index_path` and returns a Builder ready to
     /// build into it. memory_limit_bytes is the memory budget for the build
-    /// process (not strictly enforced).
+    /// process (not strictly enforced). embedding_dtype of None matches
+    /// each source's own dtype; forcing F16 against an f32 source
+    /// downcasts real precision and logs a warning.
     #[new]
-    #[pyo3(signature = (index_path, levels, metric, is_normalized=false, memory_limit_bytes=4 * 1024 * 1024 * 1024))]
-    fn new(index_path: PathBuf, levels: u32, metric: PyMetric, is_normalized: bool, memory_limit_bytes: usize) -> Self {
-        BuilderWrapper { inner: Builder::create(&index_path, levels, metric.into(), is_normalized, memory_limit_bytes) }
+    #[pyo3(signature = (index_path, levels, metric, is_normalized=false, memory_limit_bytes=4 * 1024 * 1024 * 1024, embedding_dtype=None))]
+    fn new(
+        index_path: PathBuf,
+        levels: u32,
+        metric: PyMetric,
+        is_normalized: bool,
+        memory_limit_bytes: usize,
+        embedding_dtype: Option<PyEmbeddingDtype>,
+    ) -> Self {
+        BuilderWrapper {
+            inner: Builder::create(
+                &index_path,
+                levels,
+                metric.into(),
+                is_normalized,
+                memory_limit_bytes,
+                embedding_dtype.map(Into::into),
+            ),
+        }
     }
 
     /// select_representatives(embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings")

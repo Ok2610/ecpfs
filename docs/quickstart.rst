@@ -13,13 +13,17 @@ Building an index
 
 .. code-block:: python
 
-   from ecpfs import Builder, Metric
+   from ecpfs import Builder, Metric, EmbeddingDtype
 
    builder = Builder(
        index_path="my_index.zarr",
        levels=3,
        metric=Metric.L2,
        is_normalized=False,
+       # Omit embedding_dtype to match the source's own dtype (the
+       # default). Pass EmbeddingDtype.F16/.F32 to force one; forcing
+       # F16 against an f32 source logs a downcast warning.
+       embedding_dtype=None,
    )
    builder.select_representatives(
        embeddings_file="embeddings.zarr",

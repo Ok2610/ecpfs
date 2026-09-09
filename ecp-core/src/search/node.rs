@@ -20,7 +20,7 @@ impl Node
 {
     /// Creates a new Node instance.
     /// Returns:
-    ///     Node<T>: A new instance of Node with the specified store, group path, and child key.
+    ///     Node: A new instance of Node with the specified store, group path, and child key.
     pub fn new(store: ReadableListableStorage, group_path: String, child_key: String) -> Self {
         Node {
             store: store,

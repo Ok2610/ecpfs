@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::EmbeddingDtype;
 use std::collections::HashSet;
 use zarrs::array::Array;
 use zarrs::storage::store::MemoryStore;
@@ -36,8 +37,8 @@ fn random_and_offset_agree_on_leader_count_for_uneven_division() {
     assert_eq!(offset_ids.len(), random_ids.len());
 }
 
-/// 3 chunks of 2 rows each (rows 0-1, 2-3, 4-5); ids 1 and 5 fall in the
-/// first and last chunks, so the middle chunk (rows 2-3) must be skipped
+/// 3 chunks of 2 vecs each (vecs 0-1, 2-3, 4-5); ids 1 and 5 fall in the
+/// first and last chunks, so the middle chunk (vecs 2-3) must be skipped
 /// entirely - if the skip logic were off by one, or the chunk-alignment
 /// wrong, this would either miss a match or read the skipped chunk.
 fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, EmbeddingsSource) {
@@ -62,39 +63,35 @@ fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, Embeddi
 }
 
 #[test]
-fn collect_representatives_persists_matches_and_keeps_them_in_memory_when_they_fit() {
+fn collect_representatives_persists_matched_vecs_and_ids() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
     let dest_store = crate::test_fixtures::new_memory_store();
     let dest = crate::test_fixtures::as_readable_writable_listable(&dest_store);
     let selected_ids = Array1::from_vec(vec![1u32, 5]);
 
-    let result = collect_representatives(&dest, &source, &selected_ids, 2, 1_000_000, &[100, 2]);
-
-    match result {
-        Representatives::InMemory { embeddings, ids } => {
-            assert_eq!(ids.to_vec(), vec![1, 5]);
-            assert_eq!(embeddings, ndarray::array![[10.0f32, 10.1], [50.0, 50.1]]);
-        }
-        Representatives::PersistedOnly => panic!("expected the small representative set to fit in memory"),
-    }
+    collect_representatives(&dest, &source, &selected_ids, 2, 1_000_000, &[100, 2], EmbeddingDtype::F32);
 
     let persisted_ids = Array::open(dest.clone(), "/rep_item_ids").expect("rep_item_ids must be persisted");
     assert_eq!(
         persisted_ids.retrieve_array_subset::<Array1<u32>>(&persisted_ids.subset_all()).unwrap(),
         ndarray::array![1u32, 5]
     );
+
+    let persisted_embeddings = Array::open(dest.clone(), "/rep_embeddings").expect("rep_embeddings must be persisted");
+    assert_eq!(
+        persisted_embeddings.retrieve_array_subset::<Array2<f32>>(&persisted_embeddings.subset_all()).unwrap(),
+        ndarray::array![[10.0f32, 10.1], [50.0, 50.1]]
+    );
 }
 
 #[test]
-fn collect_representatives_persists_only_when_over_the_memory_limit() {
+fn collect_representatives_persists_regardless_of_memory_limit() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
     let dest_store = crate::test_fixtures::new_memory_store();
     let dest = crate::test_fixtures::as_readable_writable_listable(&dest_store);
     let selected_ids = Array1::from_vec(vec![1u32, 5]);
 
-    let result = collect_representatives(&dest, &source, &selected_ids, 2, 0, &[100, 2]);
-
-    assert!(matches!(result, Representatives::PersistedOnly));
+    collect_representatives(&dest, &source, &selected_ids, 2, 0, &[100, 2], EmbeddingDtype::F32);
 
     let persisted_embeddings =
         Array::open(dest.clone(), "/rep_embeddings").expect("rep_embeddings must still be persisted");

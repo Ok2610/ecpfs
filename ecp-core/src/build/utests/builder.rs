@@ -19,11 +19,14 @@ fn write_source(store: &std::sync::Arc<MemoryStore>, path: &str, embeddings: &Ar
 }
 
 fn new_builder(store: &std::sync::Arc<MemoryStore>, levels: u32, memory_limit_bytes: usize) -> Builder {
-    Builder::new(as_readable_writable_listable(store), levels, Metric::L2, false, memory_limit_bytes)
+    Builder::new(as_readable_writable_listable(store), levels, Metric::L2, false, memory_limit_bytes, None)
 }
 
+/// select_representatives never keeps a copy in memory, regardless of
+/// memory_limit_bytes. build_tree always reads representatives back from
+/// disk itself.
 #[test]
-fn select_representatives_sets_node_size_and_keeps_small_sets_in_memory() {
+fn select_representatives_sets_node_size_and_persists_only() {
     let store = new_memory_store();
     let source = write_source(&store, "/dataset", &array![[0.0f32, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]);
     let mut builder = new_builder(&store, 2, 1_000_000);
@@ -31,17 +34,6 @@ fn select_representatives_sets_node_size_and_keeps_small_sets_in_memory() {
     builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
 
     assert_eq!(builder.node_size, 2, "4 items / 3 per cluster -> 2 leaders, ceil(2^(1/2)) = 2");
-    assert!(matches!(builder.representatives, Some(Representatives::InMemory { .. })));
-}
-
-#[test]
-fn select_representatives_persists_only_once_over_the_memory_limit() {
-    let store = new_memory_store();
-    let source = write_source(&store, "/dataset", &array![[0.0f32, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]);
-    let mut builder = new_builder(&store, 2, 0);
-
-    builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
-
     assert!(matches!(builder.representatives, Some(Representatives::PersistedOnly)));
 }
 
@@ -70,9 +62,9 @@ fn build_without_representatives_panics() {
 }
 
 /// levels=1 makes the root level and the leaf level the same pass: two
-/// well-separated pairs of points, offset-selected leaders at rows 0 and 2.
+/// well-separated pairs of points, offset-selected leaders at vecs 0 and 2.
 #[test]
-fn build_writes_index_root_and_leaf_nodes_from_in_memory_representatives() {
+fn build_writes_index_root_and_leaf_nodes() {
     let store = new_memory_store();
     let dataset = write_source(&store, "/dataset", &array![[0.0f32, 0.0], [0.0, 1.0], [10.0, 0.0], [10.0, 1.0]]);
     let mut builder = new_builder(&store, 1, 1_000_000);
@@ -91,20 +83,4 @@ fn build_writes_index_root_and_leaf_nodes_from_in_memory_representatives() {
 
     let node_1_ids = Array::open(as_readable_writable_listable(&store), "/lvl_1/node_1/item_ids").unwrap();
     assert_eq!(node_1_ids.retrieve_array_subset::<Array1<u32>>(&node_1_ids.subset_all()).unwrap(), array![2u32, 3]);
-}
-
-#[test]
-fn build_writes_index_root_from_persisted_only_representatives() {
-    let store = new_memory_store();
-    let dataset = write_source(&store, "/dataset", &array![[0.0f32, 0.0], [0.0, 1.0], [10.0, 0.0], [10.0, 1.0]]);
-    let mut builder = new_builder(&store, 1, 0);
-
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
-
-    let root = Array::open(as_readable_writable_listable(&store), "/index_root/embeddings").unwrap();
-    assert_eq!(
-        root.retrieve_array_subset::<Array2<f32>>(&root.subset_all()).unwrap(),
-        array![[0.0f32, 0.0], [10.0, 0.0]]
-    );
 }

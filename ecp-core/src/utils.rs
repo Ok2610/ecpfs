@@ -20,6 +20,14 @@ impl Metric {
     }
 }
 
+/// On-disk precision for embeddings arrays. `F16` halves storage/read size
+/// versus `F32` but loses precision if the source data was actually `F32`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingDtype {
+    F16,
+    F32,
+}
+
 impl std::str::FromStr for Metric {
     type Err = String;
 

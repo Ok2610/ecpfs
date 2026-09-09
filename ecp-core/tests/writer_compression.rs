@@ -13,6 +13,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use std::sync::Arc;
 
 use ecp_core::build::writer::zarrs_append;
+use ecp_core::utils::EmbeddingDtype;
 
 fn dir_size(path: &std::path::Path) -> u64 {
     let mut total = 0u64;
@@ -30,20 +31,20 @@ fn a_mostly_empty_node_stays_small_on_disk_despite_a_large_chunk_shape() {
     let store: ReadableWritableListableStorage =
         Arc::new(FilesystemStore::new(tmp.path()).expect("failed to create filesystem store"));
 
-    // A chunk sized for ~50MB at dim=768 (~17,000 rows), but this node
-    // only ever gets 3 real rows - the common case, not the pathological
+    // A chunk sized for ~50MB at dim=768 (~17,000 vecs), but this node
+    // only ever gets 3 real vecs - the common case, not the pathological
     // millions-of-items one, but the same mostly-empty-chunk shape.
     let dim = 768;
     let chunk_shape = [17_000u64, dim as u64];
     let embeddings = Array2::from_elem((3, dim), 1.0f32);
     let ids: Array1<u32> = array![1, 2, 3];
 
-    zarrs_append(&store, "/node/embeddings", "/node/item_ids", &embeddings, &ids, &chunk_shape);
+    zarrs_append(&store, "/node/embeddings", "/node/item_ids", &embeddings, &ids, &chunk_shape, EmbeddingDtype::F32);
 
     let actual_size = dir_size(&tmp.path().join("node"));
     let naive_padded_size = chunk_shape[0] * chunk_shape[1] * 4;
     assert!(
         actual_size < naive_padded_size / 100,
-        "expected compression to keep a 3-row node far below its {naive_padded_size}-byte padded size, got {actual_size} bytes"
+        "expected compression to keep a 3-vec node far below its {naive_padded_size}-byte padded size, got {actual_size} bytes"
     );
 }

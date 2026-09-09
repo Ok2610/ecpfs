@@ -6,7 +6,9 @@ use std::sync::Arc;
 use ndarray::Array2;
 use ndarray::Array1;
 
+use half::f16;
 use lru::LruCache;
+use zarrs::array::data_type::{float16, float32};
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::{ListableStorageTraits, ReadableListableStorage, StorePrefix};
@@ -76,9 +78,19 @@ impl Index
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
-        let root: Array2<f32> = root_array
-            .retrieve_array_subset::<Array2<f32>>(&root_array.subset_all())
-            .expect("Failed to retrieve index_root/embeddings");
+        let root_dtype = root_array.data_type();
+        let root: Array2<f32> = if *root_dtype == float32() {
+            root_array
+                .retrieve_array_subset::<Array2<f32>>(&root_array.subset_all())
+                .expect("Failed to retrieve index_root/embeddings")
+        } else if *root_dtype == float16() {
+            root_array
+                .retrieve_array_subset::<Array2<f16>>(&root_array.subset_all())
+                .expect("Failed to retrieve index_root/embeddings")
+                .mapv(|x| x.to_f32())
+        } else {
+            panic!("unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)")
+        };
 
         let mut nodes = Vec::with_capacity(levels as usize);
         for l in 0..levels {

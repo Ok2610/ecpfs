@@ -16,7 +16,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::build::tree::{build_tree, write_index_info, write_index_root};
 use ecp_core::search::Index;
-use ecp_core::utils::Metric;
+use ecp_core::utils::{EmbeddingDtype, Metric};
 
 fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarray::Array2<f32>) {
     let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
@@ -56,8 +56,8 @@ fn build_tree_produces_a_structure_that_searches_correctly() {
     let root_embeddings = array![[0.0f32, 0.0], [1.0, 1.0]];
 
     write_index_info(&store_rw, 2, Metric::L2, false);
-    write_index_root(&store_rw, &root_embeddings, &[100, 2]);
-    build_tree(&store_rw, &root_embeddings, &representatives, &dataset, 2, Metric::L2, false, 100, &[100, 2]);
+    write_index_root(&store_rw, &root_embeddings, &[100, 2], EmbeddingDtype::F32);
+    build_tree(&store_rw, &root_embeddings, &representatives, &dataset, 2, Metric::L2, false, 100, &[100, 2], EmbeddingDtype::F32, 1_000_000_000);
 
     let mut index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];

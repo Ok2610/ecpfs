@@ -5,7 +5,7 @@ fn format_entry_produces_valid_json_with_expected_fields() {
     let record = Record::builder()
         .level(log::Level::Debug)
         .target("ecp_core::build::builder")
-        .args(format_args!("processing batch rows 0..100"))
+        .args(format_args!("processing batch vecs 0..100"))
         .build();
 
     let line = format_entry(&record);
@@ -13,7 +13,7 @@ fn format_entry_produces_valid_json_with_expected_fields() {
 
     assert_eq!(parsed["level"], "DEBUG");
     assert_eq!(parsed["target"], "ecp_core::build::builder");
-    assert_eq!(parsed["message"], "processing batch rows 0..100");
+    assert_eq!(parsed["message"], "processing batch vecs 0..100");
     assert!(parsed["timestamp"].as_str().is_some(), "timestamp must be present");
 }
 

@@ -24,6 +24,9 @@ struct QueryState {
     items: Vec<(NotNan<f32>, u32)>,
 }
 
+/// A loaded eCP index. Holds the root and each level's nodes lazily, with
+/// an LRU cache capping how many stay resident, and tracks open queries by
+/// id for `new_search`/`get_next_k_items`.
 pub struct Index {
     metric: Metric,
     is_normalized: bool,

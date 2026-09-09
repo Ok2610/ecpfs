@@ -6,6 +6,8 @@ use ndarray::{Array2, Array1};
 
 use half::f16;
 
+/// One node's embeddings and children, lazily read from the store and
+/// cached on first access.
 pub struct Node {
     store: ReadableListableStorage,
     pub group_path: String,
@@ -20,7 +22,7 @@ impl Node
 {
     /// Creates a new Node instance.
     /// Returns:
-    ///     Node<T>: A new instance of Node with the specified store, group path, and child key.
+    ///     Node: A new instance of Node with the specified store, group path, and child key.
     pub fn new(store: ReadableListableStorage, group_path: String, child_key: String) -> Self {
         Node {
             store: store,

@@ -9,6 +9,7 @@ use ecp_core::build::source::EmbeddingsSource;
 
 use crate::pymetric::PyMetric;
 
+/// Builds a new eCP index: select representatives, then build the tree.
 #[pyclass(module = "ecp.builder")]
 pub struct BuilderWrapper {
     inner: Builder,
@@ -25,6 +26,10 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
 #[pymethods]
 impl BuilderWrapper {
     /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=4 GiB)
+    ///
+    /// Creates a fresh index at `index_path` and returns a Builder ready to
+    /// build into it. memory_limit_bytes is the memory budget for the build
+    /// process (not strictly enforced).
     #[new]
     #[pyo3(signature = (index_path, levels, metric, is_normalized=false, memory_limit_bytes=4 * 1024 * 1024 * 1024))]
     fn new(index_path: PathBuf, levels: u32, metric: PyMetric, is_normalized: bool, memory_limit_bytes: usize) -> Self {
@@ -33,7 +38,9 @@ impl BuilderWrapper {
 
     /// select_representatives(embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings")
     ///
-    /// strategy: "offset" | "random"
+    /// Picks cluster representatives out of `embeddings_file` via `strategy`
+    /// ("offset" | "random") and persists them. Must be called (or
+    /// select_representatives_custom) before build.
     #[pyo3(signature = (embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings"))]
     fn select_representatives(
         &mut self,
@@ -50,11 +57,20 @@ impl BuilderWrapper {
     }
 
     /// select_representatives_custom(ids: np.ndarray[u32, 1], embeddings: np.ndarray[f32, 2])
+    ///
+    /// Uses caller-supplied representatives directly instead of running a
+    /// selection strategy, for when representatives come from an external
+    /// clustering step. Must be called (or select_representatives) before
+    /// build.
     fn select_representatives_custom(&mut self, ids: PyReadonlyArray1<u32>, embeddings: PyReadonlyArray2<f32>) {
         self.inner.select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
     }
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")
+    ///
+    /// Writes the index root and descends the full tree over
+    /// `embeddings_file`, using the representatives already selected via
+    /// select_representatives or select_representatives_custom.
     #[pyo3(signature = (embeddings_file, fallback_batch_rows, grp_name="embeddings"))]
     fn build(&mut self, embeddings_file: PathBuf, fallback_batch_rows: usize, grp_name: &str) {
         let dataset = EmbeddingsSource::open(&embeddings_file, grp_name);

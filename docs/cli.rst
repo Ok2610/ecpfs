@@ -82,7 +82,7 @@ search
          --exclude <EXCLUDE>
              Item ids to exclude, comma-separated
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Bounds how many touched nodes stay cached (LRU-evicted), in GB. Unset means every touched node stays cached for the process's life
+             Caps how many touched nodes stay cached (LRU-evicted), in GB. Unset means every touched node stays cached for the process's life
          --with-logging
              Turn on file-based logging for this run
          --log-dir <LOG_DIR>

@@ -9,4 +9,4 @@ extensions = [
 
 autodoc_member_order = "bysource"
 
-html_theme = "alabaster"
+html_theme = "shibuya"

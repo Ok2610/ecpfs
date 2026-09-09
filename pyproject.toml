@@ -30,6 +30,7 @@ dependencies = [
 dev = [
   "deptry>=0.23.0",
   "maturin>=1.0",
+  "shibuya>=2026.7.12",
   "sphinx>=9.1.0",
 ]
 

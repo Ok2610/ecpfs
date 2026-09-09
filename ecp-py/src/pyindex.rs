@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use ordered_float::NotNan;
 use ecp_core::search::Index;
 
+/// A loaded eCP index, ready to search.
 #[pyclass(module = "ecp.index")]
 pub struct IndexWrapper {
     inner: Index,
@@ -16,7 +17,7 @@ impl IndexWrapper {
     /// __new__(index_path: PathBuf, memory_limit_bytes: Optional[int] = None)
     ///
     /// Loads an index from disk, deriving its metric/levels/nodes from the
-    /// store itself. memory_limit_bytes bounds how many touched nodes stay
+    /// store itself. memory_limit_bytes caps how many touched nodes stay
     /// cached (LRU-evicted); None keeps every touched node cached forever.
     #[new]
     #[pyo3(signature = (index_path, memory_limit_bytes=None))]

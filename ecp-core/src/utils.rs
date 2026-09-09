@@ -98,6 +98,7 @@ pub fn negative_squared_distances(a: &Array2<f32>, b: &Array2<f32>) -> Array2<f3
 
 
 
+/// A candidate node in a search's priority queue, ordered by `score`.
 #[derive(Debug, Clone)]
 pub struct HeapEntry {
     pub score: NotNan<f32>,

@@ -195,7 +195,7 @@ struct SearchArgs {
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<u32>,
 
-    /// Bounds how many touched nodes stay cached (LRU-evicted), in GB.
+    /// Caps how many touched nodes stay cached (LRU-evicted), in GB.
     /// Unset means every touched node stays cached for the process's life.
     #[arg(long)]
     memory_limit_gb: Option<usize>,

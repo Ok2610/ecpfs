@@ -2,12 +2,14 @@ use ndarray::{Array1, Array2, Axis};
 use rand::seq::index::sample;
 use zarrs::storage::ReadableWritableListableStorage;
 
+use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
+use crate::utils::EmbeddingDtype;
 
 /// How to pick which items become cluster leaders. `"custom"` (the caller
-/// already has their own leader ids/embeddings) needs no algorithm here -
-/// it's handled by the builder directly.
+/// already has their own leader ids/embeddings) needs no algorithm here,
+/// since it's handled by the builder directly.
 #[derive(Debug, Clone, Copy)]
 pub enum RepresentativeStrategy {
     Offset,
@@ -52,31 +54,31 @@ pub enum Representatives {
 }
 
 /// Streams `source` one on-disk chunk at a time, skipping any chunk that
-/// contains no `selected_ids`, and persists whichever rows match to
-/// `rep_embeddings`/`rep_item_ids`. Also keeps the result in memory for
-/// immediate reuse while building the tree, but only if it fits within
-/// `memory_limit_bytes`.
+/// contains no `selected_ids`, and persists whichever vecs match to
+/// `rep_embeddings`/`rep_item_ids`. `build_tree` reads them back from
+/// disk itself, once per non-leaf pass; this never keeps a copy in memory.
 ///
 /// `selected_ids` must already be sorted ascending.
 pub fn collect_representatives(
     store: &ReadableWritableListableStorage,
     source: &EmbeddingsSource,
     selected_ids: &Array1<u32>,
-    fallback_batch_rows: usize,
+    fallback_batch_vecs: usize,
     memory_limit_bytes: usize,
     chunk_shape: &[u64],
-) -> Representatives {
+    dtype: EmbeddingDtype,
+) {
     let (total_items, dim) = source.shape();
-    let batch_rows = source.natural_batch_rows(fallback_batch_rows);
-    let keep_in_memory = fits_in_memory(selected_ids.len(), dim, memory_limit_bytes);
+    let tracked_budget = (memory_limit_bytes as f64 * TRACKED_MEMORY_FRACTION) as usize;
+    let bytes_per_vec = (dim * size_of::<f32>()).max(1);
+    let memory_floor_vecs = (tracked_budget / bytes_per_vec).max(1);
+    // batch_vecs = max(natural_batch_vecs, memory_floor_vecs)
+    let batch_vecs = source.natural_batch_vecs(fallback_batch_vecs).max(memory_floor_vecs);
     let selected: Vec<u32> = selected_ids.to_vec();
-
-    let mut kept_embeddings: Vec<f32> = Vec::new();
-    let mut kept_ids: Vec<u32> = Vec::new();
 
     let mut start = 0;
     while start < total_items {
-        let end = (start + batch_rows).min(total_items);
+        let end = (start + batch_vecs).min(total_items);
 
         let first = selected.partition_point(|&id| (id as usize) < start);
         let in_range = &selected[first..];
@@ -85,31 +87,15 @@ pub fn collect_representatives(
             start = end;
             continue;
         }
-        log::debug!("processing chunk rows {start}..{end} ({} matched representatives)", matched_ids.len());
+        log::debug!("processing chunk vecs {start}..{end} ({} matched representatives)", matched_ids.len());
 
-        let batch = source.read_rows(start, end);
-        let matched_rows: Vec<usize> = matched_ids.iter().map(|&id| id as usize - start).collect();
-        let matched_embeddings = batch.select(Axis(0), &matched_rows);
-        let matched_ids_array = Array1::from_vec(matched_ids.clone());
-        zarrs_append(store, "/rep_embeddings", "/rep_item_ids", &matched_embeddings, &matched_ids_array, chunk_shape);
-
-        if keep_in_memory {
-            kept_embeddings.extend(matched_embeddings.iter().copied());
-            kept_ids.extend(matched_ids);
-        }
+        let batch = source.read_vecs(start, end);
+        let matched_vec_indices: Vec<usize> = matched_ids.iter().map(|&id| id as usize - start).collect();
+        let matched_embeddings = batch.select(Axis(0), &matched_vec_indices);
+        let matched_ids_array = Array1::from_vec(matched_ids);
+        zarrs_append(store, "/rep_embeddings", "/rep_item_ids", &matched_embeddings, &matched_ids_array, chunk_shape, dtype);
 
         start = end;
-    }
-
-    if keep_in_memory {
-        let count = kept_ids.len();
-        Representatives::InMemory {
-            embeddings: Array2::from_shape_vec((count, dim), kept_embeddings)
-                .expect("collected embeddings didn't match the expected row count"),
-            ids: Array1::from_vec(kept_ids),
-        }
-    } else {
-        Representatives::PersistedOnly
     }
 }
 

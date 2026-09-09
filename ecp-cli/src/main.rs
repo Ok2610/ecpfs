@@ -7,7 +7,7 @@ use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
 use ecp_core::search::Index;
-use ecp_core::utils::Metric;
+use ecp_core::utils::{EmbeddingDtype, Metric};
 
 #[derive(Parser)]
 #[command(name = "ecp", about = "Build and search eCP indexes")]
@@ -48,6 +48,23 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
         match strategy {
             RepSelectionArg::Offset => RepresentativeStrategy::Offset,
             RepSelectionArg::Random => RepresentativeStrategy::Random,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum EmbeddingDtypeArg {
+    Native,
+    F16,
+    F32,
+}
+
+impl From<EmbeddingDtypeArg> for Option<EmbeddingDtype> {
+    fn from(dtype: EmbeddingDtypeArg) -> Self {
+        match dtype {
+            EmbeddingDtypeArg::Native => None,
+            EmbeddingDtypeArg::F16 => Some(EmbeddingDtype::F16),
+            EmbeddingDtypeArg::F32 => Some(EmbeddingDtype::F32),
         }
     }
 }
@@ -132,6 +149,12 @@ struct BuildIndexArgs {
     #[arg(long, default_value_t = false)]
     is_normalized: bool,
 
+    /// Precision to write embeddings as. `native` matches the source
+    /// (warns if `f16` is forced against an `f32` source, a real precision
+    /// loss).
+    #[arg(long, value_enum, default_value_t = EmbeddingDtypeArg::Native)]
+    embedding_dtype: EmbeddingDtypeArg,
+
     /// Group name for the embeddings dataset.
     #[arg(long, default_value = "embeddings")]
     emb_grp_name: String,
@@ -156,7 +179,14 @@ fn build_index(args: BuildIndexArgs) {
     args.logging.init_if_requested();
     let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
-    let mut builder = Builder::create(&args.save_file, args.levels, args.metric.into(), args.is_normalized, memory_limit_bytes);
+    let mut builder = Builder::create(
+        &args.save_file,
+        args.levels,
+        args.metric.into(),
+        args.is_normalized,
+        memory_limit_bytes,
+        args.embedding_dtype.into(),
+    );
     builder.select_representatives(&source, args.target_cluster_items, args.rep_selection.into(), args.fallback_batch_rows);
     builder.build(&source, args.fallback_batch_rows);
 }
@@ -209,7 +239,7 @@ fn search(args: SearchArgs) {
     let memory_limit_bytes = args.memory_limit_gb.map(|gb| gb * 1024 * 1024 * 1024);
     let mut index = Index::load(args.index_path, memory_limit_bytes);
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
-    let query = source.read_rows(args.query_row, args.query_row + 1).row(0).to_owned();
+    let query = source.read_vecs(args.query_row, args.query_row + 1).row(0).to_owned();
     let exclude = args.exclude.into_iter().collect();
 
     let (items, _query_id) = index.new_search(query, args.k, args.search_exp, args.max_increments, &exclude);

@@ -36,6 +36,8 @@ build-index
              Metric to use for distance calculations [default: l2] [possible values: l2, ip]
          --is-normalized
              Set if every embedding is already unit-length, to skip norm computation
+         --embedding-dtype <EMBEDDING_DTYPE>
+             Precision to write embeddings as. `native` matches the source (warns if `f16` is forced against an `f32` source, a real precision loss) [default: native] [possible values: native, f16, f32]
          --emb-grp-name <EMB_GRP_NAME>
              Group name for the embeddings dataset [default: embeddings]
          --rep-selection <REP_SELECTION>

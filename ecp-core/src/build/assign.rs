@@ -2,7 +2,10 @@ use ndarray::{Array1, Array2, Axis};
 
 use crate::utils::{negative_squared_distances, Metric};
 
-/// Determines which representative each data point should be clustered under.
+/// For each vec of `data_embeddings`, finds the nearest vec of `node_embeddings`,
+/// then groups the data vecs by which `node_embeddings` vec they landed on.
+/// Returns `(offsets, data)`: node `n`'s assigned data vec indices are
+/// `data[offsets[n]..offsets[n+1]]`.
 pub fn determine_node_assignments(
     node_embeddings: &Array2<f32>,
     data_embeddings: &Array2<f32>,
@@ -29,20 +32,26 @@ fn assign_to_nearest(
     argmax_axis0(&scores)
 }
 
-/// Picks the winning representative for each data point (column) of a score matrix.
+/// Argmax of `matrix` along axis 0.
 fn argmax_axis0(matrix: &Array2<f32>) -> Array1<u32> {
-    Array1::from_iter(matrix.axis_iter(Axis(1)).map(|column| {
-        column
+    matrix.map_axis(Axis(0), |scores| {
+        scores
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).expect("scores must not be NaN"))
-            .map(|(representative, _)| representative as u32)
-            .expect("node_embeddings must have at least one representative")
-    }))
+            .map(|(node, _)| node as u32)
+            .expect("scores must include at least one node")
+    })
 }
 
-/// Turns per-data-point assignments into per-representative groups, so the
-/// tree builder can process one representative's data points at a time.
+/// The equivalent of grouping data point indices into one list per
+/// representative, just stored as two flat arrays instead of a list of
+/// lists. Example: `best_ids = [1, 0, 1, 2]`, `num_reps = 3`.
+///
+///   groups (the intuitive shape): [[1], [0, 2], [3]]
+///   offsets, data (what this returns): [0, 1, 3, 4], [1, 0, 2, 3]
+///
+/// `groups[r]` is `data[offsets[r]..offsets[r+1]]`.
 pub fn group_by_assignments(num_reps: usize, best_ids: &Array1<u32>) -> (Array1<u32>, Array1<u32>) {
     let mut counts = vec![0u32; num_reps];
     for &rep in best_ids.iter() {

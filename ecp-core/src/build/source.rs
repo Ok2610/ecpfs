@@ -3,18 +3,20 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{s, Array2};
-use rust_hdf5::{H5Dataset, H5File};
+use rust_hdf5::{DatatypeMessage, H5Dataset, H5File};
 use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
+use crate::utils::EmbeddingDtype;
+
 /// A lazily-read source of 2D f32 embeddings, opened from a `.h5` or
-/// `.zarr` file. Reading a row range doesn't load the rest of the dataset.
+/// `.zarr` file. Reading a vec range doesn't load the rest of the dataset.
 pub enum EmbeddingsSource {
     Hdf5(H5Dataset),
     Zarr { store: ReadableListableStorage, path: String },
-    /// Already resident; `read_rows` is a plain slice, no I/O.
+    /// Already resident; `read_vecs` is a plain slice, no I/O.
     Memory(Array2<f32>),
 }
 
@@ -57,9 +59,9 @@ impl EmbeddingsSource {
         }
     }
 
-    /// The row count of one on-disk chunk; `fallback` is used where
-    /// there's no chunking to align to.
-    pub fn natural_batch_rows(&self, fallback: usize) -> usize {
+    /// The vector count of one on-disk chunk, or `fallback` if the source has
+    /// no chunking to align to.
+    pub fn natural_batch_vecs(&self, fallback: usize) -> usize {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
                 dataset.chunk_dims().map(|dims| dims[0]).unwrap_or(fallback)
@@ -74,16 +76,43 @@ impl EmbeddingsSource {
         }
     }
 
-    /// Reads rows `start..end` (all columns) as `f32`.
-    pub fn read_rows(&self, start: usize, end: usize) -> Array2<f32> {
+    /// The dtype embeddings are actually stored as. `Memory` always
+    /// reports `F32` since it only ever holds already-upcast `Array2<f32>`
+    /// data.
+    pub fn native_dtype(&self) -> EmbeddingDtype {
+        match self {
+            EmbeddingsSource::Hdf5(dataset) => {
+                match dataset.datatype().expect("Failed to read HDF5 dataset datatype") {
+                    DatatypeMessage::FloatingPoint { size: 2, .. } => EmbeddingDtype::F16,
+                    DatatypeMessage::FloatingPoint { size: 4, .. } => EmbeddingDtype::F32,
+                    other => panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)"),
+                }
+            }
+            EmbeddingsSource::Zarr { store, path } => {
+                let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
+                let dtype = array.data_type();
+                if *dtype == float32() {
+                    EmbeddingDtype::F32
+                } else if *dtype == float16() {
+                    EmbeddingDtype::F16
+                } else {
+                    panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
+                }
+            }
+            EmbeddingsSource::Memory(_) => EmbeddingDtype::F32,
+        }
+    }
+
+    /// Reads vecs `start..end` (all columns) as `f32`.
+    pub fn read_vecs(&self, start: usize, end: usize) -> Array2<f32> {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
                 let dim = dataset.shape()[1];
                 let flat = dataset
                     .read_slice::<f32>(&[start, 0], &[end - start, dim])
-                    .expect("Failed to read HDF5 row range");
+                    .expect("Failed to read HDF5 vec range");
                 Array2::from_shape_vec((end - start, dim), flat)
-                    .expect("HDF5 row range didn't match its declared shape")
+                    .expect("HDF5 vec range didn't match its declared shape")
             }
             EmbeddingsSource::Zarr { store, path } => {
                 let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
@@ -99,11 +128,11 @@ impl EmbeddingsSource {
                 if *dtype == float32() {
                     array
                         .retrieve_array_subset::<Array2<f32>>(&subset)
-                        .expect("Failed to read zarr row range")
+                        .expect("Failed to read zarr vec range")
                 } else {
                     array
                         .retrieve_array_subset::<Array2<f16>>(&subset)
-                        .expect("Failed to read zarr row range")
+                        .expect("Failed to read zarr vec range")
                         .mapv(|x| x.to_f32())
                 }
             }

@@ -28,6 +28,13 @@ Metric
    :members:
    :undoc-members:
 
+EmbeddingDtype
+--------------
+
+.. autoclass:: ecpfs.ecp.EmbeddingDtype
+   :members:
+   :undoc-members:
+
 Logging
 -------
 

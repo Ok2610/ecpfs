@@ -1,0 +1,166 @@
+# Builds wheels across the supported platform matrix and uploads them as
+# build artifacts. Does not publish anywhere - that's a deliberately
+# separate step, added once a real release is ready to go out.
+name: Wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+      - uses: astral-sh/setup-uv@v7
+        if: matrix.target == 'x86_64'
+
+      - name: pytest
+        if: matrix.target == 'x86_64'
+        run: |
+          set -e
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
+          uv pip install pytest h5py
+          pytest
+
+      - name: pytest (emulated aarch64)
+        if: matrix.target == 'aarch64'
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: aarch64
+          distro: ubuntu24.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y --no-install-recommends software-properties-common
+            add-apt-repository -y ppa:deadsnakes/ppa
+            apt-get update
+            apt-get install -y --no-install-recommends python3.14 python3.14-venv
+          run: |
+            set -e
+            python3.14 -m venv .venv
+            source .venv/bin/activate
+            pip install ecpfs --no-index --no-deps --find-links dist --force-reinstall
+            pip install pytest h5py
+            pytest
+
+  macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: pytest
+        run: |
+          set -e
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
+          uv pip install pytest h5py
+          pytest
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          architecture: x64
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist --find-interpreter
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-windows-x64
+          path: dist
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: pytest
+        shell: bash
+        run: |
+          set -e
+          uv venv .venv
+          source .venv/Scripts/activate
+          uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
+          uv pip install pytest h5py
+          pytest
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-sdist
+          path: dist

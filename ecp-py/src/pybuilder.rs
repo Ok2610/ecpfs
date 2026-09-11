@@ -1,6 +1,6 @@
+use numpy::{PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use numpy::{PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use std::path::PathBuf;
 
 use ecp_core::build::builder::Builder;
@@ -20,21 +20,32 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
     match strategy {
         "offset" => Ok(RepresentativeStrategy::Offset),
         "random" => Ok(RepresentativeStrategy::Random),
-        other => Err(PyValueError::new_err(format!("unknown strategy {other:?} (use \"offset\" or \"random\")"))),
+        other => Err(PyValueError::new_err(format!(
+            "unknown strategy {other:?} (use \"offset\" or \"random\")"
+        ))),
     }
 }
 
 #[pymethods]
 impl BuilderWrapper {
-    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=4 GiB, embedding_dtype=None)
+    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=<80% of system RAM>, embedding_dtype=None, max_chunk_bytes=50 MiB)
     ///
     /// Creates a fresh index at `index_path` and returns a Builder ready to
     /// build into it. memory_limit_bytes is the memory budget for the build
     /// process (not strictly enforced). embedding_dtype of None matches
     /// each source's own dtype; forcing F16 against an f32 source
-    /// downcasts real precision and logs a warning.
+    /// downcasts real precision and logs a warning. max_chunk_bytes is the
+    /// max size for one on-disk chunk.
     #[new]
-    #[pyo3(signature = (index_path, levels, metric, is_normalized=false, memory_limit_bytes=4 * 1024 * 1024 * 1024, embedding_dtype=None))]
+    #[pyo3(signature = (
+        index_path,
+        levels,
+        metric,
+        is_normalized=false,
+        memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes(),
+        embedding_dtype=None,
+        max_chunk_bytes=ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES,
+    ))]
     fn new(
         index_path: PathBuf,
         levels: u32,
@@ -42,6 +53,7 @@ impl BuilderWrapper {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<PyEmbeddingDtype>,
+        max_chunk_bytes: usize,
     ) -> Self {
         BuilderWrapper {
             inner: Builder::create(
@@ -51,6 +63,7 @@ impl BuilderWrapper {
                 is_normalized,
                 memory_limit_bytes,
                 embedding_dtype.map(Into::into),
+                max_chunk_bytes,
             ),
         }
     }
@@ -71,7 +84,12 @@ impl BuilderWrapper {
     ) -> PyResult<()> {
         let strategy = parse_strategy(strategy)?;
         let source = EmbeddingsSource::open(&embeddings_file, grp_name);
-        self.inner.select_representatives(&source, target_cluster_items, strategy, fallback_batch_rows);
+        self.inner.select_representatives(
+            &source,
+            target_cluster_items,
+            strategy,
+            fallback_batch_rows,
+        );
         Ok(())
     }
 
@@ -81,8 +99,13 @@ impl BuilderWrapper {
     /// selection strategy, for when representatives come from an external
     /// clustering step. Must be called (or select_representatives) before
     /// build.
-    fn select_representatives_custom(&mut self, ids: PyReadonlyArray1<u32>, embeddings: PyReadonlyArray2<f32>) {
-        self.inner.select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
+    fn select_representatives_custom(
+        &mut self,
+        ids: PyReadonlyArray1<u32>,
+        embeddings: PyReadonlyArray2<f32>,
+    ) {
+        self.inner
+            .select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
     }
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")

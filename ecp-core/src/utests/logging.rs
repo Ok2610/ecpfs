@@ -9,12 +9,16 @@ fn format_entry_produces_valid_json_with_expected_fields() {
         .build();
 
     let line = format_entry(&record);
-    let parsed: serde_json::Value = serde_json::from_str(&line).expect("format_entry must produce valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&line).expect("format_entry must produce valid JSON");
 
     assert_eq!(parsed["level"], "DEBUG");
     assert_eq!(parsed["target"], "ecp_core::build::builder");
     assert_eq!(parsed["message"], "processing batch vecs 0..100");
-    assert!(parsed["timestamp"].as_str().is_some(), "timestamp must be present");
+    assert!(
+        parsed["timestamp"].as_str().is_some(),
+        "timestamp must be present"
+    );
 }
 
 #[test]
@@ -41,7 +45,9 @@ fn init_writes_real_log_lines_to_a_real_file() {
 
     let contents = std::fs::read_to_string(&path).expect("failed to read log file");
     assert!(
-        contents.lines().any(|line| line.contains("unique-marker-for-init-test-12345")),
+        contents
+            .lines()
+            .any(|line| line.contains("unique-marker-for-init-test-12345")),
         "expected log file to contain the test's marker message, got:\n{contents}"
     );
 }

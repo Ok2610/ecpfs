@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use half::f16;
-use ndarray::{s, Array2};
+use ndarray::{Array2, s};
 use rust_hdf5::{DatatypeMessage, H5Dataset, H5File};
 use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArraySubset};
@@ -11,11 +11,16 @@ use zarrs::storage::ReadableListableStorage;
 
 use crate::utils::EmbeddingDtype;
 
-/// A lazily-read source of 2D f32 embeddings, opened from a `.h5` or
-/// `.zarr` file. Reading a vec range doesn't load the rest of the dataset.
+/// A lazily-read source of 2D embeddings: a `.h5`/`.zarr` file (native dtype
+/// f16 or f32, `read_vecs` always returns f32) or an already-resident
+/// `Array2<f32>`. Reading a range from a disk-backed source doesn't
+/// load the rest of the dataset.
 pub enum EmbeddingsSource {
     Hdf5(H5Dataset),
-    Zarr { store: ReadableListableStorage, path: String },
+    Zarr {
+        store: ReadableListableStorage,
+        path: String,
+    },
     /// Already resident; `read_vecs` is a plain slice, no I/O.
     Memory(Array2<f32>),
 }
@@ -32,9 +37,14 @@ impl EmbeddingsSource {
             Some("zarr") => {
                 let store: ReadableListableStorage =
                     Arc::new(FilesystemStore::new(path).expect("Failed to open zarr store"));
-                EmbeddingsSource::Zarr { store, path: format!("/{name}") }
+                EmbeddingsSource::Zarr {
+                    store,
+                    path: format!("/{name}"),
+                }
             }
-            other => panic!("unsupported embeddings file format: {other:?} (use \"h5\" or \"zarr\")"),
+            other => {
+                panic!("unsupported embeddings file format: {other:?} (use \"h5\" or \"zarr\")")
+            }
         }
     }
 
@@ -61,7 +71,7 @@ impl EmbeddingsSource {
 
     /// The vector count of one on-disk chunk, or `fallback` if the source has
     /// no chunking to align to.
-    pub fn natural_batch_vecs(&self, fallback: usize) -> usize {
+    pub fn natural_chunk_vecs(&self, fallback: usize) -> usize {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
                 dataset.chunk_dims().map(|dims| dims[0]).unwrap_or(fallback)
@@ -76,16 +86,29 @@ impl EmbeddingsSource {
         }
     }
 
+    /// `memory_floor_vecs` rounded up to a whole number of
+    /// `natural_chunk_vecs`-sized chunks, so a batch built from the result
+    /// never straddles (and double-decodes) a chunk boundary.
+    pub fn chunk_aligned_batch_vecs(&self, memory_floor_vecs: usize, fallback: usize) -> usize {
+        let chunk_vecs = self.natural_chunk_vecs(fallback).max(1);
+        memory_floor_vecs.max(1).div_ceil(chunk_vecs) * chunk_vecs
+    }
+
     /// The dtype embeddings are actually stored as. `Memory` always
     /// reports `F32` since it only ever holds already-upcast `Array2<f32>`
     /// data.
     pub fn native_dtype(&self) -> EmbeddingDtype {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
-                match dataset.datatype().expect("Failed to read HDF5 dataset datatype") {
+                match dataset
+                    .datatype()
+                    .expect("Failed to read HDF5 dataset datatype")
+                {
                     DatatypeMessage::FloatingPoint { size: 2, .. } => EmbeddingDtype::F16,
                     DatatypeMessage::FloatingPoint { size: 4, .. } => EmbeddingDtype::F32,
-                    other => panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)"),
+                    other => {
+                        panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)")
+                    }
                 }
             }
             EmbeddingsSource::Zarr { store, path } => {
@@ -108,8 +131,18 @@ impl EmbeddingsSource {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
                 let dim = dataset.shape()[1];
+                match dataset
+                    .datatype()
+                    .expect("Failed to read HDF5 dataset datatype")
+                {
+                    DatatypeMessage::FloatingPoint { size: 2, .. }
+                    | DatatypeMessage::FloatingPoint { size: 4, .. } => {}
+                    other => {
+                        panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)")
+                    }
+                }
                 let flat = dataset
-                    .read_slice::<f32>(&[start, 0], &[end - start, dim])
+                    .read_numeric_slice_as::<f32>(&[start, 0], &[end - start, dim])
                     .expect("Failed to read HDF5 vec range");
                 Array2::from_shape_vec((end - start, dim), flat)
                     .expect("HDF5 vec range didn't match its declared shape")
@@ -117,10 +150,7 @@ impl EmbeddingsSource {
             EmbeddingsSource::Zarr { store, path } => {
                 let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
                 let dim = array.shape()[1];
-                let subset = ArraySubset::new_with_ranges(&[
-                    start as u64..end as u64,
-                    0..dim,
-                ]);
+                let subset = ArraySubset::new_with_ranges(&[start as u64..end as u64, 0..dim]);
                 let dtype = array.data_type();
                 if *dtype != float32() && *dtype != float16() {
                     panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")

@@ -1,6 +1,6 @@
 use ndarray::{Array1, Array2, Axis};
 
-use crate::utils::{negative_squared_distances, Metric};
+use crate::utils::{Metric, negative_squared_distances};
 
 /// For each vec of `data_embeddings`, finds the nearest vec of `node_embeddings`,
 /// then groups the data vecs by which `node_embeddings` vec they landed on.

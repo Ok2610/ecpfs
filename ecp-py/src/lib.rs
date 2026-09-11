@@ -1,10 +1,7 @@
-// import the PyO3 machinery
-use pyo3::prelude::*;
-// bring in the PyModule type
-use pyo3::types::PyModule;
 use pyo3::Bound;
+use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
-// pull in the items from your pyindex module
 mod pybuilder;
 mod pydtype;
 mod pyindex;
@@ -16,10 +13,12 @@ use pyindex::IndexWrapper;
 use pylogging::init_logging;
 use pymetric::PyMetric;
 
-/// This is the Python extension entry point.  The name *must* match your
-/// `lib.name = "ecp"` in Cargo.toml so that
-/// `import ecp` works in Python.
-#[pymodule]
+// PyO3 0.29 defaults every module to declaring free-threaded (no-GIL)
+// support. IndexWrapper/BuilderWrapper's &mut self methods aren't racy
+// under that (PyO3's own per-object exclusive-borrow check still applies),
+// but ecp_core::Index's internal caching isn't real interior-mutability
+// yet.
+#[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;
     m.add_class::<BuilderWrapper>()?;

@@ -57,7 +57,7 @@ Searching an index
    # items: list[(distance, item_id)]
 
    # Pull further results for the same query without re-searching from the root:
-   more_items = index.incremental_search(
+   more_items = index.get_next_k_items(
        query_id=query_id,
        k=10,
        search_exp=4,

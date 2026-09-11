@@ -4,18 +4,18 @@ build-backend = "maturin"
 
 [project]
 name        = "ecpfs"
-version     = "0.9.8"
+version     = "0.9.9"
 description = ""
 authors     = [
     { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
 ]
 readme      = "README.md"
 license     = { text = "MIT OR Apache-2.0" }
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
   "License :: OSI Approved :: MIT License",
   "License :: OSI Approved :: Apache Software License",
@@ -29,7 +29,9 @@ dependencies = [
 [dependency-groups]
 dev = [
   "deptry>=0.23.0",
+  "h5py>=3.12.1",
   "maturin>=1.0",
+  "pytest>=9.1.1",
   "shibuya>=2026.7.12",
   "sphinx>=9.1.0",
 ]

@@ -174,6 +174,75 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
     assert_eq!(lvl_2_children, d, "all D dataset items are still accounted for");
 }
 
+/// Regression test: `Index::load` used to build each level's node lookup
+/// by listing position rather than by each node's real on-disk id, so as
+/// soon as any earlier id in a level was missing (as lvl_1/node_0 is here,
+/// same tied-leader setup as the test above), every later id in that level
+/// resolved to the wrong slot - out-of-bounds panic or silently the wrong
+/// node, depending on how the misalignment landed. This loads the same
+/// built index and actually searches it, instead of only inspecting
+/// on-disk node/children counts.
+#[test]
+fn search_still_finds_every_item_when_a_node_is_empty_from_tied_scores() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let index_path = tmp.path().join("index.zarr");
+    let store = Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
+
+    let embeddings = ndarray::array![[0.0f32], [1.0], [0.0], [3.0], [4.0], [5.0], [6.0], [7.0]];
+    write_embeddings(&store, "/dataset", &embeddings);
+    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+
+    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
+    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 1000);
+    builder.build(&dataset, 1000);
+
+    let mut index = Index::load(index_path, None);
+    let query = array![0.0f32];
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+
+    let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..8).collect::<Vec<u32>>(), "every item must still be reachable despite the empty lvl_1 node");
+}
+
+/// First end-to-end build+search test for `Metric::IP` (previously no
+/// coverage anywhere in this suite - see `calculate_distances`, whose IP
+/// arm had never been exercised past a single raw-vector unit test).
+/// Deliberately uses magnitude-skewed, non-unit vectors: `is_normalized`
+/// doesn't affect IP's own assignment or distance math at all (only L2's),
+/// so nothing stops a caller from building an IP index on raw, un-normalized
+/// embeddings like this. Doing so lets one large-magnitude representative
+/// dominate the nearest-representative assignment for nearly every point,
+/// which empties out other representatives' nodes - the same failure mode
+/// as the tied-score tests above, reached through IP's own math instead of
+/// a forced tie.
+#[test]
+fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let index_path = tmp.path().join("index.zarr");
+    let store = Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
+
+    let embeddings = ndarray::array![
+        [1.0f32, 0.0], [2.0, 0.0], [3.0, 0.0], [4.0, 0.0],
+        [0.0, 1.0], [0.0, 2.0], [0.0, 3.0], [0.0, 4.0]
+    ];
+    write_embeddings(&store, "/dataset", &embeddings);
+    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+
+    let mut builder = Builder::create(&index_path, 2, Metric::IP, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
+    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
+    builder.build(&dataset, 100);
+
+    let mut index = Index::load(index_path, None);
+    let query = array![1.0f32, 0.0];
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+
+    let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..8).collect::<Vec<u32>>(), "every item must still be reachable");
+    assert_eq!(items[0].1, 3, "item 3 = (4,0) has the highest dot product with the query, so it must rank first");
+}
+
 /// Same geometry, but the source is f16-native (as SigLIP-style embeddings
 /// often are) and the dtype is left at its default (`None`, native): the
 /// index should come out f16 on disk, and still search correctly since

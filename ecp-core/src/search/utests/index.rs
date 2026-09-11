@@ -133,20 +133,21 @@ fn build_test_index(metric: Metric) -> Index {
         &array![6u32, 7],
     );
 
-    let lvl_1 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string()),
-    ];
-    let lvl_2 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string()),
-    ];
+    let lvl_1: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string())),
+    ]);
+    let lvl_2: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "item_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "item_ids".to_string())),
+        (2, Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "item_ids".to_string())),
+        (3, Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string())),
+    ]);
 
     // Struct literal, not `Index::load`, so the fixture can use an
     // in-memory store instead of a real `FilesystemStore`.
     Index {
+        store: as_readable_listable(&store),
         metric,
         is_normalized: false,
         levels: 2,
@@ -175,6 +176,23 @@ fn l2_search_returns_nearest_items_in_order() {
     assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
 }
 
+/// Regression test: `incremental_search` used to only sort `items` inside
+/// the `leaf_cnt == search_exp` branch, so a search that instead ends by
+/// running `tree_pq` dry (leaf_cnt never reaches search_exp because the
+/// whole tree has fewer leaves than that) returned items in leaf-visit
+/// order, not sorted by score. `search_exp=100` against a 4-leaf tree
+/// forces exactly that exit path on every call.
+#[test]
+fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reached() {
+    let mut index = build_test_index(Metric::L2);
+    let query: Array1<f32> = array![0.0, 0.0];
+
+    let (items, _query_id) = index.new_search(query, 8, 100, -1, &HashSet::new());
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+}
+
 #[test]
 fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
     let mut index = build_test_index(Metric::L2);
@@ -190,7 +208,7 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
     assert_eq!(ids, vec![0, 1, 2, 3], "eviction must not change search results");
     assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit", index.resident_bytes);
 
-    let still_loaded = index.nodes.iter().flatten().filter(|n| n.is_loaded()).count();
+    let still_loaded = index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count();
     assert!(still_loaded < 6, "expected eviction to have freed at least one of the 6 touched nodes");
 }
 
@@ -199,12 +217,12 @@ fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
     index.new_search(query, 4, 4, -1, &HashSet::new());
-    assert_eq!(index.nodes.iter().flatten().filter(|n| n.is_loaded()).count(), 6, "sanity check: all 6 nodes loaded with no limit set");
+    assert_eq!(index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count(), 6, "sanity check: all 6 nodes loaded with no limit set");
 
     index.set_memory_limit_bytes(Some(40));
 
     assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit right after lowering it", index.resident_bytes);
-    let still_loaded = index.nodes.iter().flatten().filter(|n| n.is_loaded()).count();
+    let still_loaded = index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count();
     assert!(still_loaded < 6, "lowering the limit below current usage must evict immediately, not lazily");
 }
 
@@ -394,14 +412,15 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         &array![6u32, 7],
     );
 
-    let leaf_clusters = vec![
-        Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_2".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_3".to_string(), "item_ids".to_string()),
-    ];
+    let leaf_clusters: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "item_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "item_ids".to_string())),
+        (2, Node::new(as_readable_listable(&store), "/lvl_1/node_2".to_string(), "item_ids".to_string())),
+        (3, Node::new(as_readable_listable(&store), "/lvl_1/node_3".to_string(), "item_ids".to_string())),
+    ]);
 
     Index {
+        store: as_readable_listable(&store),
         metric,
         is_normalized: false,
         levels: 1,
@@ -503,24 +522,25 @@ fn build_three_level_test_index() -> Index {
         &array![3u32],
     );
 
-    let lvl_1 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string()),
-    ];
-    let lvl_2 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "node_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "node_ids".to_string()),
-    ];
-    let lvl_3 = vec![
-        Node::new(as_readable_listable(&store), "/lvl_3/node_0".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_3/node_1".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_3/node_2".to_string(), "item_ids".to_string()),
-        Node::new(as_readable_listable(&store), "/lvl_3/node_3".to_string(), "item_ids".to_string()),
-    ];
+    let lvl_1: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string())),
+    ]);
+    let lvl_2: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "node_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "node_ids".to_string())),
+        (2, Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "node_ids".to_string())),
+        (3, Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "node_ids".to_string())),
+    ]);
+    let lvl_3: HashMap<u32, Node> = HashMap::from([
+        (0, Node::new(as_readable_listable(&store), "/lvl_3/node_0".to_string(), "item_ids".to_string())),
+        (1, Node::new(as_readable_listable(&store), "/lvl_3/node_1".to_string(), "item_ids".to_string())),
+        (2, Node::new(as_readable_listable(&store), "/lvl_3/node_2".to_string(), "item_ids".to_string())),
+        (3, Node::new(as_readable_listable(&store), "/lvl_3/node_3".to_string(), "item_ids".to_string())),
+    ]);
 
     Index {
+        store: as_readable_listable(&store),
         metric: Metric::L2,
         is_normalized: false,
         levels: 3,

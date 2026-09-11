@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use lru::LruCache;
 use zarrs::array::data_type::{float16, float32};
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::{ListableStorageTraits, ReadableListableStorage, StorePrefix};
+use zarrs::storage::ReadableListableStorage;
 
 use std::collections::BinaryHeap;
 use ordered_float::NotNan;
@@ -29,15 +29,24 @@ struct QueryState {
 /// A loaded eCP index. Holds the root and each level's nodes lazily, with
 /// an LRU cache capping how many stay resident, and tracks open queries by
 /// id for `new_search`/`get_next_k_items`.
+///
+/// `nodes[lvl]` is keyed by each node's real on-disk id and populated on
+/// first visit, not upfront at load: a node that received zero assigned
+/// children during build never gets a directory written, so ids at any
+/// given level are generally sparse, not a dense `0..count` range, and a
+/// legitimately-referenced id can still turn out to be one of the missing
+/// ones (`Node::embeddings`/`children` already handle that by returning
+/// `None`).
 pub struct Index {
+    store: ReadableListableStorage,
     metric: Metric,
     is_normalized: bool,
     levels: u32,
     root: Array2<f32>,
-    nodes: Vec<Vec<Node>>,
+    nodes: Vec<HashMap<u32, Node>>,
     queries: Vec<QueryState>,
     memory_limit_bytes: Option<usize>,
-    lru: LruCache<(usize, usize), usize>,
+    lru: LruCache<(usize, u32), usize>,
     resident_bytes: usize,
 }
 
@@ -92,36 +101,10 @@ impl Index
             panic!("unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)")
         };
 
-        let mut nodes = Vec::with_capacity(levels as usize);
-        for l in 0..levels {
-            let lvl_name = format!("lvl_{}", l + 1);
-            let prefix = StorePrefix::new(format!("{lvl_name}/"))
-                .expect("level name produces an invalid store prefix");
-            let listing = store
-                .list_dir(&prefix)
-                .unwrap_or_else(|e| panic!("Failed to list {lvl_name}: {e}"));
-
-            let mut level_nodes: Vec<(u32, String)> = listing
-                .prefixes()
-                .iter()
-                .filter_map(|p| {
-                    let name = p.as_str().trim_end_matches('/').rsplit('/').next()?;
-                    let idx: u32 = name.strip_prefix("node_")?.parse().ok()?;
-                    Some((idx, format!("/{lvl_name}/{name}")))
-                })
-                .collect();
-            level_nodes.sort_unstable_by_key(|(idx, _)| *idx);
-
-            let c_key = if l + 1 == levels { "item_ids" } else { "node_ids" };
-            nodes.push(
-                level_nodes
-                    .into_iter()
-                    .map(|(_, path)| Node::new(store.clone(), path, c_key.to_string()))
-                    .collect(),
-            );
-        }
+        let nodes = (0..levels).map(|_| HashMap::new()).collect();
 
         Index {
+            store,
             metric,
             is_normalized,
             levels,
@@ -150,24 +133,44 @@ impl Index
     /// disjoint field borrows instead of `&mut self` because `self.queries`
     /// is already borrowed for the whole loop in `incremental_search`, the
     /// caller.
-    fn touch(nodes: &mut [Vec<Node>], lru: &mut LruCache<(usize, usize), usize>, resident_bytes: &mut usize, lvl: usize, node: usize) {
-        let bytes = nodes[lvl][node].resident_bytes();
+    fn touch(nodes: &mut [HashMap<u32, Node>], lru: &mut LruCache<(usize, u32), usize>, resident_bytes: &mut usize, lvl: usize, node_id: u32) {
+        let bytes = nodes[lvl][&node_id].resident_bytes();
         if bytes == 0 {
             return;
         }
         // A node's cached size never changes between touches, so only a
         // first-time insert adds to the running total; a re-touch just
         // refreshes recency via `put`.
-        if lru.put((lvl, node), bytes).is_none() {
+        if lru.put((lvl, node_id), bytes).is_none() {
             *resident_bytes += bytes;
         }
+    }
+
+    /// The node at `(lvl, node_id)`, inserting a fresh (still-unread) one
+    /// into `nodes[lvl]` on first visit rather than requiring it to exist
+    /// upfront: a node's on-disk directory only exists if it received at
+    /// least one child during build, so `node_id` may still turn out to be
+    /// one of the missing ones once `embeddings`/`children` are actually
+    /// called on it (they handle that by returning `None`). Takes disjoint
+    /// field borrows for the same reason `touch`/`evict_to_ratio` do.
+    fn node_at<'a>(
+        nodes: &'a mut [HashMap<u32, Node>],
+        store: &ReadableListableStorage,
+        levels: u32,
+        lvl: usize,
+        node_id: u32,
+    ) -> &'a mut Node {
+        let child_key = if lvl + 1 == levels as usize { "item_ids" } else { "node_ids" };
+        nodes[lvl]
+            .entry(node_id)
+            .or_insert_with(|| Node::new(store.clone(), format!("/lvl_{}/node_{node_id}", lvl + 1), child_key.to_string()))
     }
 
     /// Evicts least-recently-touched nodes (via `Node::clear_cache`) down to
     /// `EVICT_TO_RATIO` of `limit` rather than just under it, since a cache
     /// sitting right at the limit would otherwise evict again on almost
     /// every subsequent touch. No-ops if already under `limit`.
-    fn evict_to_ratio(nodes: &mut [Vec<Node>], lru: &mut LruCache<(usize, usize), usize>, resident_bytes: &mut usize, limit: usize) {
+    fn evict_to_ratio(nodes: &mut [HashMap<u32, Node>], lru: &mut LruCache<(usize, u32), usize>, resident_bytes: &mut usize, limit: usize) {
         if *resident_bytes <= limit {
             return;
         }
@@ -178,7 +181,7 @@ impl Index
         let mut freed_bytes = 0;
         while *resident_bytes > target {
             let Some(((evict_lvl, evict_node), evicted)) = lru.pop_lru() else { break };
-            nodes[evict_lvl][evict_node].clear_cache();
+            nodes[evict_lvl].get_mut(&evict_node).expect("an LRU-tracked node must still be in its level's map").clear_cache();
             *resident_bytes -= evicted;
             evicted_count += 1;
             freed_bytes += evicted;
@@ -279,9 +282,8 @@ impl Index
                 node_id
             } = tree_pq.pop().unwrap();
             let lvl = level as usize;
-            let node = node_id as usize;
-            log::trace!("visiting node lvl={lvl} node={node} is_leaf={is_leaf}");
-            let embeddings_f32: &Array2<f32> = match self.nodes[lvl][node].embeddings() {
+            log::trace!("visiting node lvl={lvl} node={node_id} is_leaf={is_leaf}");
+            let embeddings_f32: &Array2<f32> = match Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).embeddings() {
                 Some(embs) => embs,
                 None => continue,
             };
@@ -293,7 +295,7 @@ impl Index
                 self.is_normalized,
             );
             if is_leaf == 1 {
-                let children = self.nodes[lvl][node].children().as_ref().unwrap();
+                let children = Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).children().as_ref().unwrap();
                 for i in 0..distances.len() {
                     // items ranks ascending, unlike tree_pq's max-heap, so
                     // the stored score must itself be smaller-is-better;
@@ -304,7 +306,7 @@ impl Index
                 }
                 leaf_cnt += 1;
             } else {
-                let children = self.nodes[lvl][node].children().as_ref().unwrap();
+                let children = Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).children().as_ref().unwrap();
                 for i in 0..distances.len() {
                     if (level + 1) == (self.levels - 1) {
                         tree_pq.push(
@@ -326,14 +328,13 @@ impl Index
                 }
             }
 
-            Self::touch(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, lvl, node);
+            Self::touch(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, lvl, node_id);
             if let Some(limit) = self.memory_limit_bytes {
                 Self::evict_to_ratio(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, limit);
             }
 
             if leaf_cnt == search_exp {
                 if items.len() >= k {
-                    items.sort_unstable_by_key(|&(first, _)| first);
                     break
                 }
                 if increments < max_increments || max_increments == -1 {
@@ -344,6 +345,11 @@ impl Index
                 }
             }
         }
+
+        // Every exit above (enough items found, max_increments exhausted,
+        // or tree_pq run dry before either) leaves items unsorted; sort
+        // once here rather than at each break site.
+        items.sort_unstable_by_key(|&(first, _)| first);
     }
 
     /// Continues `query_id` from where the last call left off: tops up

@@ -213,11 +213,9 @@ fn build_index(args: BuildIndexArgs) {
     builder.build(&source, args.fallback_batch_rows);
 }
 
-/// Runs a single query, pulled from row `query_row` of `query_file`, against
-/// an existing index, or continues a previously-persisted one with
-/// `--resume`. Every call persists the query before exiting (a no-op if it
-/// finished with nothing left to resume), printing its id as the first
-/// output line so it can be passed back to a later `--resume`.
+/// Runs a query against an index, or continues a persisted one with
+/// `--resume`. Persists before exiting; prints `query_id` as the first
+/// output line.
 #[derive(clap::Args)]
 struct SearchArgs {
     /// Path to the index to search.
@@ -257,9 +255,9 @@ struct SearchArgs {
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
-    /// Resume a previously-persisted query (its id is printed as this
-    /// tool's first output line) instead of starting a new one. Ignores
-    /// query_file/query_row/query_grp_name when given.
+    /// Resume a persisted query (id printed as this tool's first output
+    /// line) instead of starting a new one. Ignores query_file/query_row/
+    /// query_grp_name.
     #[arg(long, conflicts_with = "query_file")]
     resume: Option<usize>,
 

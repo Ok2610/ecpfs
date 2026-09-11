@@ -1070,12 +1070,10 @@ fn evicted_query_resumes_correctly_within_the_same_process() {
     );
 }
 
-/// Races many threads calling `new_search` against one thread calling
-/// `shutdown()`. Not asserting every id survives (a query that's still
-/// mid-publish when `shutdown` runs is allowed to be missing, see
-/// `Index::shutdown`'s doc comment); asserting only that nothing panics or
-/// deadlocks, and that whatever *does* end up persisted is internally
-/// coherent, never a torn/partial write.
+/// Races `new_search` threads against a concurrent `shutdown()`. A query
+/// still mid-publish when `shutdown` runs may be missing, that's expected;
+/// only checks for no panic/deadlock and that whatever did persist is
+/// internally coherent, no torn write.
 #[test]
 fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
     let index = Arc::new(build_test_index(Metric::L2));

@@ -50,10 +50,8 @@ type QueryCache = Cache<usize, Arc<Mutex<QueryState>>>;
 /// ones (`Node::embeddings`/`children` already handle that by returning
 /// `None`).
 ///
-/// `queries` is populated the same lazy way: `load` only discovers which
-/// ids have a persisted `/queries/{id}/` group, it doesn't read any of
-/// them. A persisted query's actual state is only read the first time
-/// something asks for that id (`get_or_load_query`).
+/// `queries` is lazy the same way: `load` only discovers persisted ids,
+/// not their content (`get_or_load_query` reads on first use).
 pub struct Index {
     store: ReadableWritableListableStorage,
     metric: Metric,
@@ -131,11 +129,8 @@ impl Index {
     /// each get their own capacity instead, multiplying the effective
     /// limit by the level count.
     ///
-    /// The `queries` cache's eviction listener is what makes eviction under
-    /// memory pressure recoverable rather than a silent loss: it persists
-    /// (or erases, if there was nothing left worth resuming) whatever moka
-    /// evicts, the same decision `shutdown` makes for whatever's still
-    /// resident when the process exits.
+    /// `queries`'s eviction listener persists (or erases) whatever moka
+    /// evicts under memory pressure.
     fn build_caches(
         memory_limit_bytes: Option<usize>,
         store: ReadableWritableListableStorage,
@@ -230,13 +225,8 @@ impl Index {
         })
     }
 
-    /// Looks up `query_id` in the in-memory cache, falling back to a lazy
-    /// disk load on a miss (`load`'s reload only discovers which ids have a
-    /// persisted group, not their content, see `Index`'s doc comment). A
-    /// truly unknown id, neither cached nor persisted, falls through to
-    /// `None`. `optionally_get_with` gives the same single-flight guarantee
-    /// `node_at`'s `get_with` already relies on: only one thread hits disk
-    /// per id, concurrent callers for the same id share the result.
+    /// Cache miss falls back to a single-flight disk load; `None` if truly
+    /// unknown.
     fn get_or_load_query(&self, query_id: usize) -> Option<Arc<Mutex<QueryState>>> {
         self.queries.optionally_get_with(query_id, || {
             persistence::load_query(&self.store, query_id).map(|state| Arc::new(Mutex::new(state)))
@@ -264,14 +254,9 @@ impl Index {
         self.nodes.weighted_size() as usize
     }
 
-    /// Stops accepting new work and persists every currently-held query to
-    /// `/queries/{query_id}/`, erasing instead of persisting one with
-    /// nothing left worth resuming. `&self`, not `&mut self`, so it stays
-    /// callable alongside concurrent readers. Idempotent. A query that's
-    /// mid-publish in a concurrently-running `new_search` on another thread
-    /// may or may not be captured, that's an accepted trade-off: it hasn't
-    /// done any work yet, so losing it costs the caller nothing they can't
-    /// get back by calling `new_search` again.
+    /// Stops accepting new work and persists every currently-held query,
+    /// erasing one with nothing left worth resuming. Idempotent. `&self`
+    /// so it stays callable alongside concurrent readers.
     pub fn shutdown(&self) {
         self.accepting.store(false, Ordering::SeqCst);
         for (query_id, state_arc) in self.queries.iter() {
@@ -280,23 +265,19 @@ impl Index {
         }
     }
 
-    /// Erases every persisted query on disk older than `cutoff_unix_secs`
-    /// (Unix seconds), regardless of whether it's currently held in
-    /// memory. Returns how many were erased. A maintenance operation for
-    /// bounding `/queries/`'s disk usage over time, not something a search
-    /// call needs.
+    /// Erases every persisted query older than `cutoff_unix_secs` (Unix
+    /// seconds). Returns how many were erased.
     pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> usize {
         persistence::cleanup_older_than(&self.store, cutoff_unix_secs)
     }
 
     /// Starts a new query, spending `max_increments` retries on one
     /// `incremental_search` pass, then drains up to `k` items. Returns
-    /// `(items, query_id)`; resume the same query later via
-    /// `get_next_k_items`. Each item's score ranks ascending (lower is
-    /// better) rather than measuring a literal distance, since IP's score
-    /// is a negated similarity where a strong match can be negative. A
-    /// `query_id` is always allocated, even after `shutdown`, so ids stay
-    /// monotonic, but nothing is searched or cached in that case.
+    /// `(items, query_id)`. Resume the same query later via
+    /// `get_next_k_items` using `query_id`. Each item's score ranks
+    /// ascending (lower is better) rather than measuring a literal distance,
+    /// since IP's score is a negated similarity where a strong match can be
+    /// negative.
     pub fn new_search(
         &self,
         query: Array1<f32>,

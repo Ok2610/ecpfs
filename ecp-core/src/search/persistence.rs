@@ -65,10 +65,8 @@ pub(super) fn erase_query(store: &ReadableWritableListableStorage, query_id: usi
         .expect("failed to erase query group");
 }
 
-/// `persist_query` if `state` still has something worth resuming (`tree_pq`
-/// or `items` non-empty), `erase_query` otherwise. Shared by
-/// `Index::shutdown` and the `queries` cache's eviction listener, the two
-/// places a `QueryState` leaves memory.
+/// `persist_query` if `state` has anything worth resuming, `erase_query`
+/// otherwise.
 pub(super) fn persist_or_erase(
     store: &ReadableWritableListableStorage,
     query_id: usize,

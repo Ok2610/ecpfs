@@ -108,10 +108,9 @@ impl IndexWrapper {
 
     /// cleanup_persisted_queries_older_than(self, cutoff_unix_secs: float) -> int
     ///
-    /// Erases every persisted query persisted before cutoff_unix_secs (a
-    /// Unix timestamp, e.g. datetime.datetime(...).timestamp()), freeing
-    /// disk space from queries nobody resumed. Returns how many were
-    /// erased.
+    /// Erases every persisted query older than cutoff_unix_secs (a Unix
+    /// timestamp, e.g. datetime.datetime(...).timestamp()). Returns how
+    /// many were erased.
     fn cleanup_persisted_queries_older_than(&mut self, cutoff_unix_secs: f64) -> PyResult<usize> {
         self.check_not_closed()?;
         Ok(self

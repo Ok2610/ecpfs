@@ -49,7 +49,7 @@ jobs:
           uv venv .venv
           source .venv/bin/activate
           uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
-          uv pip install ecpfs pytest h5py
+          uv pip install pytest h5py
           pytest
 
       - name: pytest (emulated aarch64)
@@ -70,7 +70,7 @@ jobs:
             python3.14 -m venv .venv
             source .venv/bin/activate
             pip install ecpfs --no-index --no-deps --find-links dist --force-reinstall
-            pip install ecpfs pytest h5py
+            pip install pytest h5py
             pytest
 
   macos:
@@ -110,7 +110,7 @@ jobs:
           uv venv .venv
           source .venv/bin/activate
           uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
-          uv pip install ecpfs pytest h5py
+          uv pip install pytest h5py
           pytest
 
   windows:
@@ -145,7 +145,7 @@ jobs:
           uv venv .venv
           source .venv/Scripts/activate
           uv pip install ecpfs --no-index --no-deps --find-links dist --reinstall
-          uv pip install ecpfs pytest h5py
+          uv pip install pytest h5py
           pytest
 
   sdist:

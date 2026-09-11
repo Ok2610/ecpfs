@@ -63,26 +63,7 @@ impl Index {
     }
 
     fn load_from_store(store: ReadableListableStorage, memory_limit_bytes: Option<usize>) -> Self {
-        let levels_array =
-            Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
-        let levels: u32 = levels_array
-            .retrieve_array_subset::<Vec<u32>>(&levels_array.subset_all())
-            .expect("Failed to retrieve info/levels")[0];
-
-        let metric_array =
-            Array::open(store.clone(), "/info/metric").expect("Failed to open info/metric");
-        let metric_str = metric_array
-            .retrieve_array_subset::<Vec<String>>(&metric_array.subset_all())
-            .expect("Failed to retrieve info/metric")
-            .remove(0);
-        let metric = Metric::from_str(&metric_str)
-            .unwrap_or_else(|e| panic!("info/metric holds an unrecognized metric: {e}"));
-
-        let is_normalized_array = Array::open(store.clone(), "/info/is_normalized")
-            .expect("Failed to open info/is_normalized");
-        let is_normalized: bool = is_normalized_array
-            .retrieve_array_subset::<Vec<bool>>(&is_normalized_array.subset_all())
-            .expect("Failed to retrieve info/is_normalized")[0];
+        let (levels, metric, is_normalized) = read_info_fields(&store);
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
@@ -416,6 +397,76 @@ impl Index {
         }
         let cnt = self.queries[query_id].items.len().min(k);
         self.queries[query_id].items.drain(0..cnt).collect()
+    }
+}
+
+/// Reads `info/levels`, `info/metric`, and `info/is_normalized`, the 3
+/// fields both `Index::load` and `IndexInfo::load` need.
+fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric, bool) {
+    let levels_array =
+        Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
+    let levels: u32 = levels_array
+        .retrieve_array_subset::<Vec<u32>>(&levels_array.subset_all())
+        .expect("Failed to retrieve info/levels")[0];
+
+    let metric_array =
+        Array::open(store.clone(), "/info/metric").expect("Failed to open info/metric");
+    let metric_str = metric_array
+        .retrieve_array_subset::<Vec<String>>(&metric_array.subset_all())
+        .expect("Failed to retrieve info/metric")
+        .remove(0);
+    let metric = Metric::from_str(&metric_str)
+        .unwrap_or_else(|e| panic!("info/metric holds an unrecognized metric: {e}"));
+
+    let is_normalized_array = Array::open(store.clone(), "/info/is_normalized")
+        .expect("Failed to open info/is_normalized");
+    let is_normalized: bool = is_normalized_array
+        .retrieve_array_subset::<Vec<bool>>(&is_normalized_array.subset_all())
+        .expect("Failed to retrieve info/is_normalized")[0];
+
+    (levels, metric, is_normalized)
+}
+
+/// An index's `info/*` metadata plus its representative count, read without
+/// loading the tree. `total_representatives` comes from `/rep_item_ids`'s
+/// shape rather than its own field, the same cheap read `Index::load` uses
+/// for array shapes elsewhere.
+pub struct IndexInfo {
+    pub levels: u32,
+    pub metric: Metric,
+    pub is_normalized: bool,
+    pub total_items: u32,
+    pub total_representatives: u32,
+}
+
+impl IndexInfo {
+    /// Loads an index's info fields from `index_path`.
+    pub fn load(index_path: PathBuf) -> Self {
+        let store: ReadableListableStorage =
+            Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
+        Self::load_from_store(store)
+    }
+
+    fn load_from_store(store: ReadableListableStorage) -> Self {
+        let (levels, metric, is_normalized) = read_info_fields(&store);
+
+        let total_items_array = Array::open(store.clone(), "/info/total_items")
+            .expect("Failed to open info/total_items");
+        let total_items: u32 = total_items_array
+            .retrieve_array_subset::<Vec<u32>>(&total_items_array.subset_all())
+            .expect("Failed to retrieve info/total_items")[0];
+
+        let rep_ids_array =
+            Array::open(store.clone(), "/rep_item_ids").expect("Failed to open rep_item_ids");
+        let total_representatives = rep_ids_array.shape()[0] as u32;
+
+        IndexInfo {
+            levels,
+            metric,
+            is_normalized,
+            total_items,
+            total_representatives,
+        }
     }
 }
 

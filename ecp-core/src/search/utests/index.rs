@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_fixtures::{
     as_readable_listable, new_memory_store, write_index_info, write_index_root, write_node,
+    write_rep_item_ids, write_total_items,
 };
 use ndarray::array;
 
@@ -48,6 +49,22 @@ fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
+}
+
+#[test]
+fn index_info_reads_all_5_fields_without_loading_the_tree() {
+    let store = new_memory_store();
+    write_index_info(&store, 2, "IP", true);
+    write_total_items(&store, 1_000);
+    write_rep_item_ids(&store, &array![0u32, 5, 10, 15]);
+
+    let info = IndexInfo::load_from_store(as_readable_listable(&store));
+
+    assert_eq!(info.levels, 2);
+    assert_eq!(info.metric, Metric::IP);
+    assert!(info.is_normalized);
+    assert_eq!(info.total_items, 1_000);
+    assert_eq!(info.total_representatives, 4);
 }
 
 /// `node_1` is written before `node_0` on purpose - if `load_from_store`

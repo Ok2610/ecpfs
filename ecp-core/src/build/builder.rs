@@ -10,7 +10,9 @@ use crate::build::representatives::{
     select_representative_ids,
 };
 use crate::build::source::EmbeddingsSource;
-use crate::build::tree::{BuildTreeArgs, build_tree, write_index_info, write_index_root};
+use crate::build::tree::{
+    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_total_items,
+};
 use crate::build::writer::zarrs_append;
 use crate::utils::{EmbeddingDtype, Metric};
 
@@ -188,6 +190,9 @@ impl Builder {
             self.levels,
             self.metric
         );
+        let (total_items, _) = dataset.shape();
+        write_total_items(&self.store, total_items as u32);
+
         let representatives = self
             .representatives
             .take()

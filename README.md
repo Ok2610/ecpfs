@@ -1,6 +1,6 @@
 # ecpfs
 
-A disk-backed implementation of the extended Cluster Pruning (eCP) approximate
+An implementation of the extended Cluster Pruning (eCP) approximate
 nearest neighbor index, with a Rust core, Python bindings, and a standalone
 CLI.
 
@@ -23,29 +23,24 @@ line up with a disk read's worth of data. At query time, a search expansion
 parameter controls how many clusters are read before returning results,
 trading I/O for recall.
 
-This maps directly to this project's parameters: `levels` is `L`,
-`target_cluster_items` is the target cluster size, and `search_exp` is the
-expansion factor.
-
 ## What ecpfs does
 
 ecpfs implements the eCP pipeline as a library for real disk-based use: a
 Rust core (`ecp-core`), Python bindings (`ecpfs`, via PyO3), and a CLI
 (`ecp`). The "fs" in the name reflects that an index is disk-backed and
-lazily loaded rather than held entirely in memory: nodes are read as a
+lazily loaded rather than held entirely in memory. Nodes are read as a
 search visits them, with an LRU cache capping how many stay resident.
-Incremental search (pulling further results for an already-run query
-without restarting it) and this LRU-based memory management are
-additions on top of the eCP design, not part of the original algorithm.
+The search is best-first across the tree, regardless of level, and
+each opened leaf contributes all of its items as candidates rather than
+being searched further. This differs from the original eCP algorithm,
+which expanded the search breadth-first at every level instead.
+It also supports incremental search, which pulls further results for an
+already-run query without restarting it.
 
 The on-disk format is Zarr: each tree node is a group of plain arrays,
 deliberately "whitebox" so it stays human-inspectable and easy to extend
 later without touching the loader. A second, minimal binary backend is
 planned for cases that do not need that extensibility.
-
-Index maintenance (inserting into an already-built index without a full
-rebuild) is not implemented; an index is built once and then only searched.
-This is intended future work, not an abandoned gap.
 
 ## Documentation
 

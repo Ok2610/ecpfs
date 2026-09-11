@@ -219,6 +219,29 @@ fn build_writes_index_root_and_leaf_nodes() {
     );
 }
 
+#[test]
+fn build_writes_total_items_from_the_datasets_row_count() {
+    let store = new_memory_store();
+    let dataset = write_source(
+        &store,
+        "/dataset",
+        &array![[0.0f32, 0.0], [0.0, 1.0], [10.0, 0.0], [10.0, 1.0]],
+    );
+    let mut builder = new_builder(&store, 1, 1_000_000);
+
+    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
+    builder.build(&dataset, 10);
+
+    let total_items =
+        Array::open(as_readable_writable_listable(&store), "/info/total_items").unwrap();
+    assert_eq!(
+        total_items
+            .retrieve_array_subset::<Vec<u32>>(&total_items.subset_all())
+            .unwrap(),
+        vec![4]
+    );
+}
+
 /// Exercises `build`'s `Representatives::InMemory` branch.
 #[test]
 fn build_with_custom_representatives_writes_index_root_and_leaf_nodes() {

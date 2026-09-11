@@ -61,6 +61,23 @@ pub fn write_index_info(
         .expect("Failed to store info/is_normalized chunk");
 }
 
+/// Writes `info/total_items`, the size of the dataset this index was built
+/// over. Split out from `write_index_info` since it's only known once
+/// `build`'s `dataset` is available, not at construction time.
+pub fn write_total_items(store: &ReadableWritableListableStorage, total_items: u32) {
+    let scalar_shape: Vec<u64> = vec![];
+
+    let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, uint32(), 0u32)
+        .build(store.clone(), "/info/total_items")
+        .expect("Failed to build info/total_items array");
+    field
+        .store_metadata()
+        .expect("Failed to store info/total_items metadata");
+    field
+        .store_chunk(&[], vec![total_items])
+        .expect("Failed to store info/total_items chunk");
+}
+
 /// Writes `index_root/embeddings`, the top-level cluster leaders. Small by
 /// construction, written once, no appending needed.
 pub fn write_index_root(

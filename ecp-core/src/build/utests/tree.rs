@@ -37,6 +37,21 @@ fn write_index_info_round_trips_through_index_load() {
 }
 
 #[test]
+fn write_total_items_stores_the_count() {
+    let store = new_memory_store();
+    write_total_items(&as_readable_writable_listable(&store), 42);
+
+    let total_items =
+        Array::open(store.clone(), "/info/total_items").expect("failed to open info/total_items");
+    assert_eq!(
+        total_items
+            .retrieve_array_subset::<Vec<u32>>(&total_items.subset_all())
+            .expect("failed to read total_items"),
+        vec![42]
+    );
+}
+
+#[test]
 fn write_index_root_stores_the_leader_embeddings() {
     let store = new_memory_store();
     write_index_root(

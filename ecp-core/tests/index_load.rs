@@ -12,7 +12,8 @@ use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::filesystem::FilesystemStore;
 
-use ecp_core::search::Index;
+use ecp_core::search::{Index, IndexInfo};
+use ecp_core::utils::Metric;
 
 fn write_scalar_u32(store: &Arc<FilesystemStore>, path: &str, value: u32) {
     let shape: Vec<u64> = vec![];
@@ -81,6 +82,42 @@ fn write_node(
     child_array
         .store_chunk(&[0], children)
         .expect("failed to store children chunk");
+}
+
+fn write_rep_item_ids(store: &Arc<FilesystemStore>, ids: &ndarray::Array1<u32>) {
+    let shape = vec![ids.len() as u64];
+    let array = ArrayBuilder::new(shape.clone(), shape, uint32(), 0u32)
+        .build(store.clone(), "/rep_item_ids")
+        .expect("failed to build rep_item_ids array");
+    array
+        .store_metadata()
+        .expect("failed to store rep_item_ids metadata");
+    array
+        .store_chunk(&[0], ids)
+        .expect("failed to store rep_item_ids chunk");
+}
+
+#[test]
+fn index_info_load_reads_info_and_representative_count_from_disk() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let index_path = tmp.path().join("index.zarr");
+
+    let store: Arc<FilesystemStore> =
+        Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
+
+    write_scalar_u32(&store, "/info/levels", 2);
+    write_scalar_string(&store, "/info/metric", "IP");
+    write_scalar_bool(&store, "/info/is_normalized", true);
+    write_scalar_u32(&store, "/info/total_items", 1_000);
+    write_rep_item_ids(&store, &array![0u32, 5, 10, 15]);
+
+    let info = IndexInfo::load(index_path);
+
+    assert_eq!(info.levels, 2);
+    assert_eq!(info.metric, Metric::IP);
+    assert!(info.is_normalized);
+    assert_eq!(info.total_items, 1_000);
+    assert_eq!(info.total_representatives, 4);
 }
 
 #[test]

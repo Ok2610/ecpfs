@@ -149,6 +149,36 @@ pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_
         .expect("failed to store info/is_normalized chunk");
 }
 
+/// Writes `info/total_items` as a rank-0 (scalar) array, mirroring
+/// `write_total_items`.
+pub fn write_total_items(store: &Arc<MemoryStore>, total_items: u32) {
+    let scalar_shape: Vec<u64> = vec![];
+    let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, uint32(), 0u32)
+        .build(store.clone(), "/info/total_items")
+        .expect("failed to build info/total_items array");
+    field
+        .store_metadata()
+        .expect("failed to store info/total_items metadata");
+    field
+        .store_chunk(&[], vec![total_items])
+        .expect("failed to store info/total_items chunk");
+}
+
+/// Writes `/rep_item_ids`, mirroring the representative id array a real
+/// build leaves at the top level.
+pub fn write_rep_item_ids(store: &Arc<MemoryStore>, ids: &Array1<u32>) {
+    let shape = vec![ids.len() as u64];
+    let array = ArrayBuilder::new(shape.clone(), shape, uint32(), 0u32)
+        .build(store.clone(), "/rep_item_ids")
+        .expect("failed to build rep_item_ids array");
+    array
+        .store_metadata()
+        .expect("failed to store rep_item_ids metadata");
+    array
+        .store_chunk(&[0], ids)
+        .expect("failed to store rep_item_ids chunk");
+}
+
 /// Writes `index_root/embeddings`, mirroring what `ECPBuilder.build_tree_fs`
 /// writes for the top-level cluster leaders.
 pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {

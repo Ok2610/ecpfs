@@ -7,7 +7,7 @@ use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
-use ecp_core::search::Index;
+use ecp_core::search::{Index, IndexInfo};
 use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
 
 /// Default `--memory-limit-gb` for both subcommands: 80% of system RAM.
@@ -26,6 +26,7 @@ struct Cli {
 enum Command {
     BuildIndex(BuildIndexArgs),
     Search(SearchArgs),
+    Info(InfoArgs),
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -276,10 +277,27 @@ fn search(args: SearchArgs) {
     }
 }
 
+/// Prints an index's `info/*` metadata without loading its tree.
+#[derive(clap::Args)]
+struct InfoArgs {
+    /// Path to the index to inspect.
+    index_path: PathBuf,
+}
+
+fn info(args: InfoArgs) {
+    let info = IndexInfo::load(args.index_path);
+    println!("Levels: {}", info.levels);
+    println!("Metric: {}", info.metric.as_str());
+    println!("Normalized: {}", info.is_normalized);
+    println!("Total Items: {}", info.total_items);
+    println!("Total Representatives: {}", info.total_representatives);
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::BuildIndex(args) => build_index(args),
         Command::Search(args) => search(args),
+        Command::Info(args) => info(args),
     }
 }

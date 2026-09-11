@@ -141,6 +141,13 @@ impl Builder {
     /// selection strategy, for representatives chosen by an external
     /// clustering step.
     pub fn select_representatives_custom(&mut self, ids: Array1<u32>, embeddings: Array2<f32>) {
+        assert_eq!(
+            ids.len(),
+            embeddings.nrows(),
+            "ids and embeddings must have the same length ({} ids, {} embeddings rows)",
+            ids.len(),
+            embeddings.nrows()
+        );
         let dim = embeddings.ncols();
         self.chunk_shape = vec![calculate_chunk_size(dim, self.max_chunk_bytes), dim as u64];
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);

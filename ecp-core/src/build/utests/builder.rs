@@ -93,6 +93,15 @@ fn select_representatives_custom_uses_caller_supplied_leaders() {
 }
 
 #[test]
+#[should_panic(expected = "ids and embeddings must have the same length")]
+fn select_representatives_custom_panics_on_a_length_mismatch() {
+    let store = new_memory_store();
+    let mut builder = new_builder(&store, 1, 1_000_000);
+
+    builder.select_representatives_custom(Array1::from_vec(vec![7u32, 9, 11]), array![[0.0f32, 0.0], [5.0, 5.0]]);
+}
+
+#[test]
 #[should_panic(expected = "call select_representatives before build")]
 fn build_without_representatives_panics() {
     let store = new_memory_store();

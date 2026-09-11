@@ -35,7 +35,7 @@ impl IndexWrapper {
     }
 
     /// new_search(self, query: np.ndarray[f32, 1], k: int,
-    ///            search_exp: u32, max_increments: i32)
+    ///            search_exp: u32, max_increments: i32, exclude_vec: list[int])
     ///
     /// Returns `(items, query_id)`, where `items: List[(score: float, item_id: int)]`.
     /// score ranks ascending (lower is better) rather than measuring a
@@ -63,7 +63,7 @@ impl IndexWrapper {
         Ok((items, query_id))
     }
 
-    /// get_next_k_items(self, query_id, k, search_exp, max_increments)
+    /// get_next_k_items(self, query_id, k, search_exp, max_increments, exclude_vec)
     ///
     /// Returns the next batch of `(score, item_id)` pairs. Same score
     /// convention as new_search.

@@ -404,6 +404,7 @@ dependencies = [
  "half",
  "log",
  "lru 0.18.4",
+ "moka",
  "ndarray",
  "num-traits",
  "ordered-float",

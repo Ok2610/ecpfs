@@ -212,7 +212,7 @@ impl NodeCache {
         }
 
         let read_store: ReadableListableStorage = store.clone().readable_listable();
-        let mut node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
+        let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
         let centroids = node
             .embeddings()
             .as_ref()

@@ -90,7 +90,7 @@ fn build_tree_produces_a_structure_that_searches_correctly() {
         memory_limit_bytes: 1_000_000_000,
     });
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 

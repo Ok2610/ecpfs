@@ -123,7 +123,7 @@ fn builder_produces_a_structure_that_searches_correctly() {
         "f32 source with the default (native) dtype writes f32"
     );
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -192,7 +192,7 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
         );
     }
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![80.0f32];
     let (items, _query_id) = index.new_search(query, 10, 4, -1, &HashSet::new());
 
@@ -303,7 +303,7 @@ fn search_still_finds_every_item_when_a_node_is_empty_from_tied_scores() {
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 1000);
     builder.build(&dataset, 1000);
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -359,7 +359,7 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![1.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -426,7 +426,7 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
         "f16 source with the default (native) dtype writes f16"
     );
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -482,7 +482,7 @@ fn explicit_f16_downcasts_an_f32_source_and_still_searches() {
         "explicit F16 downcasts an f32 source"
     );
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 

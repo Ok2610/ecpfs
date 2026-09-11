@@ -257,7 +257,7 @@ struct SearchArgs {
 fn search(args: SearchArgs) {
     args.logging.init_if_requested();
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
-    let mut index = Index::load(args.index_path, Some(memory_limit_bytes));
+    let index = Index::load(args.index_path, Some(memory_limit_bytes));
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
     let query = source
         .read_vecs(args.query_row, args.query_row + 1)

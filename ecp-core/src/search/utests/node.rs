@@ -12,7 +12,7 @@ fn loads_and_caches_embeddings_and_children() {
     let children: Array1<u32> = array![10, 20];
     write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
 
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_0".to_string(),
         "node_ids".to_string(),
@@ -23,11 +23,6 @@ fn loads_and_caches_embeddings_and_children() {
     assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
     assert!(node.is_loaded());
     assert_eq!(node.children().as_ref().unwrap(), &children);
-
-    node.clear_cache();
-    assert!(!node.is_loaded());
-    // Lazily reloads from the store after a cache clear.
-    assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
 }
 
 /// Values chosen to be exactly representable in f16 (10 mantissa bits), so the
@@ -39,7 +34,7 @@ fn loads_f16_embeddings_upcast_to_f32() {
     let children: Array1<u32> = array![10, 20];
     write_node_f16(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
 
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_0".to_string(),
         "node_ids".to_string(),
@@ -59,7 +54,7 @@ fn unsupported_dtype_panics_instead_of_silently_truncating() {
     let children: Array1<u32> = array![10, 20];
     write_node_unsupported_dtype(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
 
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_0".to_string(),
         "node_ids".to_string(),
@@ -75,7 +70,7 @@ fn resident_bytes_reflects_whats_actually_loaded() {
     let children: Array1<u32> = array![10, 20];
     write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
 
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_0".to_string(),
         "node_ids".to_string(),
@@ -91,15 +86,12 @@ fn resident_bytes_reflects_whats_actually_loaded() {
         2 * 2 * 4 + 2 * 4,
         "embeddings + 2 u32 children"
     );
-
-    node.clear_cache();
-    assert_eq!(node.resident_bytes(), 0);
 }
 
 #[test]
 fn missing_node_yields_none_without_panicking() {
     let store = new_memory_store();
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_absent".to_string(),
         "item_ids".to_string(),
@@ -113,7 +105,7 @@ fn missing_node_yields_none_without_panicking() {
 #[test]
 fn a_confirmed_miss_is_cached_and_not_re_queried_after_data_appears() {
     let store = new_memory_store();
-    let mut node = Node::new(
+    let node = Node::new(
         as_readable_listable(&store),
         "/lvl_1/node_0".to_string(),
         "node_ids".to_string(),
@@ -123,7 +115,7 @@ fn a_confirmed_miss_is_cached_and_not_re_queried_after_data_appears() {
     assert!(node.children().is_none());
 
     // The node now actually exists; a naive `is_none()`-only check would
-    // re-query and find it, but checked_embs/checked_childs must not.
+    // re-query and find it, but a `OnceLock` already resolved to `None` must not.
     write_node(
         &store,
         "/lvl_1/node_0",

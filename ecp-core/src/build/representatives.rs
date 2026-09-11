@@ -7,18 +7,16 @@ use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
 use crate::utils::EmbeddingDtype;
 
-/// How to pick which items become cluster leaders. `"custom"` (the caller
-/// already has their own leader ids/embeddings) needs no algorithm here,
-/// since it's handled by the builder directly.
+/// How to pick which items become cluster leaders.
 #[derive(Debug, Clone, Copy)]
 pub enum RepresentativeStrategy {
     Offset,
     Random,
 }
 
-/// Picks `total_clusters` leader ids out of `0..total_items`, sorted
-/// ascending (needed by `collect_representatives`'s per-chunk membership
-/// check).
+/// Picks leader ids out of `0..total_items`, sorted ascending (needed by
+/// `collect_representatives`'s per-chunk membership check). Returns
+/// `total_items` divided by `target_cluster_items`, rounded up.
 pub fn select_representative_ids(
     total_items: usize,
     target_cluster_items: usize,
@@ -53,10 +51,11 @@ pub enum Representatives {
     PersistedOnly,
 }
 
-/// Streams `source` one on-disk chunk at a time, skipping any chunk that
-/// contains no `selected_ids`, and persists whichever vecs match to
-/// `rep_embeddings`/`rep_item_ids`. `build_tree` reads them back from
-/// disk itself, once per non-leaf pass; this never keeps a copy in memory.
+/// Streams `source` in memory-budgeted batches (each at least one full
+/// on-disk chunk), skipping any batch that contains no `selected_ids`,
+/// and persists whichever vecs match to `rep_embeddings`/`rep_item_ids`.
+/// `build_tree` reads them back from disk itself, once per non-leaf pass;
+/// this never keeps a copy in memory.
 ///
 /// `selected_ids` must already be sorted ascending.
 pub fn collect_representatives(
@@ -72,8 +71,7 @@ pub fn collect_representatives(
     let tracked_budget = (memory_limit_bytes as f64 * TRACKED_MEMORY_FRACTION) as usize;
     let bytes_per_vec = (dim * size_of::<f32>()).max(1);
     let memory_floor_vecs = (tracked_budget / bytes_per_vec).max(1);
-    // batch_vecs = max(natural_batch_vecs, memory_floor_vecs)
-    let batch_vecs = source.natural_batch_vecs(fallback_batch_vecs).max(memory_floor_vecs);
+    let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs);
     let selected: Vec<u32> = selected_ids.to_vec();
 
     let mut start = 0;
@@ -87,7 +85,7 @@ pub fn collect_representatives(
             start = end;
             continue;
         }
-        log::debug!("processing chunk vecs {start}..{end} ({} matched representatives)", matched_ids.len());
+        log::debug!("processing batch vecs {start}..{end} ({} matched representatives)", matched_ids.len());
 
         let batch = source.read_vecs(start, end);
         let matched_vec_indices: Vec<usize> = matched_ids.iter().map(|&id| id as usize - start).collect();

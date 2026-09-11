@@ -10,7 +10,7 @@ use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArrayBuilder};
 use zarrs::filesystem::FilesystemStore;
 
-use ecp_core::build::builder::Builder;
+use ecp_core::build::builder::{Builder, DEFAULT_MAX_CHUNK_BYTES};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::search::Index;
@@ -73,7 +73,7 @@ fn builder_produces_a_structure_that_searches_correctly() {
     );
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
 
-    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, None);
+    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 
@@ -110,7 +110,7 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
     let target_cluster_items = 3;
     let r = d / target_cluster_items; // 27
 
-    let mut builder = Builder::create(&index_path, total_levels, Metric::L2, false, 1_000_000_000, None);
+    let mut builder = Builder::create(&index_path, total_levels, Metric::L2, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
     builder.select_representatives(&dataset, target_cluster_items, RepresentativeStrategy::Offset, 1000);
     builder.build(&dataset, 1000);
 
@@ -159,7 +159,7 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
     let r = d / target_cluster_items; // 4
     assert_eq!(r, ns.pow(total_levels) as usize, "test setup: r must equal ns^total_levels");
 
-    let mut builder = Builder::create(&index_path, total_levels, Metric::L2, false, 1_000_000_000, None);
+    let mut builder = Builder::create(&index_path, total_levels, Metric::L2, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
     builder.select_representatives(&dataset, target_cluster_items, RepresentativeStrategy::Offset, 1000);
     builder.build(&dataset, 1000);
 
@@ -194,7 +194,7 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     );
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
 
-    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, None);
+    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, None, DEFAULT_MAX_CHUNK_BYTES);
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 
@@ -227,7 +227,7 @@ fn explicit_f16_downcasts_an_f32_source_and_still_searches() {
     );
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
 
-    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, Some(EmbeddingDtype::F16));
+    let mut builder = Builder::create(&index_path, 2, Metric::L2, false, 1_000_000_000, Some(EmbeddingDtype::F16), DEFAULT_MAX_CHUNK_BYTES);
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
 

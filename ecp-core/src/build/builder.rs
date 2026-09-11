@@ -53,6 +53,7 @@ pub struct Builder {
     is_normalized: bool,
     memory_limit_bytes: usize,
     embedding_dtype: Option<EmbeddingDtype>,
+    max_chunk_bytes: usize,
     chunk_shape: Vec<u64>,
     representatives: Option<Representatives>,
     node_size: usize,
@@ -70,6 +71,7 @@ impl Builder {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
+        max_chunk_bytes: usize,
     ) -> Self {
         write_index_info(&store, levels, metric, is_normalized);
         Builder {
@@ -79,6 +81,7 @@ impl Builder {
             is_normalized,
             memory_limit_bytes,
             embedding_dtype,
+            max_chunk_bytes,
             chunk_shape: Vec::new(),
             representatives: None,
             node_size: 0,
@@ -94,11 +97,12 @@ impl Builder {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
+        max_chunk_bytes: usize,
     ) -> Self {
         log::info!("creating index at {}", index_path.display());
         let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(index_path).expect("Failed to create store"));
-        Self::new(store, levels, metric, is_normalized, memory_limit_bytes, embedding_dtype)
+        Self::new(store, levels, metric, is_normalized, memory_limit_bytes, embedding_dtype, max_chunk_bytes)
     }
 
     /// Picks leaders out of `source` via `strategy` and persists them to
@@ -112,7 +116,7 @@ impl Builder {
         fallback_batch_vecs: usize,
     ) {
         let (total_items, dim) = source.shape();
-        self.chunk_shape = vec![calculate_chunk_size(dim, DEFAULT_MAX_CHUNK_BYTES), dim as u64];
+        self.chunk_shape = vec![calculate_chunk_size(dim, self.max_chunk_bytes), dim as u64];
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype());
 
         let selected_ids = select_representative_ids(total_items, target_cluster_items, strategy);
@@ -138,7 +142,7 @@ impl Builder {
     /// clustering step.
     pub fn select_representatives_custom(&mut self, ids: Array1<u32>, embeddings: Array2<f32>) {
         let dim = embeddings.ncols();
-        self.chunk_shape = vec![calculate_chunk_size(dim, DEFAULT_MAX_CHUNK_BYTES), dim as u64];
+        self.chunk_shape = vec![calculate_chunk_size(dim, self.max_chunk_bytes), dim as u64];
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);
         zarrs_append(
             &self.store,

@@ -21,11 +21,10 @@ pub(super) fn compressor() -> Vec<Arc<dyn BytesToBytesCodecTraits>> {
 
 /// Creates (on the first call for a given path) or grows and appends to a
 /// paired embeddings+ids array. `dtype` sets the embeddings array's
-/// precision (f32 or f16); the ids array is always uint32. Used for a
-/// node's `embeddings`/`child_key`, or the representative set's
-/// `rep_embeddings`/`rep_item_ids`.
-/// The `zarrs`-backed implementation; a future flat binary format
-/// would get its own `bin_append`.
+/// precision (f32 or f16); the ids array is always uint32. `chunk_shape`
+/// only applies on creation; a later call's value is ignored once the
+/// array exists. Used for a node's `embeddings`/`child_key`, or the
+/// representative set's `rep_embeddings`/`rep_item_ids`.
 pub fn zarrs_append(
     store: &ReadableWritableListableStorage,
     embeddings_path: &str,

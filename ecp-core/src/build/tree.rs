@@ -86,8 +86,7 @@ pub fn write_index_root(
 /// Creates its `embeddings`/`child_key`/`border` arrays on the first call
 /// for that path, appends to them on every later call.
 ///
-/// `border` is reserved for a future pruning feature; it's left at its
-/// fill value here, never populated.
+/// `border` is left at its fill value here, never populated.
 pub fn append_node_batch(
     store: &ReadableWritableListableStorage,
     group_path: &str,
@@ -114,8 +113,8 @@ pub fn append_node_batch(
 
 /// Caches a node's `(centroids, children)` across every batch and pass of
 /// one `build_tree` call, so a shallow node isn't re-read from disk every
-/// time a deeper pass routes through it. Bounded by `limit_bytes`
-/// (adjusted per pass via `set_limit`, since it depends on that pass's
+/// time a deeper pass routes through it. Unbounded until `set_limit` gives
+/// it a real budget (adjusted per pass, since it depends on that pass's
 /// batch size); least-recently-used entries are evicted first.
 struct NodeCache {
     state: Mutex<(LruCache<String, Arc<(Array2<f32>, Array1<u32>)>>, usize, usize)>,
@@ -123,7 +122,7 @@ struct NodeCache {
 
 impl NodeCache {
     fn new() -> Self {
-        NodeCache { state: Mutex::new((LruCache::unbounded(), 0, 0)) }
+        NodeCache { state: Mutex::new((LruCache::unbounded(), 0, usize::MAX)) }
     }
 
     fn entry_bytes(entry: &(Array2<f32>, Array1<u32>)) -> usize {
@@ -194,7 +193,7 @@ struct BuildConfig<'a> {
 /// an earlier `target_level` pass), splits the batch by nearest centroid,
 /// and recurses into each non-empty child.
 fn add_data(
-    config: &BuildConfig, 
+    config: &BuildConfig,
     level: u32,
     node_idx: u32,
     data_embeddings: &Array2<f32>,
@@ -288,8 +287,7 @@ pub fn build_tree(
             tracked_budget - nodes_bytes_needed
         };
         let memory_floor_vecs = (batch_share / bytes_per_vec).max(1);
-        // batch_vecs = max(natural_batch_vecs, memory_floor_vecs)
-        let batch_vecs = source.natural_batch_vecs(fallback_batch_vecs).max(memory_floor_vecs);
+        let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs);
         node_cache.set_limit(tracked_budget.saturating_sub(batch_vecs * bytes_per_vec));
 
         let config =

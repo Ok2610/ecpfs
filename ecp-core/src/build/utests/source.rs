@@ -27,7 +27,7 @@ fn write_embeddings_with_chunk_shape(
 }
 
 #[test]
-fn zarr_source_reports_shape_and_reads_vec_ranges() {
+fn zarr_source_reports_shape_and_reads_vector_ranges() {
     let store = new_memory_store();
     write_embeddings(&store, &array![[0.0f32, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0]]);
 
@@ -43,7 +43,7 @@ fn zarr_source_reports_shape_and_reads_vec_ranges() {
 }
 
 #[test]
-fn zarr_source_reports_its_actual_on_disk_chunk_vec_count() {
+fn zarr_source_reports_its_actual_on_disk_chunk_vector_count() {
     let store = new_memory_store();
     write_embeddings_with_chunk_shape(
         &store,
@@ -56,7 +56,7 @@ fn zarr_source_reports_its_actual_on_disk_chunk_vec_count() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.natural_batch_vecs(999), 2, "fallback must be ignored when the source is chunked");
+    assert_eq!(source.natural_chunk_vecs(999), 2, "fallback must be ignored when the source is chunked");
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn from_zarr_reads_the_same_as_the_zarr_variant() {
 }
 
 #[test]
-fn memory_source_reports_shape_and_reads_vec_ranges_with_no_io() {
+fn memory_source_reports_shape_and_reads_vector_ranges() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0], [2.0, 3.0], [4.0, 5.0]]);
 
     assert_eq!(source.shape(), (3, 2));
@@ -79,10 +79,20 @@ fn memory_source_reports_shape_and_reads_vec_ranges_with_no_io() {
 }
 
 #[test]
-fn memory_source_natural_batch_vecs_is_always_the_fallback() {
+fn memory_source_natural_chunk_vecs_is_always_the_fallback() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
-    assert_eq!(source.natural_batch_vecs(7), 7);
+    assert_eq!(source.natural_chunk_vecs(7), 7);
+}
+
+#[test]
+fn chunk_aligned_batch_vecs_rounds_the_memory_floor_up_to_a_whole_chunk() {
+    let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
+
+    assert_eq!(source.chunk_aligned_batch_vecs(1, 1000), 1000, "a floor below one chunk still returns a whole chunk");
+    assert_eq!(source.chunk_aligned_batch_vecs(1000, 1000), 1000, "an exact multiple stays unchanged");
+    assert_eq!(source.chunk_aligned_batch_vecs(1001, 1000), 2000, "any excess over a whole chunk rounds up to the next one");
+    assert_eq!(source.chunk_aligned_batch_vecs(2500, 1000), 3000);
 }
 
 #[test]
@@ -119,4 +129,30 @@ fn memory_source_native_dtype_is_always_f32() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
     assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::F32);
+}
+
+fn int32_source() -> (std::sync::Arc<zarrs::storage::store::MemoryStore>, EmbeddingsSource) {
+    let store = new_memory_store();
+    let shape = vec![2u64, 2];
+    let array = ArrayBuilder::new(shape.clone(), shape, zarrs::array::data_type::int32(), 0i32)
+        .build(store.clone(), "/embeddings")
+        .expect("failed to build embeddings array");
+    array.store_metadata().expect("failed to store embeddings metadata");
+
+    let source = EmbeddingsSource::Zarr { store: as_readable_listable(&store), path: "/embeddings".to_string() };
+    (store, source)
+}
+
+#[test]
+#[should_panic(expected = "unsupported embeddings dtype")]
+fn zarr_native_dtype_panics_for_unsupported_dtype() {
+    let (_store, source) = int32_source();
+    let _ = source.native_dtype();
+}
+
+#[test]
+#[should_panic(expected = "unsupported embeddings dtype")]
+fn zarr_read_vecs_panics_for_unsupported_dtype() {
+    let (_store, source) = int32_source();
+    let _ = source.read_vecs(0, 2);
 }

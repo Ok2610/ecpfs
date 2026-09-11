@@ -37,10 +37,20 @@ fn random_and_offset_agree_on_leader_count_for_uneven_division() {
     assert_eq!(offset_ids.len(), random_ids.len());
 }
 
+#[test]
+fn fits_in_memory_compares_total_bytes_against_the_limit_inclusively() {
+    // 10 vecs * 2 dims * 4 bytes/f32 = 80 bytes.
+    assert!(fits_in_memory(10, 2, 80), "limit equal to the exact byte count must still fit");
+    assert!(!fits_in_memory(10, 2, 79), "one byte under the exact count must not fit");
+}
+
+#[test]
+fn fits_in_memory_saturates_instead_of_overflow_panicking() {
+    assert!(!fits_in_memory(usize::MAX, 2, 1_000), "saturating_mul must clamp rather than overflow");
+}
+
 /// 3 chunks of 2 vecs each (vecs 0-1, 2-3, 4-5); ids 1 and 5 fall in the
-/// first and last chunks, so the middle chunk (vecs 2-3) must be skipped
-/// entirely - if the skip logic were off by one, or the chunk-alignment
-/// wrong, this would either miss a match or read the skipped chunk.
+/// first and last chunks, leaving the middle chunk (vecs 2-3) unmatched.
 fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, EmbeddingsSource) {
     let store = crate::test_fixtures::new_memory_store();
     let embeddings = ndarray::array![
@@ -62,6 +72,9 @@ fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, Embeddi
     (store, source)
 }
 
+/// `memory_limit_bytes = 1_000_000` makes `batch_vecs` far exceed the
+/// fixture's 6 total items, also proving `end`'s `.min(total_items)` clamp
+/// holds; without it, `read_vecs` would panic on an out-of-bounds range.
 #[test]
 fn collect_representatives_persists_matched_vecs_and_ids() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
@@ -85,7 +98,10 @@ fn collect_representatives_persists_matched_vecs_and_ids() {
 }
 
 #[test]
-fn collect_representatives_persists_regardless_of_memory_limit() {
+/// `memory_limit_bytes = 0` collapses `batch_vecs` to the natural chunk
+/// size (2), so this is the test that actually walks all 3 chunks and
+/// exercises the middle one's skip branch.
+fn collect_representatives_persists_the_same_result_when_batching_skips_a_chunk() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
     let dest_store = crate::test_fixtures::new_memory_store();
     let dest = crate::test_fixtures::as_readable_writable_listable(&dest_store);

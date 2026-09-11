@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -27,6 +28,7 @@ enum Command {
     BuildIndex(BuildIndexArgs),
     Search(SearchArgs),
     Info(InfoArgs),
+    CleanupQueries(CleanupQueriesArgs),
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -211,15 +213,18 @@ fn build_index(args: BuildIndexArgs) {
     builder.build(&source, args.fallback_batch_rows);
 }
 
-/// Runs a single query, pulled from row `query_row` of `query_file`, against
-/// an existing index.
+/// Runs a query against an index, or continues a persisted one with
+/// `--resume`. Persists before exiting; prints `query_id` as the first
+/// output line.
 #[derive(clap::Args)]
 struct SearchArgs {
     /// Path to the index to search.
     index_path: PathBuf,
 
-    /// Zarr or HDF5 file to read the query vector from.
-    query_file: PathBuf,
+    /// Zarr or HDF5 file to read the query vector from. Required unless
+    /// --resume is given.
+    #[arg(required_unless_present = "resume")]
+    query_file: Option<PathBuf>,
 
     /// Row within `query_file` to use as the query.
     #[arg(long, default_value_t = 0)]
@@ -250,6 +255,12 @@ struct SearchArgs {
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
+    /// Resume a persisted query (id printed as this tool's first output
+    /// line) instead of starting a new one. Ignores query_file/query_row/
+    /// query_grp_name.
+    #[arg(long, conflicts_with = "query_file")]
+    resume: Option<usize>,
+
     #[command(flatten)]
     logging: LoggingArgs,
 }
@@ -258,20 +269,38 @@ fn search(args: SearchArgs) {
     args.logging.init_if_requested();
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
     let index = Index::load(args.index_path, Some(memory_limit_bytes));
-    let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
-    let query = source
-        .read_vecs(args.query_row, args.query_row + 1)
-        .row(0)
-        .to_owned();
     let exclude = args.exclude.into_iter().collect();
 
-    let (items, _query_id) = index.new_search(
-        query,
-        args.k,
-        args.search_exp,
-        args.max_increments,
-        &exclude,
-    );
+    let (items, query_id) = if let Some(query_id) = args.resume {
+        let items = index.get_next_k_items(
+            query_id,
+            args.k,
+            args.search_exp,
+            args.max_increments,
+            &exclude,
+        );
+        (items, query_id)
+    } else {
+        let query_file = args
+            .query_file
+            .expect("clap enforces this when --resume is absent");
+        let source = EmbeddingsSource::open(&query_file, &args.query_grp_name);
+        let query = source
+            .read_vecs(args.query_row, args.query_row + 1)
+            .row(0)
+            .to_owned();
+        index.new_search(
+            query,
+            args.k,
+            args.search_exp,
+            args.max_increments,
+            &exclude,
+        )
+    };
+
+    index.shutdown();
+
+    println!("query_id\t{query_id}");
     for (distance, id) in items {
         println!("{id}\t{distance}");
     }
@@ -293,11 +322,43 @@ fn info(args: InfoArgs) {
     println!("Total Representatives: {}", info.total_representatives);
 }
 
+/// Erases persisted queries nobody has resumed, so `/queries/` doesn't
+/// grow forever on an index `search` keeps being run against.
+#[derive(clap::Args)]
+struct CleanupQueriesArgs {
+    /// Path to the index to clean up.
+    index_path: PathBuf,
+
+    /// Erase any persisted query older than this many hours.
+    #[arg(long)]
+    older_than_hours: u64,
+
+    #[command(flatten)]
+    logging: LoggingArgs,
+}
+
+fn cleanup_queries(args: CleanupQueriesArgs) {
+    args.logging.init_if_requested();
+    let index = Index::load(args.index_path, None);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after 1970")
+        .as_secs();
+    let cutoff = now.saturating_sub(args.older_than_hours * 3600);
+
+    let erased = index.cleanup_persisted_queries_older_than(cutoff);
+    println!(
+        "erased {erased} persisted quer{}",
+        if erased == 1 { "y" } else { "ies" }
+    );
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::BuildIndex(args) => build_index(args),
         Command::Search(args) => search(args),
         Command::Info(args) => info(args),
+        Command::CleanupQueries(args) => cleanup_queries(args),
     }
 }

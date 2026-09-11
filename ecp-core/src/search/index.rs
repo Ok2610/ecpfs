@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ndarray::Array1;
@@ -12,7 +12,7 @@ use moka::sync::Cache;
 use zarrs::array::Array;
 use zarrs::array::data_type::{float16, float32};
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::ReadableListableStorage;
+use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
 use ordered_float::NotNan;
 use std::collections::BinaryHeap;
@@ -20,6 +20,9 @@ use std::collections::BinaryHeap;
 use crate::search::node::Node;
 use crate::utils::HeapEntry;
 use crate::utils::{Metric, calculate_distances};
+
+#[path = "persistence.rs"]
+mod persistence;
 
 /// Fraction of `memory_limit_bytes` reserved for in-flight query state,
 /// leaving the rest for the node cache. Mirrors `TRACKED_MEMORY_FRACTION`
@@ -46,8 +49,11 @@ type QueryCache = Cache<usize, Arc<Mutex<QueryState>>>;
 /// legitimately-referenced id can still turn out to be one of the missing
 /// ones (`Node::embeddings`/`children` already handle that by returning
 /// `None`).
+///
+/// `queries` is lazy the same way: `load` only discovers persisted ids,
+/// not their content (`get_or_load_query` reads on first use).
 pub struct Index {
-    store: ReadableListableStorage,
+    store: ReadableWritableListableStorage,
     metric: Metric,
     is_normalized: bool,
     levels: u32,
@@ -56,6 +62,7 @@ pub struct Index {
     queries: QueryCache,
     next_query_id: AtomicUsize,
     memory_limit_bytes: Option<usize>,
+    accepting: AtomicBool,
 }
 
 impl Index {
@@ -65,13 +72,16 @@ impl Index {
     /// `lvl_N/node_M` group). `memory_limit_bytes` caps how many bytes of
     /// node and query data stay resident.
     pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Self {
-        let store: ReadableListableStorage =
+        let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
         Self::load_from_store(store, memory_limit_bytes)
     }
 
-    fn load_from_store(store: ReadableListableStorage, memory_limit_bytes: Option<usize>) -> Self {
-        let (levels, metric, is_normalized) = read_info_fields(&store);
+    fn load_from_store(
+        store: ReadableWritableListableStorage,
+        memory_limit_bytes: Option<usize>,
+    ) -> Self {
+        let (levels, metric, is_normalized) = read_info_fields(&store.clone().readable_listable());
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
@@ -91,7 +101,12 @@ impl Index {
             )
         };
 
-        let (nodes, queries) = Self::build_caches(memory_limit_bytes);
+        let (nodes, queries) = Self::build_caches(memory_limit_bytes, store.clone());
+
+        let next_query_id = persistence::query_ids_on_disk(&store)
+            .into_iter()
+            .max()
+            .map_or(0, |max_id| max_id + 1);
 
         Index {
             store,
@@ -101,8 +116,9 @@ impl Index {
             root,
             nodes,
             queries,
-            next_query_id: AtomicUsize::new(0),
+            next_query_id: AtomicUsize::new(next_query_id),
             memory_limit_bytes,
+            accepting: AtomicBool::new(true),
         }
     }
 
@@ -112,7 +128,13 @@ impl Index {
     /// `max_capacity` caps the whole tree; separate per-level caches would
     /// each get their own capacity instead, multiplying the effective
     /// limit by the level count.
-    fn build_caches(memory_limit_bytes: Option<usize>) -> (NodeCache, QueryCache) {
+    ///
+    /// `queries`'s eviction listener persists (or erases) whatever moka
+    /// evicts under memory pressure.
+    fn build_caches(
+        memory_limit_bytes: Option<usize>,
+        store: ReadableWritableListableStorage,
+    ) -> (NodeCache, QueryCache) {
         let mut nodes_builder = Cache::builder();
         let mut queries_builder = Cache::builder();
 
@@ -143,7 +165,13 @@ impl Index {
                 );
             })
             .build();
-        let queries = queries_builder.build();
+        let queries = queries_builder
+            .eviction_listener(move |query_id, state_arc: Arc<Mutex<QueryState>>, cause| {
+                log::debug!("evicting query_id={query_id} cause={cause:?}");
+                let state = state_arc.lock().unwrap();
+                persistence::persist_or_erase(&store, *query_id, &state);
+            })
+            .build();
 
         (nodes, queries)
     }
@@ -159,7 +187,7 @@ impl Index {
     /// once per query) would defeat the caching it's meant to control.
     pub fn set_memory_limit_bytes(&mut self, memory_limit_bytes: Option<usize>) {
         self.memory_limit_bytes = memory_limit_bytes;
-        let (new_nodes, new_queries) = Self::build_caches(memory_limit_bytes);
+        let (new_nodes, new_queries) = Self::build_caches(memory_limit_bytes, self.store.clone());
         for (key, value) in self.nodes.iter() {
             new_nodes.insert(*key, value);
         }
@@ -190,21 +218,27 @@ impl Index {
         };
         self.nodes.get_with((lvl, node_id), || {
             Arc::new(Node::new(
-                self.store.clone(),
+                self.store.clone().readable_listable(),
                 format!("/lvl_{}/node_{node_id}", lvl + 1),
                 child_key.to_string(),
             ))
         })
     }
 
+    /// Cache miss falls back to a single-flight disk load; `None` if truly
+    /// unknown.
+    fn get_or_load_query(&self, query_id: usize) -> Option<Arc<Mutex<QueryState>>> {
+        self.queries.optionally_get_with(query_id, || {
+            persistence::load_query(&self.store, query_id).map(|state| Arc::new(Mutex::new(state)))
+        })
+    }
+
     /// Drains up to `k` ready items from `query_id`'s buffer. A `query_id`
-    /// not found (evicted under memory pressure, or invalid) yields an
-    /// empty result rather than panicking, since eviction is expected
-    /// behavior, not a caller bug. An evicted query's progress is lost for
-    /// now; persisting it to disk for later recovery is the next piece of
-    /// work after this lands.
+    /// not found anywhere (in memory, on disk, or invalid) yields an empty
+    /// result rather than panicking, since that's expected behavior, not a
+    /// caller bug.
     fn drain_items(&self, query_id: usize, k: usize) -> Vec<(NotNan<f32>, u32)> {
-        match self.queries.get(&query_id) {
+        match self.get_or_load_query(query_id) {
             Some(state_arc) => {
                 let mut state = state_arc.lock().unwrap();
                 let cnt = state.items.len().min(k);
@@ -220,12 +254,30 @@ impl Index {
         self.nodes.weighted_size() as usize
     }
 
+    /// Stops accepting new work and persists every currently-held query,
+    /// erasing one with nothing left worth resuming. Idempotent. `&self`
+    /// so it stays callable alongside concurrent readers.
+    pub fn shutdown(&self) {
+        self.accepting.store(false, Ordering::SeqCst);
+        for (query_id, state_arc) in self.queries.iter() {
+            let state = state_arc.lock().unwrap();
+            persistence::persist_or_erase(&self.store, *query_id, &state);
+        }
+    }
+
+    /// Erases every persisted query older than `cutoff_unix_secs` (Unix
+    /// seconds). Returns how many were erased.
+    pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> usize {
+        persistence::cleanup_older_than(&self.store, cutoff_unix_secs)
+    }
+
     /// Starts a new query, spending `max_increments` retries on one
     /// `incremental_search` pass, then drains up to `k` items. Returns
-    /// `(items, query_id)`; resume the same query later via
-    /// `get_next_k_items`. Each item's score ranks ascending (lower is
-    /// better) rather than measuring a literal distance, since IP's score
-    /// is a negated similarity where a strong match can be negative.
+    /// `(items, query_id)`. Resume the same query later via
+    /// `get_next_k_items` using `query_id`. Each item's score ranks
+    /// ascending (lower is better) rather than measuring a literal distance,
+    /// since IP's score is a negated similarity where a strong match can be
+    /// negative.
     pub fn new_search(
         &self,
         query: Array1<f32>,
@@ -235,6 +287,9 @@ impl Index {
         exclude: &HashSet<u32>,
     ) -> (Vec<(NotNan<f32>, u32)>, usize) {
         let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
+        if !self.accepting.load(Ordering::SeqCst) {
+            return (Vec::new(), query_id);
+        }
         self.queries.insert(
             query_id,
             Arc::new(Mutex::new(QueryState {
@@ -254,7 +309,7 @@ impl Index {
     /// doubles `search_exp` and retries (up to `max_increments`, `-1` =
     /// unlimited) before giving up with whatever's found. Mutates the
     /// query's state in place; nothing is returned. A `query_id` not found
-    /// is a no-op, same as `drain_items`.
+    /// is a no-op, same as `drain_items`. Also a no-op after `shutdown`.
     pub fn incremental_search(
         &self,
         query_id: usize,
@@ -263,7 +318,10 @@ impl Index {
         max_increments: i32,
         exclude: &HashSet<u32>,
     ) {
-        let Some(state_arc) = self.queries.get(&query_id) else {
+        if !self.accepting.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(state_arc) = self.get_or_load_query(query_id) else {
             return;
         };
         {
@@ -394,7 +452,8 @@ impl Index {
     /// the buffer with one more `incremental_search` pass if fewer than
     /// `k` items are ready and the tree isn't exhausted, then drains up
     /// to `k`. Same score convention as `new_search`. A `query_id` not
-    /// found yields an empty result, same as `drain_items`.
+    /// found yields an empty result, same as `drain_items`. Also empty
+    /// after `shutdown`.
     pub fn get_next_k_items(
         &self,
         query_id: usize,
@@ -403,9 +462,12 @@ impl Index {
         max_increments: i32,
         exclude: &HashSet<u32>,
     ) -> Vec<(NotNan<f32>, u32)> {
-        let Some(state_arc) = self.queries.get(&query_id) else {
+        if !self.accepting.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        let Some(state_arc) = self.get_or_load_query(query_id) else {
             log::debug!(
-                "get_next_k_items: query_id={query_id} not found (evicted or invalid), returning no items"
+                "get_next_k_items: query_id={query_id} not found (evicted, invalid, or never persisted), returning no items"
             );
             return Vec::new();
         };

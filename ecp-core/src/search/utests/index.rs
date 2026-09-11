@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_fixtures::{
-    as_readable_listable, new_memory_store, write_index_info, write_index_root, write_node,
-    write_rep_item_ids, write_total_items,
+    as_readable_listable, as_readable_writable_listable, new_memory_store, write_index_info,
+    write_index_root, write_node, write_rep_item_ids, write_total_items,
 };
 use ndarray::array;
 
@@ -56,7 +56,7 @@ fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
         &array![6u32, 7],
     );
 
-    let index = Index::load_from_store(as_readable_listable(&store), None);
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
@@ -134,7 +134,7 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
         &array![6u32, 7],
     );
 
-    let index = Index::load_from_store(as_readable_listable(&store), None);
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -274,7 +274,7 @@ fn build_test_index(metric: Metric) -> Index {
     // Struct literal, not `Index::load`, so the fixture can use an
     // in-memory store instead of a real `FilesystemStore`.
     Index {
-        store: as_readable_listable(&store),
+        store: as_readable_writable_listable(&store),
         metric,
         is_normalized: false,
         levels: 2,
@@ -283,6 +283,7 @@ fn build_test_index(metric: Metric) -> Index {
         queries: Cache::builder().build(),
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
+        accepting: AtomicBool::new(true),
     }
 }
 
@@ -619,7 +620,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
     ]);
 
     Index {
-        store: as_readable_listable(&store),
+        store: as_readable_writable_listable(&store),
         metric,
         is_normalized: false,
         levels: 1,
@@ -628,6 +629,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         queries: Cache::builder().build(),
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
+        accepting: AtomicBool::new(true),
     }
 }
 
@@ -804,7 +806,7 @@ fn build_three_level_test_index() -> Index {
     ]);
 
     Index {
-        store: as_readable_listable(&store),
+        store: as_readable_writable_listable(&store),
         metric: Metric::L2,
         is_normalized: false,
         levels: 3,
@@ -813,6 +815,7 @@ fn build_three_level_test_index() -> Index {
         queries: Cache::builder().build(),
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
+        accepting: AtomicBool::new(true),
     }
 }
 
@@ -900,4 +903,259 @@ fn concurrent_searches_from_multiple_threads_return_correct_results() {
     for handle in handles {
         handle.join().expect("worker thread panicked");
     }
+}
+
+/// Builds the same 4-leader/8-item IVF-style fixture used by
+/// `load_from_store_reconstructs_ivf_style_index_and_searches_correctly`,
+/// but hands back the backing store too, so a test can load a second,
+/// independent `Index` against it later to simulate a process restart.
+fn write_ivf_style_fixture() -> Arc<zarrs::storage::store::MemoryStore> {
+    let store = new_memory_store();
+    write_index_info(&store, 1, "L2", false);
+    write_index_root(
+        &store,
+        &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_0",
+        &array![[0.0f32, 0.0], [0.4, 0.4]],
+        "item_ids",
+        &array![0u32, 1],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_1",
+        &array![[1.0f32, 1.0], [1.4, 1.4]],
+        "item_ids",
+        &array![2u32, 3],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_2",
+        &array![[10.0f32, 10.0], [10.4, 10.4]],
+        "item_ids",
+        &array![4u32, 5],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_3",
+        &array![[11.0f32, 11.0], [11.4, 11.4]],
+        "item_ids",
+        &array![6u32, 7],
+    );
+    store
+}
+
+#[test]
+fn shutdown_then_reload_resumes_a_query_from_a_fresh_index() {
+    let store = write_ivf_style_fixture();
+
+    let first_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (first, query_id) = first_process.new_search(query, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        first.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    first_process.shutdown();
+
+    let second_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let second = second_process.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+}
+
+#[test]
+fn next_query_id_is_seeded_above_every_persisted_id_after_reload() {
+    let store = write_ivf_style_fixture();
+
+    let first_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = first_process.new_search(query.clone(), 2, 4, -1, &HashSet::new());
+    first_process.shutdown();
+
+    let second_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let (_, new_id) = second_process.new_search(query, 2, 4, -1, &HashSet::new());
+    assert!(
+        new_id > query_id,
+        "new_id ({new_id}) must exceed the reloaded id ({query_id})"
+    );
+}
+
+#[test]
+fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
+    let index = build_test_index(Metric::L2);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query.clone(), 2, 4, -1, &HashSet::new());
+    index.shutdown();
+
+    let after_shutdown = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
+    assert!(
+        after_shutdown.is_empty(),
+        "get_next_k_items must no-op after shutdown"
+    );
+
+    let (new_items, new_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
+    assert!(new_items.is_empty(), "new_search must no-op after shutdown");
+    assert_ne!(new_id, query_id, "a fresh id is still allocated");
+
+    let never_found = index.get_next_k_items(new_id, 2, 4, -1, &HashSet::new());
+    assert!(
+        never_found.is_empty(),
+        "the post-shutdown id was never actually searched or cached"
+    );
+}
+
+#[test]
+fn shutdown_is_idempotent() {
+    let index = build_test_index(Metric::L2);
+    let query: Array1<f32> = array![0.0, 0.0];
+    index.new_search(query, 2, 4, -1, &HashSet::new());
+    index.shutdown();
+    index.shutdown();
+}
+
+/// Excluding every item forces `items` to stay empty even once `tree_pq` is
+/// genuinely drained (not just not-yet-populated), the only way to reach a
+/// real "nothing left to explore, nothing left to hand back" state.
+#[test]
+fn exhausted_query_is_erased_not_persisted() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let exclude: HashSet<u32> = (0..8).collect();
+    let (items, query_id) = index.new_search(query, 4, 4, -1, &exclude);
+    assert!(
+        items.is_empty(),
+        "sanity check: excluding every item must leave nothing found"
+    );
+    index.shutdown();
+
+    let reloaded = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let resumed = reloaded.get_next_k_items(query_id, 4, 4, -1, &HashSet::new());
+    assert!(
+        resumed.is_empty(),
+        "an exhausted query must have been erased, not left resumable"
+    );
+}
+
+#[test]
+fn evicted_query_resumes_correctly_within_the_same_process() {
+    let store = write_ivf_style_fixture();
+
+    let mut index = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
+    assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
+
+    // Capacity this tiny is below any real QueryState's weight, so
+    // set_memory_limit_bytes's synchronous eviction pass evicts the query
+    // just created.
+    index.set_memory_limit_bytes(Some(20));
+    assert_eq!(
+        index.queries.entry_count(),
+        0,
+        "sanity check: the query must have actually been evicted"
+    );
+
+    let second = index.get_next_k_items(query_id, 1, 1, -1, &HashSet::new());
+    assert_eq!(
+        second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1],
+        "an evicted query must resume from disk, not come back empty"
+    );
+}
+
+/// Races `new_search` threads against a concurrent `shutdown()`. A query
+/// still mid-publish when `shutdown` runs may be missing, that's expected;
+/// only checks for no panic/deadlock and that whatever did persist is
+/// internally coherent, no torn write.
+#[test]
+fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
+    let index = Arc::new(build_test_index(Metric::L2));
+    const THREADS: usize = 8;
+    const SEARCHES_PER_THREAD: usize = 20;
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let index = Arc::clone(&index);
+            std::thread::spawn(move || {
+                for _ in 0..SEARCHES_PER_THREAD {
+                    let query: Array1<f32> = array![0.0, 0.0];
+                    let _ = index.new_search(query, 4, 4, -1, &HashSet::new());
+                }
+            })
+        })
+        .collect();
+
+    index.shutdown();
+
+    for handle in handles {
+        handle.join().expect("worker thread panicked");
+    }
+
+    for query_id in 0..(THREADS * SEARCHES_PER_THREAD) {
+        if let Some(state) = persistence::load_query(&index.store, query_id) {
+            let scores: Vec<f32> = state.items.iter().map(|(s, _)| s.into_inner()).collect();
+            assert!(
+                scores.windows(2).all(|w| w[0] <= w[1]),
+                "persisted items for query_id={query_id} are not sorted: {scores:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cleanup_persisted_queries_older_than_erases_stale_entries() {
+    let store = write_ivf_style_fixture();
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
+    index.shutdown();
+
+    assert_eq!(
+        index.cleanup_persisted_queries_older_than(0),
+        0,
+        "nothing is older than the Unix epoch"
+    );
+
+    let erased = index.cleanup_persisted_queries_older_than(u64::MAX);
+    assert_eq!(erased, 1, "any real timestamp is older than u64::MAX");
+
+    let reloaded = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let resumed = reloaded.get_next_k_items(query_id, 1, 1, -1, &HashSet::new());
+    assert!(
+        resumed.is_empty(),
+        "cleanup must have erased the query, nothing left to resume"
+    );
+}
+
+#[test]
+fn repersisting_after_more_progress_reflects_the_latest_state() {
+    let store = write_ivf_style_fixture();
+
+    let first_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = first_process.new_search(query.clone(), 1, 1, -1, &HashSet::new());
+    first_process.shutdown();
+
+    let second_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let drained_more = second_process.get_next_k_items(query_id, 2, 1, -1, &HashSet::new());
+    assert_eq!(
+        drained_more.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    second_process.shutdown();
+
+    let third_process = Index::load_from_store(as_readable_writable_listable(&store), None);
+    let remaining = third_process.get_next_k_items(query_id, 10, 1, -1, &HashSet::new());
+    assert_eq!(
+        remaining.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![3, 4, 5, 6, 7],
+        "must continue from the second process's progress, not the first's stale state"
+    );
 }

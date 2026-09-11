@@ -158,7 +158,7 @@ fn load_reads_a_real_index_from_disk_and_searches_correctly() {
         &array![2u32, 3],
     );
 
-    let mut index = Index::load(index_path, None);
+    let index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 

@@ -5,6 +5,19 @@ use crate::test_fixtures::{
 };
 use ndarray::array;
 
+/// Builds a node cache pre-populated with `((level, node_id), Node)`
+/// entries, for fixtures that hand-construct an `Index` via struct literal
+/// instead of `Index::load`.
+fn nodes_cache(
+    entries: impl IntoIterator<Item = ((usize, u32), Node)>,
+) -> Cache<(usize, u32), Arc<Node>> {
+    let cache = Cache::builder().build();
+    for (key, node) in entries {
+        cache.insert(key, Arc::new(node));
+    }
+    cache
+}
+
 #[test]
 fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
     let store = new_memory_store();
@@ -43,7 +56,7 @@ fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
         &array![6u32, 7],
     );
 
-    let mut index = Index::load_from_store(as_readable_listable(&store), None);
+    let index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
@@ -121,7 +134,7 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
         &array![6u32, 7],
     );
 
-    let mut index = Index::load_from_store(as_readable_listable(&store), None);
+    let index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
     let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
 
@@ -207,9 +220,9 @@ fn build_test_index(metric: Metric) -> Index {
         &array![6u32, 7],
     );
 
-    let lvl_1: HashMap<u32, Node> = HashMap::from([
+    let nodes = nodes_cache([
         (
-            0,
+            (0, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_0".to_string(),
@@ -217,17 +230,15 @@ fn build_test_index(metric: Metric) -> Index {
             ),
         ),
         (
-            1,
+            (0, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_1".to_string(),
                 "node_ids".to_string(),
             ),
         ),
-    ]);
-    let lvl_2: HashMap<u32, Node> = HashMap::from([
         (
-            0,
+            (1, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_0".to_string(),
@@ -235,7 +246,7 @@ fn build_test_index(metric: Metric) -> Index {
             ),
         ),
         (
-            1,
+            (1, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_1".to_string(),
@@ -243,7 +254,7 @@ fn build_test_index(metric: Metric) -> Index {
             ),
         ),
         (
-            2,
+            (1, 2),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_2".to_string(),
@@ -251,7 +262,7 @@ fn build_test_index(metric: Metric) -> Index {
             ),
         ),
         (
-            3,
+            (1, 3),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_3".to_string(),
@@ -268,17 +279,16 @@ fn build_test_index(metric: Metric) -> Index {
         is_normalized: false,
         levels: 2,
         root: array![[0.0f32, 0.0], [1.0, 1.0]], // leader 0 (item 0), leader 1 (item 2)
-        nodes: vec![lvl_1, lvl_2],
-        queries: Vec::new(),
+        nodes,
+        queries: Cache::builder().build(),
+        next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
-        lru: LruCache::unbounded(),
-        resident_bytes: 0,
     }
 }
 
 #[test]
 fn l2_search_returns_nearest_items_in_order() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
@@ -302,7 +312,7 @@ fn l2_search_returns_nearest_items_in_order() {
 /// forces exactly that exit path on every call.
 #[test]
 fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reached() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 8, 100, -1, &HashSet::new());
@@ -328,20 +338,16 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
         vec![0, 1, 2, 3],
         "eviction must not change search results"
     );
+    index.nodes.run_pending_tasks();
     assert!(
-        index.resident_bytes <= 40,
+        index.resident_bytes() <= 40,
         "resident bytes ({}) exceeded the limit",
-        index.resident_bytes
+        index.resident_bytes()
     );
 
-    let still_loaded = index
-        .nodes
-        .iter()
-        .flat_map(|m| m.values())
-        .filter(|n| n.is_loaded())
-        .count();
+    let still_present = index.nodes.entry_count();
     assert!(
-        still_loaded < 6,
+        still_present < 6,
         "expected eviction to have freed at least one of the 6 touched nodes"
     );
 }
@@ -351,13 +357,9 @@ fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
     index.new_search(query, 4, 4, -1, &HashSet::new());
+    index.nodes.run_pending_tasks();
     assert_eq!(
-        index
-            .nodes
-            .iter()
-            .flat_map(|m| m.values())
-            .filter(|n| n.is_loaded())
-            .count(),
+        index.nodes.entry_count(),
         6,
         "sanity check: all 6 nodes loaded with no limit set"
     );
@@ -365,25 +367,20 @@ fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
     index.set_memory_limit_bytes(Some(40));
 
     assert!(
-        index.resident_bytes <= 40,
+        index.resident_bytes() <= 40,
         "resident bytes ({}) exceeded the limit right after lowering it",
-        index.resident_bytes
+        index.resident_bytes()
     );
-    let still_loaded = index
-        .nodes
-        .iter()
-        .flat_map(|m| m.values())
-        .filter(|n| n.is_loaded())
-        .count();
+    let still_present = index.nodes.entry_count();
     assert!(
-        still_loaded < 6,
+        still_present < 6,
         "lowering the limit below current usage must evict immediately, not lazily"
     );
 }
 
 #[test]
 fn l2_search_respects_exclude_set() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = [0].into_iter().collect();
 
@@ -395,7 +392,7 @@ fn l2_search_respects_exclude_set() {
 
 #[test]
 fn incremental_search_resumes_and_drains_remaining_items() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     // First page: nearest 2 items.
@@ -418,7 +415,7 @@ fn incremental_search_resumes_and_drains_remaining_items() {
 /// item 1 buffered.
 #[test]
 fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
@@ -439,7 +436,7 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
 /// large enough to satisfy k on the first pass.
 #[test]
 fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new());
@@ -460,7 +457,7 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
 /// the only branch the test above exercises.
 #[test]
 fn finite_max_increments_still_allows_configured_number_of_retries() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new());
@@ -481,7 +478,7 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
 /// permitted retry), not all 8.
 #[test]
 fn new_search_stops_once_max_increments_is_exhausted() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new());
@@ -505,7 +502,7 @@ fn new_search_stops_once_max_increments_is_exhausted() {
 /// `query_id`s, asserting each stream stays independent throughout.
 #[test]
 fn interleaved_queries_on_the_same_index_stay_independent() {
-    let mut index = build_test_index(Metric::L2);
+    let index = build_test_index(Metric::L2);
     let query_a: Array1<f32> = array![0.0, 0.0];
     let query_b: Array1<f32> = array![11.0, 11.0];
 
@@ -586,9 +583,9 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         &array![6u32, 7],
     );
 
-    let leaf_clusters: HashMap<u32, Node> = HashMap::from([
+    let nodes = nodes_cache([
         (
-            0,
+            (0, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_0".to_string(),
@@ -596,7 +593,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
             ),
         ),
         (
-            1,
+            (0, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_1".to_string(),
@@ -604,7 +601,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
             ),
         ),
         (
-            2,
+            (0, 2),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_2".to_string(),
@@ -612,7 +609,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
             ),
         ),
         (
-            3,
+            (0, 3),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_3".to_string(),
@@ -627,11 +624,10 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         is_normalized: false,
         levels: 1,
         root: array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]], // all 4 leaders
-        nodes: vec![leaf_clusters],
-        queries: Vec::new(),
+        nodes,
+        queries: Cache::builder().build(),
+        next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
-        lru: LruCache::unbounded(),
-        resident_bytes: 0,
     }
 }
 
@@ -724,9 +720,9 @@ fn build_three_level_test_index() -> Index {
         &array![3u32],
     );
 
-    let lvl_1: HashMap<u32, Node> = HashMap::from([
+    let nodes = nodes_cache([
         (
-            0,
+            (0, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_0".to_string(),
@@ -734,17 +730,15 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            1,
+            (0, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_1/node_1".to_string(),
                 "node_ids".to_string(),
             ),
         ),
-    ]);
-    let lvl_2: HashMap<u32, Node> = HashMap::from([
         (
-            0,
+            (1, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_0".to_string(),
@@ -752,7 +746,7 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            1,
+            (1, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_1".to_string(),
@@ -760,7 +754,7 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            2,
+            (1, 2),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_2".to_string(),
@@ -768,17 +762,15 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            3,
+            (1, 3),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_2/node_3".to_string(),
                 "node_ids".to_string(),
             ),
         ),
-    ]);
-    let lvl_3: HashMap<u32, Node> = HashMap::from([
         (
-            0,
+            (2, 0),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_3/node_0".to_string(),
@@ -786,7 +778,7 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            1,
+            (2, 1),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_3/node_1".to_string(),
@@ -794,7 +786,7 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            2,
+            (2, 2),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_3/node_2".to_string(),
@@ -802,7 +794,7 @@ fn build_three_level_test_index() -> Index {
             ),
         ),
         (
-            3,
+            (2, 3),
             Node::new(
                 as_readable_listable(&store),
                 "/lvl_3/node_3".to_string(),
@@ -817,17 +809,16 @@ fn build_three_level_test_index() -> Index {
         is_normalized: false,
         levels: 3,
         root: array![[0.0f32, 0.0], [10.0, 10.0]],
-        nodes: vec![lvl_1, lvl_2, lvl_3],
-        queries: Vec::new(),
+        nodes,
+        queries: Cache::builder().build(),
+        next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
-        lru: LruCache::unbounded(),
-        resident_bytes: 0,
     }
 }
 
 #[test]
 fn three_level_tree_descends_through_intermediate_level() {
-    let mut index = build_three_level_test_index();
+    let index = build_three_level_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
@@ -845,7 +836,7 @@ fn three_level_tree_descends_through_intermediate_level() {
 
 #[test]
 fn levels_1_index_searches_like_ivf_without_panicking() {
-    let mut index = build_ivf_style_index(Metric::L2);
+    let index = build_ivf_style_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
     // In a levels=1 tree every popped node is a leaf, so leaf_cnt (what
@@ -858,4 +849,55 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
+}
+
+/// A `query_id` that was never created (or one that got evicted under
+/// memory pressure) must yield an empty result, not a panic: a purely
+/// memory-pressure-driven eviction shouldn't crash a caller that did
+/// nothing wrong.
+#[test]
+fn missing_query_id_returns_empty_instead_of_panicking() {
+    let index = build_test_index(Metric::L2);
+
+    let items = index.get_next_k_items(999, 4, 4, -1, &HashSet::new());
+    assert!(items.is_empty());
+
+    // A no-op, not a panic.
+    index.incremental_search(999, 4, 4, -1, &HashSet::new());
+}
+
+/// Proves `Index` is actually thread-safe under `&self`, not just
+/// API-compatible with concurrent callers: many threads run full searches
+/// against one shared, warm `Index` at once and each must see the same
+/// correct results a sequential caller would, with no panics, deadlocks,
+/// or cross-query contamination.
+#[test]
+fn concurrent_searches_from_multiple_threads_return_correct_results() {
+    let index = Arc::new(build_test_index(Metric::L2));
+    const THREADS: usize = 8;
+    const SEARCHES_PER_THREAD: usize = 20;
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let index = Arc::clone(&index);
+            std::thread::spawn(move || {
+                for _ in 0..SEARCHES_PER_THREAD {
+                    let query: Array1<f32> = array![0.0, 0.0];
+                    let (items, query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+                    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+                    assert_eq!(ids, vec![0, 1, 2, 3]);
+
+                    // search_exp=4 explores all 4 leaves, so all 8 items are
+                    // already buffered; this page just drains the rest.
+                    let more = index.get_next_k_items(query_id, 4, 4, -1, &HashSet::new());
+                    let more_ids: Vec<u32> = more.iter().map(|(_, id)| *id).collect();
+                    assert_eq!(more_ids, vec![4, 5, 6, 7]);
+                }
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("worker thread panicked");
+    }
 }

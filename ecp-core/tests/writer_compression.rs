@@ -7,10 +7,10 @@
 //! keeps that cheap, on a real filesystem where padding would otherwise
 //! show up as real disk usage.
 
-use ndarray::{array, Array1, Array2};
+use ndarray::{Array1, Array2, array};
+use std::sync::Arc;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableWritableListableStorage;
-use std::sync::Arc;
 
 use ecp_core::build::writer::zarrs_append;
 use ecp_core::utils::EmbeddingDtype;
@@ -20,7 +20,11 @@ fn dir_size(path: &std::path::Path) -> u64 {
     for entry in std::fs::read_dir(path).expect("failed to read dir") {
         let entry = entry.expect("failed to read dir entry");
         let meta = entry.metadata().expect("failed to read metadata");
-        total += if meta.is_dir() { dir_size(&entry.path()) } else { meta.len() };
+        total += if meta.is_dir() {
+            dir_size(&entry.path())
+        } else {
+            meta.len()
+        };
     }
     total
 }
@@ -39,7 +43,15 @@ fn a_mostly_empty_node_stays_small_on_disk_despite_a_large_chunk_shape() {
     let embeddings = Array2::from_elem((3, dim), 1.0f32);
     let ids: Array1<u32> = array![1, 2, 3];
 
-    zarrs_append(&store, "/node/embeddings", "/node/item_ids", &embeddings, &ids, &chunk_shape, EmbeddingDtype::F32);
+    zarrs_append(
+        &store,
+        "/node/embeddings",
+        "/node/item_ids",
+        &embeddings,
+        &ids,
+        &chunk_shape,
+        EmbeddingDtype::F32,
+    );
 
     let actual_size = dir_size(&tmp.path().join("node"));
     let naive_padded_size = chunk_shape[0] * chunk_shape[1] * 4;

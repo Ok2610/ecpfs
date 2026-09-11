@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use ecp_core::build::builder::Builder;
+use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
 use ecp_core::search::Index;
-use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
-use ecp_core::utils::{default_memory_limit_bytes, EmbeddingDtype, Metric};
+use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
 
 /// Default `--memory-limit-gb` for both subcommands: 80% of system RAM.
 fn default_memory_limit_gib() -> usize {
@@ -128,9 +128,11 @@ impl LoggingArgs {
 /// Selects cluster representatives from `embeddings_file`, then builds the
 /// full tree over it into `save_file`.
 #[derive(clap::Args)]
-#[command(after_help = "Thread count is controlled by the RAYON_NUM_THREADS environment variable \
+#[command(
+    after_help = "Thread count is controlled by the RAYON_NUM_THREADS environment variable \
 (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies process-wide, for the \
-lifetime of the run.")]
+lifetime of the run."
+)]
 struct BuildIndexArgs {
     /// Embeddings file with data vectors. Zarr or HDF5 file.
     embeddings_file: PathBuf,
@@ -199,7 +201,12 @@ fn build_index(args: BuildIndexArgs) {
         args.embedding_dtype.into(),
         args.max_chunk_mb * 1024 * 1024,
     );
-    builder.select_representatives(&source, args.target_cluster_items, args.rep_selection.into(), args.fallback_batch_rows);
+    builder.select_representatives(
+        &source,
+        args.target_cluster_items,
+        args.rep_selection.into(),
+        args.fallback_batch_rows,
+    );
     builder.build(&source, args.fallback_batch_rows);
 }
 
@@ -251,10 +258,19 @@ fn search(args: SearchArgs) {
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
     let mut index = Index::load(args.index_path, Some(memory_limit_bytes));
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
-    let query = source.read_vecs(args.query_row, args.query_row + 1).row(0).to_owned();
+    let query = source
+        .read_vecs(args.query_row, args.query_row + 1)
+        .row(0)
+        .to_owned();
     let exclude = args.exclude.into_iter().collect();
 
-    let (items, _query_id) = index.new_search(query, args.k, args.search_exp, args.max_increments, &exclude);
+    let (items, _query_id) = index.new_search(
+        query,
+        args.k,
+        args.search_exp,
+        args.max_increments,
+        &exclude,
+    );
     for (distance, id) in items {
         println!("{id}\t{distance}");
     }

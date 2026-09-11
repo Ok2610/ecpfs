@@ -3,22 +3,22 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ndarray::Array2;
 use ndarray::Array1;
+use ndarray::Array2;
 
 use half::f16;
 use lru::LruCache;
-use zarrs::array::data_type::{float16, float32};
 use zarrs::array::Array;
+use zarrs::array::data_type::{float16, float32};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
-use std::collections::BinaryHeap;
 use ordered_float::NotNan;
+use std::collections::BinaryHeap;
 
 use crate::search::node::Node;
 use crate::utils::HeapEntry;
-use crate::utils::{calculate_distances, Metric};
+use crate::utils::{Metric, calculate_distances};
 
 struct QueryState {
     query: Array1<f32>,
@@ -50,8 +50,7 @@ pub struct Index {
     resident_bytes: usize,
 }
 
-impl Index
-{
+impl Index {
     /// Loads an index from `index_path`, deriving `metric`, `levels`,
     /// `root`, and every level's node paths from the store itself
     /// (`info/levels`, `info/metric`, `index_root/embeddings`, and each
@@ -98,7 +97,9 @@ impl Index
                 .expect("Failed to retrieve index_root/embeddings")
                 .mapv(|x| x.to_f32())
         } else {
-            panic!("unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)")
+            panic!(
+                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
+            )
         };
 
         let nodes = (0..levels).map(|_| HashMap::new()).collect();
@@ -124,7 +125,12 @@ impl Index
     pub fn set_memory_limit_bytes(&mut self, memory_limit_bytes: Option<usize>) {
         self.memory_limit_bytes = memory_limit_bytes;
         if let Some(limit) = memory_limit_bytes {
-            Self::evict_to_ratio(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, limit);
+            Self::evict_to_ratio(
+                &mut self.nodes,
+                &mut self.lru,
+                &mut self.resident_bytes,
+                limit,
+            );
         }
     }
 
@@ -133,7 +139,13 @@ impl Index
     /// disjoint field borrows instead of `&mut self` because `self.queries`
     /// is already borrowed for the whole loop in `incremental_search`, the
     /// caller.
-    fn touch(nodes: &mut [HashMap<u32, Node>], lru: &mut LruCache<(usize, u32), usize>, resident_bytes: &mut usize, lvl: usize, node_id: u32) {
+    fn touch(
+        nodes: &mut [HashMap<u32, Node>],
+        lru: &mut LruCache<(usize, u32), usize>,
+        resident_bytes: &mut usize,
+        lvl: usize,
+        node_id: u32,
+    ) {
         let bytes = nodes[lvl][&node_id].resident_bytes();
         if bytes == 0 {
             return;
@@ -160,17 +172,30 @@ impl Index
         lvl: usize,
         node_id: u32,
     ) -> &'a mut Node {
-        let child_key = if lvl + 1 == levels as usize { "item_ids" } else { "node_ids" };
-        nodes[lvl]
-            .entry(node_id)
-            .or_insert_with(|| Node::new(store.clone(), format!("/lvl_{}/node_{node_id}", lvl + 1), child_key.to_string()))
+        let child_key = if lvl + 1 == levels as usize {
+            "item_ids"
+        } else {
+            "node_ids"
+        };
+        nodes[lvl].entry(node_id).or_insert_with(|| {
+            Node::new(
+                store.clone(),
+                format!("/lvl_{}/node_{node_id}", lvl + 1),
+                child_key.to_string(),
+            )
+        })
     }
 
     /// Evicts least-recently-touched nodes (via `Node::clear_cache`) down to
     /// `EVICT_TO_RATIO` of `limit` rather than just under it, since a cache
     /// sitting right at the limit would otherwise evict again on almost
     /// every subsequent touch. No-ops if already under `limit`.
-    fn evict_to_ratio(nodes: &mut [HashMap<u32, Node>], lru: &mut LruCache<(usize, u32), usize>, resident_bytes: &mut usize, limit: usize) {
+    fn evict_to_ratio(
+        nodes: &mut [HashMap<u32, Node>],
+        lru: &mut LruCache<(usize, u32), usize>,
+        resident_bytes: &mut usize,
+        limit: usize,
+    ) {
         if *resident_bytes <= limit {
             return;
         }
@@ -180,13 +205,20 @@ impl Index
         let mut evicted_count = 0;
         let mut freed_bytes = 0;
         while *resident_bytes > target {
-            let Some(((evict_lvl, evict_node), evicted)) = lru.pop_lru() else { break };
-            nodes[evict_lvl].get_mut(&evict_node).expect("an LRU-tracked node must still be in its level's map").clear_cache();
+            let Some(((evict_lvl, evict_node), evicted)) = lru.pop_lru() else {
+                break;
+            };
+            nodes[evict_lvl]
+                .get_mut(&evict_node)
+                .expect("an LRU-tracked node must still be in its level's map")
+                .clear_cache();
             *resident_bytes -= evicted;
             evicted_count += 1;
             freed_bytes += evicted;
         }
-        log::debug!("evicted {evicted_count} node(s), freed {freed_bytes} bytes, resident now {resident_bytes}/{limit}");
+        log::debug!(
+            "evicted {evicted_count} node(s), freed {freed_bytes} bytes, resident now {resident_bytes}/{limit}"
+        );
     }
 
     /// Starts a new query, spending `max_increments` retries on one
@@ -206,9 +238,9 @@ impl Index
         self.queries.push(QueryState {
             query,
             tree_pq: BinaryHeap::new(),
-            items: Vec::new()
+            items: Vec::new(),
         });
-        let query_id = self.queries.len()-1;
+        let query_id = self.queries.len() - 1;
         self.incremental_search(query_id, k, search_exp, max_increments, exclude);
         let items = &mut self.queries[query_id].items;
         let cnt = items.len().min(k);
@@ -230,10 +262,10 @@ impl Index
         max_increments: i32,
         exclude: &HashSet<u32>,
     ) {
-        let QueryState{
+        let QueryState {
             query,
             tree_pq,
-            items
+            items,
         }: &mut QueryState = &mut self.queries[query_id];
 
         // BinaryHeap only pops the largest score first. IP's similarity is
@@ -251,25 +283,20 @@ impl Index
 
         // Add root to tree if empty (new search)
         if tree_pq.is_empty() {
-            let root_distances: Array1<f32> = calculate_distances(
-                &self.root,
-                query,
-                &self.metric,
-                self.is_normalized,
-            );
+            let root_distances: Array1<f32> =
+                calculate_distances(&self.root, query, &self.metric, self.is_normalized);
             // A 1-level index is IVF-style: node_size == total_clusters, so root
             // already holds every leader and `nodes[0]` is the only (leaf) level.
             // Root entries must be marked as leaves from the start in that case,
             // since there is no intermediate level left to descend through.
             let is_root_leaf = self.levels == 1;
             for i in 0..root_distances.len() {
-                tree_pq.push(
-                    HeapEntry {
-                        score: NotNan::new(sign * root_distances[i]).unwrap(),
-                        is_leaf: is_root_leaf as i32,
-                        level: 0,
-                        node_id: i as u32
-                    });
+                tree_pq.push(HeapEntry {
+                    score: NotNan::new(sign * root_distances[i]).unwrap(),
+                    is_leaf: is_root_leaf as i32,
+                    level: 0,
+                    node_id: i as u32,
+                });
             }
         }
 
@@ -279,23 +306,26 @@ impl Index
                 score: _,
                 is_leaf,
                 level,
-                node_id
+                node_id,
             } = tree_pq.pop().unwrap();
             let lvl = level as usize;
             log::trace!("visiting node lvl={lvl} node={node_id} is_leaf={is_leaf}");
-            let embeddings_f32: &Array2<f32> = match Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).embeddings() {
-                Some(embs) => embs,
-                None => continue,
-            };
+            let embeddings_f32: &Array2<f32> =
+                match Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id)
+                    .embeddings()
+                {
+                    Some(embs) => embs,
+                    None => continue,
+                };
 
-            let distances: Array1<f32> = calculate_distances(
-                embeddings_f32,
-                query,
-                &self.metric,
-                self.is_normalized,
-            );
+            let distances: Array1<f32> =
+                calculate_distances(embeddings_f32, query, &self.metric, self.is_normalized);
             if is_leaf == 1 {
-                let children = Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).children().as_ref().unwrap();
+                let children =
+                    Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id)
+                        .children()
+                        .as_ref()
+                        .unwrap();
                 for i in 0..distances.len() {
                     // items ranks ascending, unlike tree_pq's max-heap, so
                     // the stored score must itself be smaller-is-better;
@@ -306,42 +336,55 @@ impl Index
                 }
                 leaf_cnt += 1;
             } else {
-                let children = Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id).children().as_ref().unwrap();
+                let children =
+                    Self::node_at(&mut self.nodes, &self.store, self.levels, lvl, node_id)
+                        .children()
+                        .as_ref()
+                        .unwrap();
                 for i in 0..distances.len() {
                     if (level + 1) == (self.levels - 1) {
-                        tree_pq.push(
-                            HeapEntry {
-                                score: NotNan::new(sign * distances[i]).unwrap(),
-                                is_leaf: true as i32,
-                                level: level+1,
-                                node_id: children[i]
-                            });
+                        tree_pq.push(HeapEntry {
+                            score: NotNan::new(sign * distances[i]).unwrap(),
+                            is_leaf: true as i32,
+                            level: level + 1,
+                            node_id: children[i],
+                        });
                     } else {
-                        tree_pq.push(
-                            HeapEntry {
-                                score: NotNan::new(sign * distances[i]).unwrap(),
-                                is_leaf: false as i32,
-                                level: level + 1,
-                                node_id: children[i],
-                            });
+                        tree_pq.push(HeapEntry {
+                            score: NotNan::new(sign * distances[i]).unwrap(),
+                            is_leaf: false as i32,
+                            level: level + 1,
+                            node_id: children[i],
+                        });
                     }
                 }
             }
 
-            Self::touch(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, lvl, node_id);
+            Self::touch(
+                &mut self.nodes,
+                &mut self.lru,
+                &mut self.resident_bytes,
+                lvl,
+                node_id,
+            );
             if let Some(limit) = self.memory_limit_bytes {
-                Self::evict_to_ratio(&mut self.nodes, &mut self.lru, &mut self.resident_bytes, limit);
+                Self::evict_to_ratio(
+                    &mut self.nodes,
+                    &mut self.lru,
+                    &mut self.resident_bytes,
+                    limit,
+                );
             }
 
             if leaf_cnt == search_exp {
                 if items.len() >= k {
-                    break
+                    break;
                 }
                 if increments < max_increments || max_increments == -1 {
                     increments += 1;
                     search_exp *= 2;
                 } else {
-                    break
+                    break;
                 }
             }
         }
@@ -362,7 +405,7 @@ impl Index
         k: usize,
         search_exp: u32,
         max_increments: i32,
-        exclude: &HashSet<u32>
+        exclude: &HashSet<u32>,
     ) -> Vec<(NotNan<f32>, u32)> {
         log::debug!(
             "get_next_k_items: query_id={query_id} query={:?} k={k} search_exp={search_exp} max_increments={max_increments} exclude={exclude:?}",

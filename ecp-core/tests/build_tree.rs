@@ -8,13 +8,13 @@
 use ndarray::array;
 use std::collections::HashSet;
 use std::sync::Arc;
-use zarrs::array::data_type::float32;
 use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type::float32;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableWritableListableStorage;
 
 use ecp_core::build::source::EmbeddingsSource;
-use ecp_core::build::tree::{build_tree, write_index_info, write_index_root};
+use ecp_core::build::tree::{BuildTreeArgs, build_tree, write_index_info, write_index_root};
 use ecp_core::search::Index;
 use ecp_core::utils::{EmbeddingDtype, Metric};
 
@@ -23,9 +23,17 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
     let array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)
         .build(store.clone(), path)
         .expect("failed to build embeddings array");
-    array.store_metadata().expect("failed to store embeddings metadata");
     array
-        .store_array_subset(&zarrs::array::ArraySubset::new_with_ranges(&[0..embeddings.nrows() as u64, 0..embeddings.ncols() as u64]), embeddings)
+        .store_metadata()
+        .expect("failed to store embeddings metadata");
+    array
+        .store_array_subset(
+            &zarrs::array::ArraySubset::new_with_ranges(&[
+                0..embeddings.nrows() as u64,
+                0..embeddings.ncols() as u64,
+            ]),
+            embeddings,
+        )
         .expect("failed to store embeddings");
 }
 
@@ -37,18 +45,29 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
 fn build_tree_produces_a_structure_that_searches_correctly() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let index_path = tmp.path().join("index.zarr");
-    let store = Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
+    let store =
+        Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
     let store_rw: ReadableWritableListableStorage = store.clone();
 
-    write_embeddings(&store, "/rep_embeddings", &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]]);
+    write_embeddings(
+        &store,
+        "/rep_embeddings",
+        &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
+    );
     let representatives = EmbeddingsSource::open(&index_path, "rep_embeddings");
 
     write_embeddings(
         &store,
         "/dataset",
         &array![
-            [0.0f32, 0.0], [0.4, 0.4], [1.0, 1.0], [1.4, 1.4],
-            [10.0, 10.0], [10.4, 10.4], [11.0, 11.0], [11.4, 11.4]
+            [0.0f32, 0.0],
+            [0.4, 0.4],
+            [1.0, 1.0],
+            [1.4, 1.4],
+            [10.0, 10.0],
+            [10.4, 10.4],
+            [11.0, 11.0],
+            [11.4, 11.4]
         ],
     );
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
@@ -57,7 +76,19 @@ fn build_tree_produces_a_structure_that_searches_correctly() {
 
     write_index_info(&store_rw, 2, Metric::L2, false);
     write_index_root(&store_rw, &root_embeddings, &[100, 2], EmbeddingDtype::F32);
-    build_tree(&store_rw, &root_embeddings, &representatives, &dataset, 2, Metric::L2, false, 100, &[100, 2], EmbeddingDtype::F32, 1_000_000_000);
+    build_tree(&BuildTreeArgs {
+        store: &store_rw,
+        root_embeddings: &root_embeddings,
+        representatives: &representatives,
+        dataset: &dataset,
+        total_levels: 2,
+        metric: Metric::L2,
+        is_normalized: false,
+        fallback_batch_vecs: 100,
+        chunk_shape: &[100, 2],
+        embedding_dtype: EmbeddingDtype::F32,
+        memory_limit_bytes: 1_000_000_000,
+    });
 
     let mut index = Index::load(index_path, None);
     let query = array![0.0f32, 0.0];

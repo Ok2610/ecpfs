@@ -13,7 +13,10 @@ fn metric_as_str_and_from_str_round_trip() {
 
 #[test]
 fn metric_from_str_rejects_unknown_values() {
-    assert!(Metric::from_str("l2").is_err(), "case must match exactly, like the PyO3 layer's existing parse_metric");
+    assert!(
+        Metric::from_str("l2").is_err(),
+        "case must match exactly, like the PyO3 layer's existing parse_metric"
+    );
     assert!(Metric::from_str("euclidean").is_err());
 }
 
@@ -92,5 +95,8 @@ fn default_memory_limit_bytes_for_is_80_percent_of_total_ram_floored_to_a_gib() 
     const GIB: u64 = 1024 * 1024 * 1024;
     assert_eq!(default_memory_limit_bytes_for(4 * GIB), (3 * GIB) as usize);
     assert_eq!(default_memory_limit_bytes_for(8 * GIB), (6 * GIB) as usize);
-    assert_eq!(default_memory_limit_bytes_for(16 * GIB), (12 * GIB) as usize);
+    assert_eq!(
+        default_memory_limit_bytes_for(16 * GIB),
+        (12 * GIB) as usize
+    );
 }

@@ -1,5 +1,5 @@
-use std::cmp::Ordering;
 use ordered_float::NotNan;
+use std::cmp::Ordering;
 
 use ndarray::{Array1, Array2, Axis};
 
@@ -86,32 +86,12 @@ pub fn negative_squared_distances(a: &Array2<f32>, b: &Array2<f32>) -> Array2<f3
     neg_dist_sq
 }
 
-// pub trait AsF32 {
-//     fn as_f32(self) -> f32;
-// }
-
-// impl AsF32 for f32 {
-//     #[inline]
-//     fn as_f32(self) -> f32 {
-//         self
-//     }
-// }
-
-// impl AsF32 for half::f16 {
-//     #[inline]
-//     fn as_f32(self) -> f32 {
-//         self.to_f32()
-//     }
-// }
-
-
-
 /// A candidate node in a search's priority queue, ordered by `score`.
 #[derive(Debug, Clone)]
 pub struct HeapEntry {
     pub score: NotNan<f32>,
     pub is_leaf: i32,
-    pub level:   u32,
+    pub level: u32,
     pub node_id: u32,
 }
 
@@ -143,7 +123,8 @@ const DEFAULT_MEMORY_LIMIT_RAM_FRACTION: f64 = 0.8;
 /// 80% of total system RAM, floored to a whole gibibyte, in bytes.
 pub fn default_memory_limit_bytes() -> usize {
     let system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram()),
+        sysinfo::RefreshKind::nothing()
+            .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram()),
     );
     default_memory_limit_bytes_for(system.total_memory())
 }

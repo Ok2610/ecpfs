@@ -8,12 +8,39 @@ use ndarray::array;
 fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
-    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]]);
+    write_index_root(
+        &store,
+        &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
+    );
 
-    write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
-    write_node(&store, "/lvl_1/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
-    write_node(&store, "/lvl_1/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
-    write_node(&store, "/lvl_1/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+    write_node(
+        &store,
+        "/lvl_1/node_0",
+        &array![[0.0f32, 0.0], [0.4, 0.4]],
+        "item_ids",
+        &array![0u32, 1],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_1",
+        &array![[1.0f32, 1.0], [1.4, 1.4]],
+        "item_ids",
+        &array![2u32, 3],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_2",
+        &array![[10.0f32, 10.0], [10.4, 10.4]],
+        "item_ids",
+        &array![4u32, 5],
+    );
+    write_node(
+        &store,
+        "/lvl_1/node_3",
+        &array![[11.0f32, 11.0], [11.4, 11.4]],
+        "item_ids",
+        &array![6u32, 7],
+    );
 
     let mut index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
@@ -40,12 +67,42 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
         "node_ids",
         &array![1u32, 2, 3],
     );
-    write_node(&store, "/lvl_1/node_0", &array![[0.0f32, 0.0]], "node_ids", &array![0u32]);
+    write_node(
+        &store,
+        "/lvl_1/node_0",
+        &array![[0.0f32, 0.0]],
+        "node_ids",
+        &array![0u32],
+    );
 
-    write_node(&store, "/lvl_2/node_0", &array![[0.0f32, 0.0], [0.4, 0.4]], "item_ids", &array![0u32, 1]);
-    write_node(&store, "/lvl_2/node_1", &array![[1.0f32, 1.0], [1.4, 1.4]], "item_ids", &array![2u32, 3]);
-    write_node(&store, "/lvl_2/node_2", &array![[10.0f32, 10.0], [10.4, 10.4]], "item_ids", &array![4u32, 5]);
-    write_node(&store, "/lvl_2/node_3", &array![[11.0f32, 11.0], [11.4, 11.4]], "item_ids", &array![6u32, 7]);
+    write_node(
+        &store,
+        "/lvl_2/node_0",
+        &array![[0.0f32, 0.0], [0.4, 0.4]],
+        "item_ids",
+        &array![0u32, 1],
+    );
+    write_node(
+        &store,
+        "/lvl_2/node_1",
+        &array![[1.0f32, 1.0], [1.4, 1.4]],
+        "item_ids",
+        &array![2u32, 3],
+    );
+    write_node(
+        &store,
+        "/lvl_2/node_2",
+        &array![[10.0f32, 10.0], [10.4, 10.4]],
+        "item_ids",
+        &array![4u32, 5],
+    );
+    write_node(
+        &store,
+        "/lvl_2/node_3",
+        &array![[11.0f32, 11.0], [11.4, 11.4]],
+        "item_ids",
+        &array![6u32, 7],
+    );
 
     let mut index = Index::load_from_store(as_readable_listable(&store), None);
     let query: Array1<f32> = array![0.0, 0.0];
@@ -134,14 +191,56 @@ fn build_test_index(metric: Metric) -> Index {
     );
 
     let lvl_1: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_0".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_1".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
     ]);
     let lvl_2: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "item_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "item_ids".to_string())),
-        (2, Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "item_ids".to_string())),
-        (3, Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "item_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_0".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_1".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            2,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_2".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            3,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_3".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
     ]);
 
     // Struct literal, not `Index::load`, so the fixture can use an
@@ -166,14 +265,16 @@ fn l2_search_returns_nearest_items_in_order() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
-    let (items, _query_id) =
-        index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
 
     let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
-    assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
+    assert!(
+        scores.windows(2).all(|w| w[0] <= w[1]),
+        "scores not sorted: {scores:?}"
+    );
 }
 
 /// Regression test: `incremental_search` used to only sort `items` inside
@@ -205,11 +306,27 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, vec![0, 1, 2, 3], "eviction must not change search results");
-    assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit", index.resident_bytes);
+    assert_eq!(
+        ids,
+        vec![0, 1, 2, 3],
+        "eviction must not change search results"
+    );
+    assert!(
+        index.resident_bytes <= 40,
+        "resident bytes ({}) exceeded the limit",
+        index.resident_bytes
+    );
 
-    let still_loaded = index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count();
-    assert!(still_loaded < 6, "expected eviction to have freed at least one of the 6 touched nodes");
+    let still_loaded = index
+        .nodes
+        .iter()
+        .flat_map(|m| m.values())
+        .filter(|n| n.is_loaded())
+        .count();
+    assert!(
+        still_loaded < 6,
+        "expected eviction to have freed at least one of the 6 touched nodes"
+    );
 }
 
 #[test]
@@ -217,13 +334,34 @@ fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
     index.new_search(query, 4, 4, -1, &HashSet::new());
-    assert_eq!(index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count(), 6, "sanity check: all 6 nodes loaded with no limit set");
+    assert_eq!(
+        index
+            .nodes
+            .iter()
+            .flat_map(|m| m.values())
+            .filter(|n| n.is_loaded())
+            .count(),
+        6,
+        "sanity check: all 6 nodes loaded with no limit set"
+    );
 
     index.set_memory_limit_bytes(Some(40));
 
-    assert!(index.resident_bytes <= 40, "resident bytes ({}) exceeded the limit right after lowering it", index.resident_bytes);
-    let still_loaded = index.nodes.iter().flat_map(|m| m.values()).filter(|n| n.is_loaded()).count();
-    assert!(still_loaded < 6, "lowering the limit below current usage must evict immediately, not lazily");
+    assert!(
+        index.resident_bytes <= 40,
+        "resident bytes ({}) exceeded the limit right after lowering it",
+        index.resident_bytes
+    );
+    let still_loaded = index
+        .nodes
+        .iter()
+        .flat_map(|m| m.values())
+        .filter(|n| n.is_loaded())
+        .count();
+    assert!(
+        still_loaded < 6,
+        "lowering the limit below current usage must evict immediately, not lazily"
+    );
 }
 
 #[test]
@@ -232,8 +370,7 @@ fn l2_search_respects_exclude_set() {
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = [0].into_iter().collect();
 
-    let (items, _query_id) =
-        index.new_search(query, 4, 4, -1, &exclude);
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &exclude);
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![1, 2, 3, 4], "excluded item 0 must not appear");
@@ -245,14 +382,18 @@ fn incremental_search_resumes_and_drains_remaining_items() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // First page: nearest 2 items.
-    let (first, query_id) =
-        index.new_search(query, 2, 4, -1, &HashSet::new());
-    assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0, 1]);
+    let (first, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        first.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
 
     // Second page: continues from where the first left off, same query_id.
-    let second =
-        index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
-    assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
+    let second = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
 }
 
 /// k=1, search_exp=1 explores only the nearest leaf (items 0 and 1, both
@@ -267,7 +408,10 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
     assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
 
     let second = index.get_next_k_items(query_id, 4, 1, 2, &HashSet::new());
-    assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 /// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
@@ -281,11 +425,14 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) =
-        index.new_search(query, 4, 1, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, vec![0, 1, 2, 3], "doubling search_exp should eventually surface all 4 nearest items");
+    assert_eq!(
+        ids,
+        vec![0, 1, 2, 3],
+        "doubling search_exp should eventually surface all 4 nearest items"
+    );
 }
 
 /// Same setup as the unlimited-retry test above, but with a *finite*
@@ -299,8 +446,7 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) =
-        index.new_search(query, 4, 1, 1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -321,8 +467,7 @@ fn new_search_stops_once_max_increments_is_exhausted() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) =
-        index.new_search(query, 8, 1, 1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -347,31 +492,43 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
     let query_a: Array1<f32> = array![0.0, 0.0];
     let query_b: Array1<f32> = array![11.0, 11.0];
 
-    let (first_a, query_id_a) =
-        index.new_search(query_a, 2, 4, -1, &HashSet::new());
-    assert_eq!(first_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0, 1]);
+    let (first_a, query_id_a) = index.new_search(query_a, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        first_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
 
-    let (first_b, query_id_b) =
-        index.new_search(query_b, 2, 4, -1, &HashSet::new());
-    assert_eq!(first_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![6, 7]);
+    let (first_b, query_id_b) = index.new_search(query_b, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        first_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![6, 7]
+    );
     assert_ne!(query_id_a, query_id_b);
 
     // Interleaved: resume A, then B, then A again.
-    let second_a =
-        index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
-    assert_eq!(second_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
+    let second_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        second_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
 
-    let second_b =
-        index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
-    assert_eq!(second_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![5, 4]);
+    let second_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        second_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![5, 4]
+    );
 
-    let third_a =
-        index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
-    assert_eq!(third_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![4, 5]);
+    let third_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        third_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![4, 5]
+    );
 
-    let third_b =
-        index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
-    assert_eq!(third_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![3, 2]);
+    let third_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+    assert_eq!(
+        third_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![3, 2]
+    );
 }
 
 /// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =
@@ -413,10 +570,38 @@ fn build_ivf_style_index(metric: Metric) -> Index {
     );
 
     let leaf_clusters: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "item_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "item_ids".to_string())),
-        (2, Node::new(as_readable_listable(&store), "/lvl_1/node_2".to_string(), "item_ids".to_string())),
-        (3, Node::new(as_readable_listable(&store), "/lvl_1/node_3".to_string(), "item_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_0".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_1".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            2,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_2".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            3,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_3".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
     ]);
 
     Index {
@@ -523,20 +708,90 @@ fn build_three_level_test_index() -> Index {
     );
 
     let lvl_1: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_1/node_1".to_string(), "node_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_0".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_1/node_1".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
     ]);
     let lvl_2: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_2/node_0".to_string(), "node_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_2/node_1".to_string(), "node_ids".to_string())),
-        (2, Node::new(as_readable_listable(&store), "/lvl_2/node_2".to_string(), "node_ids".to_string())),
-        (3, Node::new(as_readable_listable(&store), "/lvl_2/node_3".to_string(), "node_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_0".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_1".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
+        (
+            2,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_2".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
+        (
+            3,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_2/node_3".to_string(),
+                "node_ids".to_string(),
+            ),
+        ),
     ]);
     let lvl_3: HashMap<u32, Node> = HashMap::from([
-        (0, Node::new(as_readable_listable(&store), "/lvl_3/node_0".to_string(), "item_ids".to_string())),
-        (1, Node::new(as_readable_listable(&store), "/lvl_3/node_1".to_string(), "item_ids".to_string())),
-        (2, Node::new(as_readable_listable(&store), "/lvl_3/node_2".to_string(), "item_ids".to_string())),
-        (3, Node::new(as_readable_listable(&store), "/lvl_3/node_3".to_string(), "item_ids".to_string())),
+        (
+            0,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_3/node_0".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            1,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_3/node_1".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            2,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_3/node_2".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
+        (
+            3,
+            Node::new(
+                as_readable_listable(&store),
+                "/lvl_3/node_3".to_string(),
+                "item_ids".to_string(),
+            ),
+        ),
     ]);
 
     Index {
@@ -559,14 +814,16 @@ fn three_level_tree_descends_through_intermediate_level() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
-    let (items, _query_id) =
-        index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
 
     let scores: Vec<f32> = items.iter().map(|(d, _)| d.into_inner()).collect();
-    assert!(scores.windows(2).all(|w| w[0] <= w[1]), "scores not sorted: {scores:?}");
+    assert!(
+        scores.windows(2).all(|w| w[0] <= w[1]),
+        "scores not sorted: {scores:?}"
+    );
 }
 
 #[test]
@@ -580,8 +837,7 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
     // "don't stop before all 4 clusters have been scanned", not "check 4
     // nodes" in general (those only coincide because there's nothing but
     // leaves in this particular tree).
-    let (items, _query_id) =
-        index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);

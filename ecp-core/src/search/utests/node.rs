@@ -1,6 +1,9 @@
 use super::*;
-use crate::test_fixtures::{as_readable_listable, new_memory_store, write_node, write_node_f16, write_node_unsupported_dtype};
-use ndarray::{array, Array1, Array2};
+use crate::test_fixtures::{
+    as_readable_listable, new_memory_store, write_node, write_node_f16,
+    write_node_unsupported_dtype,
+};
+use ndarray::{Array1, Array2, array};
 
 #[test]
 fn loads_and_caches_embeddings_and_children() {
@@ -72,14 +75,22 @@ fn resident_bytes_reflects_whats_actually_loaded() {
     let children: Array1<u32> = array![10, 20];
     write_node(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
 
-    let mut node = Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string());
+    let mut node = Node::new(
+        as_readable_listable(&store),
+        "/lvl_1/node_0".to_string(),
+        "node_ids".to_string(),
+    );
     assert_eq!(node.resident_bytes(), 0, "nothing loaded yet");
 
     node.embeddings();
     assert_eq!(node.resident_bytes(), 2 * 2 * 4, "2x2 f32 embeddings only");
 
     node.children();
-    assert_eq!(node.resident_bytes(), 2 * 2 * 4 + 2 * 4, "embeddings + 2 u32 children");
+    assert_eq!(
+        node.resident_bytes(),
+        2 * 2 * 4 + 2 * 4,
+        "embeddings + 2 u32 children"
+    );
 
     node.clear_cache();
     assert_eq!(node.resident_bytes(), 0);
@@ -102,15 +113,31 @@ fn missing_node_yields_none_without_panicking() {
 #[test]
 fn a_confirmed_miss_is_cached_and_not_re_queried_after_data_appears() {
     let store = new_memory_store();
-    let mut node = Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string());
+    let mut node = Node::new(
+        as_readable_listable(&store),
+        "/lvl_1/node_0".to_string(),
+        "node_ids".to_string(),
+    );
 
     assert!(node.embeddings().is_none());
     assert!(node.children().is_none());
 
     // The node now actually exists; a naive `is_none()`-only check would
     // re-query and find it, but checked_embs/checked_childs must not.
-    write_node(&store, "/lvl_1/node_0", &array![[1.0f32, 2.0]], "node_ids", &array![10u32]);
+    write_node(
+        &store,
+        "/lvl_1/node_0",
+        &array![[1.0f32, 2.0]],
+        "node_ids",
+        &array![10u32],
+    );
 
-    assert!(node.embeddings().is_none(), "a confirmed miss must stay cached, not re-queried");
-    assert!(node.children().is_none(), "a confirmed miss must stay cached, not re-queried");
+    assert!(
+        node.embeddings().is_none(),
+        "a confirmed miss must stay cached, not re-queried"
+    );
+    assert!(
+        node.children().is_none(),
+        "a confirmed miss must stay cached, not re-queried"
+    );
 }

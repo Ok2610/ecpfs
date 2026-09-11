@@ -53,7 +53,11 @@ fn a_tied_score_is_broken_toward_the_higher_representative_index() {
     let (offsets, data) =
         determine_node_assignments(&representatives, &data_points, Metric::IP, false);
 
-    assert_eq!(offsets.to_vec(), vec![0, 0, 1], "the tie must resolve to representative 1, not 0");
+    assert_eq!(
+        offsets.to_vec(),
+        vec![0, 0, 1],
+        "the tie must resolve to representative 1, not 0"
+    );
     assert_eq!(data.to_vec(), vec![0]);
 }
 
@@ -66,6 +70,10 @@ fn group_by_assignments_preserves_order_within_each_group_and_handles_empty_grou
 
     let (offsets, data) = group_by_assignments(3, &best_ids);
 
-    assert_eq!(offsets.to_vec(), vec![0, 2, 2, 5], "representative 1 gets no data points");
+    assert_eq!(
+        offsets.to_vec(),
+        vec![0, 2, 2, 5],
+        "representative 1 gets no data points"
+    );
     assert_eq!(data.to_vec(), vec![0, 2, 1, 3, 4]);
 }

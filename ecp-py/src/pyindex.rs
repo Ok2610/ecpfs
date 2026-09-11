@@ -1,10 +1,10 @@
-use pyo3::prelude::*;
-use numpy::{PyReadonlyArray1, PyArrayMethods};
+use ecp_core::search::Index;
 use ndarray::Array1;
+use numpy::{PyArrayMethods, PyReadonlyArray1};
+use ordered_float::NotNan;
+use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use ordered_float::NotNan;
-use ecp_core::search::Index;
 
 /// A loaded eCP index, ready to search.
 #[pyclass(module = "ecp.index")]
@@ -22,7 +22,9 @@ impl IndexWrapper {
     #[new]
     #[pyo3(signature = (index_path, memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes()))]
     fn new(index_path: PathBuf, memory_limit_bytes: usize) -> PyResult<Self> {
-        Ok(IndexWrapper { inner: Index::load(index_path, Some(memory_limit_bytes)) })
+        Ok(IndexWrapper {
+            inner: Index::load(index_path, Some(memory_limit_bytes)),
+        })
     }
 
     /// set_memory_limit_bytes(self, memory_limit_bytes: int)
@@ -53,7 +55,8 @@ impl IndexWrapper {
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
 
         let (results, query_id): (Vec<(NotNan<f32>, u32)>, usize) =
-            self.inner.new_search(query, k, search_exp, max_increments, &exclude_set);
+            self.inner
+                .new_search(query, k, search_exp, max_increments, &exclude_set);
 
         let items: Vec<(f32, u32)> = results
             .into_iter()
@@ -77,7 +80,8 @@ impl IndexWrapper {
     ) -> PyResult<Vec<(f32, u32)>> {
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
         let results: Vec<(NotNan<f32>, u32)> =
-            self.inner.get_next_k_items(query_id, k, search_exp, max_increments, &exclude_set);
+            self.inner
+                .get_next_k_items(query_id, k, search_exp, max_increments, &exclude_set);
 
         Ok(results
             .into_iter()

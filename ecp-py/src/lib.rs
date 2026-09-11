@@ -1,6 +1,6 @@
+use pyo3::Bound;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use pyo3::Bound;
 
 mod pybuilder;
 mod pydtype;
@@ -13,7 +13,12 @@ use pyindex::IndexWrapper;
 use pylogging::init_logging;
 use pymetric::PyMetric;
 
-#[pymodule]
+// PyO3 0.29 defaults every module to declaring free-threaded (no-GIL)
+// support. IndexWrapper/BuilderWrapper's &mut self methods aren't racy
+// under that (PyO3's own per-object exclusive-borrow check still applies),
+// but ecp_core::Index's internal caching isn't real interior-mutability
+// yet.
+#[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;
     m.add_class::<BuilderWrapper>()?;

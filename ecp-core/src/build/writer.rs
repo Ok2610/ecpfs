@@ -25,6 +25,11 @@ pub(super) fn compressor() -> Vec<Arc<dyn BytesToBytesCodecTraits>> {
 /// only applies on creation; a later call's value is ignored once the
 /// array exists. Used for a node's `embeddings`/`child_key`, or the
 /// representative set's `rep_embeddings`/`rep_item_ids`.
+// clippy's single_range_in_vec_init fix would replace the ids array's
+// single-element range array with `.collect::<Vec<u64>>()`. That allocates
+// on the heap on every call. The array literal here does not, and matches
+// the multi-dimensional embeddings ranges elsewhere in this function.
+#[allow(clippy::single_range_in_vec_init)]
 pub fn zarrs_append(
     store: &ReadableWritableListableStorage,
     embeddings_path: &str,
@@ -39,24 +44,32 @@ pub fn zarrs_append(
             let existing_vecs = array.shape()[0];
             let dim = array.shape()[1];
             let new_vecs = existing_vecs + embeddings.nrows() as u64;
-            array.set_shape(vec![new_vecs, dim]).expect("Failed to grow embeddings array");
-            array.store_metadata().expect("Failed to store embeddings metadata");
+            array
+                .set_shape(vec![new_vecs, dim])
+                .expect("Failed to grow embeddings array");
+            array
+                .store_metadata()
+                .expect("Failed to store embeddings metadata");
             let subset = ArraySubset::new_with_ranges(&[existing_vecs..new_vecs, 0..dim]);
             match dtype {
-                EmbeddingDtype::F32 => {
-                    array.store_array_subset(&subset, embeddings).expect("Failed to append embeddings")
-                }
+                EmbeddingDtype::F32 => array
+                    .store_array_subset(&subset, embeddings)
+                    .expect("Failed to append embeddings"),
                 EmbeddingDtype::F16 => array
-                    .store_array_subset(&subset, &embeddings.mapv(f16::from_f32))
+                    .store_array_subset(&subset, embeddings.mapv(f16::from_f32))
                     .expect("Failed to append embeddings"),
             }
 
-            let mut ids_array =
-                Array::open(store.clone(), ids_path).expect("ids array missing alongside embeddings");
+            let mut ids_array = Array::open(store.clone(), ids_path)
+                .expect("ids array missing alongside embeddings");
             let existing_ids = ids_array.shape()[0];
             let new_ids = existing_ids + ids.len() as u64;
-            ids_array.set_shape(vec![new_ids]).expect("Failed to grow ids array");
-            ids_array.store_metadata().expect("Failed to store ids metadata");
+            ids_array
+                .set_shape(vec![new_ids])
+                .expect("Failed to grow ids array");
+            ids_array
+                .store_metadata()
+                .expect("Failed to store ids metadata");
             ids_array
                 .store_array_subset(&ArraySubset::new_with_ranges(&[existing_ids..new_ids]), ids)
                 .expect("Failed to append ids");
@@ -67,33 +80,55 @@ pub fn zarrs_append(
             let subset = ArraySubset::new_with_ranges(&[0..emb_shape[0], 0..dim]);
             match dtype {
                 EmbeddingDtype::F32 => {
-                    let mut emb_builder = ArrayBuilder::new(emb_shape.clone(), chunk_shape.to_vec(), float32(), 0.0f32);
+                    let mut emb_builder = ArrayBuilder::new(
+                        emb_shape.clone(),
+                        chunk_shape.to_vec(),
+                        float32(),
+                        0.0f32,
+                    );
                     emb_builder.bytes_to_bytes_codecs(compressor());
-                    let emb_array =
-                        emb_builder.build(store.clone(), embeddings_path).expect("Failed to build embeddings array");
-                    emb_array.store_metadata().expect("Failed to store embeddings metadata");
-                    emb_array.store_array_subset(&subset, embeddings).expect("Failed to store embeddings");
+                    let emb_array = emb_builder
+                        .build(store.clone(), embeddings_path)
+                        .expect("Failed to build embeddings array");
+                    emb_array
+                        .store_metadata()
+                        .expect("Failed to store embeddings metadata");
+                    emb_array
+                        .store_array_subset(&subset, embeddings)
+                        .expect("Failed to store embeddings");
                 }
                 EmbeddingDtype::F16 => {
-                    let mut emb_builder =
-                        ArrayBuilder::new(emb_shape.clone(), chunk_shape.to_vec(), float16(), f16::from_f32(0.0));
+                    let mut emb_builder = ArrayBuilder::new(
+                        emb_shape.clone(),
+                        chunk_shape.to_vec(),
+                        float16(),
+                        f16::from_f32(0.0),
+                    );
                     emb_builder.bytes_to_bytes_codecs(compressor());
-                    let emb_array =
-                        emb_builder.build(store.clone(), embeddings_path).expect("Failed to build embeddings array");
-                    emb_array.store_metadata().expect("Failed to store embeddings metadata");
+                    let emb_array = emb_builder
+                        .build(store.clone(), embeddings_path)
+                        .expect("Failed to build embeddings array");
                     emb_array
-                        .store_array_subset(&subset, &embeddings.mapv(f16::from_f32))
+                        .store_metadata()
+                        .expect("Failed to store embeddings metadata");
+                    emb_array
+                        .store_array_subset(&subset, embeddings.mapv(f16::from_f32))
                         .expect("Failed to store embeddings");
                 }
             }
 
             // Same chunk-count as the embeddings array, so a given
-            // chunk index lines up across both. 
+            // chunk index lines up across both.
             let ids_shape = vec![ids.len() as u64];
-            let mut ids_builder = ArrayBuilder::new(ids_shape.clone(), vec![chunk_shape[0]], uint32(), 0u32);
+            let mut ids_builder =
+                ArrayBuilder::new(ids_shape.clone(), vec![chunk_shape[0]], uint32(), 0u32);
             ids_builder.bytes_to_bytes_codecs(compressor());
-            let ids_array = ids_builder.build(store.clone(), ids_path).expect("Failed to build ids array");
-            ids_array.store_metadata().expect("Failed to store ids metadata");
+            let ids_array = ids_builder
+                .build(store.clone(), ids_path)
+                .expect("Failed to build ids array");
+            ids_array
+                .store_metadata()
+                .expect("Failed to store ids metadata");
             ids_array
                 .store_array_subset(&ArraySubset::new_with_ranges(&[0..ids_shape[0]]), ids)
                 .expect("Failed to store ids");

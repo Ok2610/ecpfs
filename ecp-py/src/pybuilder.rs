@@ -1,6 +1,6 @@
+use numpy::{PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use numpy::{PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use std::path::PathBuf;
 
 use ecp_core::build::builder::Builder;
@@ -20,7 +20,9 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
     match strategy {
         "offset" => Ok(RepresentativeStrategy::Offset),
         "random" => Ok(RepresentativeStrategy::Random),
-        other => Err(PyValueError::new_err(format!("unknown strategy {other:?} (use \"offset\" or \"random\")"))),
+        other => Err(PyValueError::new_err(format!(
+            "unknown strategy {other:?} (use \"offset\" or \"random\")"
+        ))),
     }
 }
 
@@ -82,7 +84,12 @@ impl BuilderWrapper {
     ) -> PyResult<()> {
         let strategy = parse_strategy(strategy)?;
         let source = EmbeddingsSource::open(&embeddings_file, grp_name);
-        self.inner.select_representatives(&source, target_cluster_items, strategy, fallback_batch_rows);
+        self.inner.select_representatives(
+            &source,
+            target_cluster_items,
+            strategy,
+            fallback_batch_rows,
+        );
         Ok(())
     }
 
@@ -92,8 +99,13 @@ impl BuilderWrapper {
     /// selection strategy, for when representatives come from an external
     /// clustering step. Must be called (or select_representatives) before
     /// build.
-    fn select_representatives_custom(&mut self, ids: PyReadonlyArray1<u32>, embeddings: PyReadonlyArray2<f32>) {
-        self.inner.select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
+    fn select_representatives_custom(
+        &mut self,
+        ids: PyReadonlyArray1<u32>,
+        embeddings: PyReadonlyArray2<f32>,
+    ) {
+        self.inner
+            .select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
     }
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")

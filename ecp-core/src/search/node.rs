@@ -1,7 +1,7 @@
+use ndarray::{Array1, Array2};
+use zarrs::array::Array;
 use zarrs::array::data_type::{float16, float32};
 use zarrs::storage::ReadableListableStorage;
-use zarrs::array::Array;
-use ndarray::{Array1, Array2};
 
 use half::f16;
 
@@ -43,17 +43,17 @@ impl Node {
                     if *dtype != float32() && *dtype != float16() {
                         panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
                     }
-                    self.embeddings = Some(
-                        if *dtype == float32() {
-                            array.retrieve_array_subset::<Array2<f32>>(&array.subset_all())
-                                .expect("Failed to retrieve embeddings array")
-                        } else {
-                            array.retrieve_array_subset::<Array2<f16>>(&array.subset_all())
-                                .expect("Failed to retrieve embeddings array")
-                                .mapv(|x: f16| x.to_f32())
-                        }
-                    )
-                },
+                    self.embeddings = Some(if *dtype == float32() {
+                        array
+                            .retrieve_array_subset::<Array2<f32>>(&array.subset_all())
+                            .expect("Failed to retrieve embeddings array")
+                    } else {
+                        array
+                            .retrieve_array_subset::<Array2<f16>>(&array.subset_all())
+                            .expect("Failed to retrieve embeddings array")
+                            .mapv(|x: f16| x.to_f32())
+                    })
+                }
                 Err(_) => self.embeddings = None,
             };
             self.checked_embs = true;
@@ -69,10 +69,13 @@ impl Node {
             let ids_path = format!("{}/{}", self.group_path, self.child_key);
             let arr = Array::open(self.store.clone(), &ids_path);
             match arr {
-                Ok(array) => self.children = Some(
-                        array.retrieve_array_subset::<Array1<u32>>(&array.subset_all())
-                        .expect("Failed to retrieve ids array")
-                    ),
+                Ok(array) => {
+                    self.children = Some(
+                        array
+                            .retrieve_array_subset::<Array1<u32>>(&array.subset_all())
+                            .expect("Failed to retrieve ids array"),
+                    )
+                }
                 Err(_) => self.children = None,
             };
             self.checked_childs = true;
@@ -99,8 +102,14 @@ impl Node {
     /// Bytes currently held by this node's cached embeddings/children, for
     /// eviction-policy accounting.
     pub fn resident_bytes(&self) -> usize {
-        let emb_bytes = self.embeddings.as_ref().map_or(0, |e| e.len() * size_of::<f32>());
-        let child_bytes = self.children.as_ref().map_or(0, |c| c.len() * size_of::<u32>());
+        let emb_bytes = self
+            .embeddings
+            .as_ref()
+            .map_or(0, |e| e.len() * size_of::<f32>());
+        let child_bytes = self
+            .children
+            .as_ref()
+            .map_or(0, |c| c.len() * size_of::<u32>());
         emb_bytes + child_bytes
     }
 }

@@ -3,7 +3,13 @@ use pyo3::prelude::*;
 use ecp_core::utils::EmbeddingDtype;
 
 /// On-disk embedding precision: half (F16) or full (F32) width float.
-#[pyclass(name = "EmbeddingDtype", module = "ecp.dtype", eq, eq_int, from_py_object)]
+#[pyclass(
+    name = "EmbeddingDtype",
+    module = "ecp.dtype",
+    eq,
+    eq_int,
+    from_py_object
+)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum PyEmbeddingDtype {
     F16,

@@ -15,7 +15,7 @@ fn hdf5_source_reports_shape_and_reads_vec_ranges() {
     let file = H5File::create(&file_path).expect("failed to create HDF5 file");
     let dataset = file
         .new_dataset::<f32>()
-        .shape(&[4usize, 2])
+        .shape([4usize, 2])
         .create("embeddings")
         .expect("failed to create HDF5 dataset");
     dataset
@@ -26,7 +26,11 @@ fn hdf5_source_reports_shape_and_reads_vec_ranges() {
     let source = EmbeddingsSource::open(&file_path, "embeddings");
 
     assert_eq!(source.shape(), (4, 2));
-    assert_eq!(source.natural_chunk_vecs(999), 999, "contiguous storage has no chunk alignment to exploit");
+    assert_eq!(
+        source.natural_chunk_vecs(999),
+        999,
+        "contiguous storage has no chunk alignment to exploit"
+    );
 
     let vecs = source.read_vecs(1, 3);
     assert_eq!(vecs, ndarray::array![[2.0f32, 3.0], [4.0, 5.0]]);
@@ -39,7 +43,7 @@ fn hdf5_source_reports_its_actual_on_disk_chunk_vec_count() {
 
     let file = H5File::create(&file_path).expect("failed to create HDF5 file");
     file.new_dataset::<f32>()
-        .shape(&[4usize, 2])
+        .shape([4usize, 2])
         .chunk(&[2, 2])
         .create("embeddings")
         .expect("failed to create HDF5 dataset");
@@ -47,7 +51,11 @@ fn hdf5_source_reports_its_actual_on_disk_chunk_vec_count() {
 
     let source = EmbeddingsSource::open(&file_path, "embeddings");
 
-    assert_eq!(source.natural_chunk_vecs(999), 2, "fallback must be ignored when the source is chunked");
+    assert_eq!(
+        source.natural_chunk_vecs(999),
+        2,
+        "fallback must be ignored when the source is chunked"
+    );
 }
 
 #[test]
@@ -56,7 +64,10 @@ fn hdf5_source_reports_its_native_dtype() {
     let file_path = tmp.path().join("embeddings.h5");
 
     let file = H5File::create(&file_path).expect("failed to create HDF5 file");
-    file.new_dataset::<f32>().shape(&[2usize, 2]).create("embeddings").expect("failed to create HDF5 dataset");
+    file.new_dataset::<f32>()
+        .shape([2usize, 2])
+        .create("embeddings")
+        .expect("failed to create HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
     let source = EmbeddingsSource::open(&file_path, "embeddings");
@@ -73,12 +84,16 @@ fn hdf5_f16_source_reads_correctly_upcast_to_f32() {
     let dataset = file
         .new_dataset::<u16>()
         .datatype(DatatypeMessage::f16_type())
-        .shape(&[2usize, 2])
+        .shape([2usize, 2])
         .create("embeddings")
         .expect("failed to create HDF5 dataset");
-    let bits: Vec<u16> =
-        [1.0f32, 2.0, 3.0, 4.0].iter().map(|&x| half::f16::from_f32(x).to_bits()).collect();
-    dataset.write_raw(&bits).expect("failed to write HDF5 dataset");
+    let bits: Vec<u16> = [1.0f32, 2.0, 3.0, 4.0]
+        .iter()
+        .map(|&x| half::f16::from_f32(x).to_bits())
+        .collect();
+    dataset
+        .write_raw(&bits)
+        .expect("failed to write HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
     let source = EmbeddingsSource::open(&file_path, "embeddings");
@@ -93,7 +108,10 @@ fn write_int_dataset() -> (tempfile::TempDir, std::path::PathBuf) {
     let file_path = tmp.path().join("int_embeddings.h5");
 
     let file = H5File::create(&file_path).expect("failed to create HDF5 file");
-    file.new_dataset::<u32>().shape(&[2usize, 2]).create("embeddings").expect("failed to create HDF5 dataset");
+    file.new_dataset::<u32>()
+        .shape([2usize, 2])
+        .create("embeddings")
+        .expect("failed to create HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
     (tmp, file_path)

@@ -1,8 +1,7 @@
-
 use zarrs::array::data_type::{float16, float32};
 use zarrs::storage::ReadableListableStorage;
 use zarrs::array::Array;
-use ndarray::{Array2, Array1};
+use ndarray::{Array1, Array2};
 
 use half::f16;
 
@@ -18,35 +17,31 @@ pub struct Node {
     checked_childs: bool,
 }
 
-impl Node
-{
-    /// Creates a new Node instance.
-    /// Returns:
-    ///     Node: A new instance of Node with the specified store, group path, and child key.
+impl Node {
     pub fn new(store: ReadableListableStorage, group_path: String, child_key: String) -> Self {
         Node {
-            store: store,
-            group_path: group_path,
-            child_key: child_key,
+            store,
+            group_path,
+            child_key,
             embeddings: None,
             children: None,
             checked_embs: false,
             checked_childs: false,
-            // _marker: PhantomData
         }
     }
 
-    /// Retrieves the embeddings of the node.
+    /// Lazily loads and upcasts `embeddings` to f32 on first call; `None`
+    /// if the array doesn't exist. Cached after the first call either way,
+    /// so a missing node isn't re-queried against the store.
     pub fn embeddings(&mut self) -> &Option<Array2<f32>> {
         if self.embeddings.is_none() && !self.checked_embs {
-            let embeddings_path = format!("{}/embeddings", &self.group_path);
-            // let arr = Array::open(self.store.clone(), &embeddings_path);
+            let embeddings_path = format!("{}/embeddings", self.group_path);
             let arr = Array::open(self.store.clone(), &embeddings_path);
             match arr {
                 Ok(array) => {
                     let dtype = array.data_type();
                     if *dtype != float32() && *dtype != float16() {
-                        panic!("unknown datatype")
+                        panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
                     }
                     self.embeddings = Some(
                         if *dtype == float32() {
@@ -56,7 +51,7 @@ impl Node
                             array.retrieve_array_subset::<Array2<f16>>(&array.subset_all())
                                 .expect("Failed to retrieve embeddings array")
                                 .mapv(|x: f16| x.to_f32())
-                        } 
+                        }
                     )
                 },
                 Err(_) => self.embeddings = None,
@@ -66,10 +61,12 @@ impl Node
         &self.embeddings
     }
 
-    /// Retrieves the IDs of the children of the node.
+    /// Lazily loads `child_key` on first call; `None` if the array doesn't
+    /// exist. Cached after the first call either way, so a missing node
+    /// isn't re-queried against the store.
     pub fn children(&mut self) -> &Option<Array1<u32>> {
         if self.children.is_none() && !self.checked_childs {
-            let ids_path = format!("{}/{}", &self.group_path, &self.child_key);
+            let ids_path = format!("{}/{}", self.group_path, self.child_key);
             let arr = Array::open(self.store.clone(), &ids_path);
             match arr {
                 Ok(array) => self.children = Some(
@@ -79,7 +76,6 @@ impl Node
                 Err(_) => self.children = None,
             };
             self.checked_childs = true;
-            // println!("children ({:?}): {:?}", self.group_path, &self.children.iter().len())
         }
         &self.children
     }
@@ -94,9 +90,8 @@ impl Node
         self.checked_childs = false;
     }
 
-    /// Checks if the node's embeddings or children are loaded.
-    /// Returns:
-    ///     bool: True if either embeddings and/or children are loaded, False otherwise.
+    /// True if `embeddings`/`children` currently hold data; never true for
+    /// a node confirmed missing from the store, even after it's been queried.
     pub fn is_loaded(&self) -> bool {
         self.embeddings.is_some() || self.children.is_some()
     }

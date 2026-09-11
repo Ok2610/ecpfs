@@ -237,6 +237,21 @@ fn incremental_search_resumes_and_drains_remaining_items() {
     assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![2, 3]);
 }
 
+/// k=1, search_exp=1 explores only the nearest leaf (items 0 and 1, both
+/// pushed since a leaf is never partially processed) and drains 1, leaving
+/// item 1 buffered.
+#[test]
+fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
+    let mut index = build_test_index(Metric::L2);
+    let query: Array1<f32> = array![0.0, 0.0];
+
+    let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
+    assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
+
+    let second = index.get_next_k_items(query_id, 4, 1, 2, &HashSet::new());
+    assert_eq!(second.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+}
+
 /// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
 /// ids 0,1) - not enough for k=4. With max_increments=-1 (unlimited), the
 /// retry path at index.rs's `leaf_cnt == search_exp` check must double
@@ -278,12 +293,13 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
 }
 
 /// Same fixture, but k=8 (all items) needs 2 doublings (search_exp 1 -> 2 -> 4)
-/// to satisfy, while max_increments=1 permits only 1. The search must stop
-/// once its retry budget is exhausted rather than looping until k is met -
-/// returning fewer than k items (the 2 clusters/4 items reachable after the
-/// single permitted retry), not all 8.
+/// to satisfy, while max_increments=1 permits only 1. new_search gets exactly
+/// one incremental_search call with the caller's budget, then drains whatever
+/// that found; it never gets a second, independent attempt. So it returns
+/// fewer than k items (the 2 clusters/4 items reachable after the single
+/// permitted retry), not all 8.
 #[test]
-fn search_stops_once_max_increments_is_exhausted() {
+fn new_search_stops_once_max_increments_is_exhausted() {
     let mut index = build_test_index(Metric::L2);
     let query: Array1<f32> = array![0.0, 0.0];
 

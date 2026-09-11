@@ -49,7 +49,7 @@ fn loads_f16_embeddings_upcast_to_f32() {
 /// embeddings array left as float64 by an upstream caller that never cast it)
 /// must fail loudly at load time rather than silently truncating precision.
 #[test]
-#[should_panic(expected = "unknown datatype")]
+#[should_panic(expected = "unsupported embeddings dtype")]
 fn unsupported_dtype_panics_instead_of_silently_truncating() {
     let store = new_memory_store();
     let embeddings: Array2<f32> = array![[1.0, 2.0], [3.5, -1.25]];
@@ -97,4 +97,20 @@ fn missing_node_yields_none_without_panicking() {
     assert!(node.embeddings().is_none());
     assert!(node.children().is_none());
     assert!(!node.is_loaded());
+}
+
+#[test]
+fn a_confirmed_miss_is_cached_and_not_re_queried_after_data_appears() {
+    let store = new_memory_store();
+    let mut node = Node::new(as_readable_listable(&store), "/lvl_1/node_0".to_string(), "node_ids".to_string());
+
+    assert!(node.embeddings().is_none());
+    assert!(node.children().is_none());
+
+    // The node now actually exists; a naive `is_none()`-only check would
+    // re-query and find it, but checked_embs/checked_childs must not.
+    write_node(&store, "/lvl_1/node_0", &array![[1.0f32, 2.0]], "node_ids", &array![10u32]);
+
+    assert!(node.embeddings().is_none(), "a confirmed miss must stay cached, not re-queried");
+    assert!(node.children().is_none(), "a confirmed miss must stay cached, not re-queried");
 }

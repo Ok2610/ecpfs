@@ -186,6 +186,12 @@ impl Index
         log::debug!("evicted {evicted_count} node(s), freed {freed_bytes} bytes, resident now {resident_bytes}/{limit}");
     }
 
+    /// Starts a new query, spending `max_increments` retries on one
+    /// `incremental_search` pass, then drains up to `k` items. Returns
+    /// `(items, query_id)`; resume the same query later via
+    /// `get_next_k_items`. Each item's score ranks ascending (lower is
+    /// better) rather than measuring a literal distance, since IP's score
+    /// is a negated similarity where a strong match can be negative.
     pub fn new_search(
         &mut self,
         query: Array1<f32>,
@@ -195,18 +201,24 @@ impl Index
         exclude: &HashSet<u32>,
     ) -> (Vec<(NotNan<f32>, u32)>, usize) {
         self.queries.push(QueryState {
-            query: query,
+            query,
             tree_pq: BinaryHeap::new(),
             items: Vec::new()
         });
-        // self.tree_pq.push(BinaryHeap::new());
-        // self.items.push(Vec::new());
-        // self.queries.push(query);
         let query_id = self.queries.len()-1;
         self.incremental_search(query_id, k, search_exp, max_increments, exclude);
-        (self.get_next_k_items(query_id, k, search_exp, max_increments, exclude), query_id)
+        let items = &mut self.queries[query_id].items;
+        let cnt = items.len().min(k);
+        (items.drain(0..cnt).collect(), query_id)
     }
 
+    /// Descends `tree_pq` (built from `root` on a query's first call),
+    /// popping best-scoring entries first: a non-leaf pushes its children,
+    /// a leaf accumulates non-excluded candidates into `items`. Once
+    /// `search_exp` leaves are explored, stops if `items.len() >= k`, else
+    /// doubles `search_exp` and retries (up to `max_increments`, `-1` =
+    /// unlimited) before giving up with whatever's found. Mutates the
+    /// query's state in place; nothing is returned.
     pub fn incremental_search(
         &mut self,
         query_id: usize,
@@ -214,15 +226,17 @@ impl Index
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
-    ) -> () {
+    ) {
         let QueryState{
             query,
             tree_pq,
             items
         }: &mut QueryState = &mut self.queries[query_id];
 
-        // This method will perform an incremental search on the index.
-        // It will use the provided query and return the updated priority queues.
+        // BinaryHeap only pops the largest score first. IP's similarity is
+        // already "higher = better" (sign=1, unchanged); L2's distance is
+        // "lower = better", so sign=-1 negates it, making the closest
+        // point the largest (least negative) score.
         let sign = match self.metric {
             Metric::L2 => -1.0,
             Metric::IP => 1.0,
@@ -236,7 +250,7 @@ impl Index
         if tree_pq.is_empty() {
             let root_distances: Array1<f32> = calculate_distances(
                 &self.root,
-                &query,
+                query,
                 &self.metric,
                 self.is_normalized,
             );
@@ -274,23 +288,24 @@ impl Index
 
             let distances: Array1<f32> = calculate_distances(
                 embeddings_f32,
-                &query,
+                query,
                 &self.metric,
                 self.is_normalized,
             );
             if is_leaf == 1 {
                 let children = self.nodes[lvl][node].children().as_ref().unwrap();
                 for i in 0..distances.len() {
-                    // -1.0 * sign * distance : min sort Vec
+                    // items ranks ascending, unlike tree_pq's max-heap, so
+                    // the stored score must itself be smaller-is-better;
+                    // negating sign again achieves that for both metrics.
                     if !exclude.contains(&children[i]) {
-                        items.push((NotNan::new(-1.0 * sign * distances[i]).unwrap(), children[i]));
+                        items.push((NotNan::new(-sign * distances[i]).unwrap(), children[i]));
                     }
                 }
                 leaf_cnt += 1;
             } else {
                 let children = self.nodes[lvl][node].children().as_ref().unwrap();
                 for i in 0..distances.len() {
-                    // sign * distance : max sort heap queue
                     if (level + 1) == (self.levels - 1) {
                         tree_pq.push(
                             HeapEntry {
@@ -319,7 +334,6 @@ impl Index
             if leaf_cnt == search_exp {
                 if items.len() >= k {
                     items.sort_unstable_by_key(|&(first, _)| first);
-                    // println!("Tree_PQ: {:?}, Items: {:?}", tree_pq.len(), items.len());
                     break
                 }
                 if increments < max_increments || max_increments == -1 {
@@ -332,6 +346,10 @@ impl Index
         }
     }
 
+    /// Continues `query_id` from where the last call left off: tops up
+    /// the buffer with one more `incremental_search` pass if fewer than
+    /// `k` items are ready and the tree isn't exhausted, then drains up
+    /// to `k`. Same score convention as `new_search`.
     pub fn get_next_k_items(
         &mut self,
         query_id: usize,
@@ -344,10 +362,10 @@ impl Index
             "get_next_k_items: query_id={query_id} query={:?} k={k} search_exp={search_exp} max_increments={max_increments} exclude={exclude:?}",
             self.queries[query_id].query.to_vec()
         );
-        let cnt = self.queries[query_id].items.len().min(k);
-        if cnt == 0 && !self.queries[query_id].tree_pq.is_empty() {
+        if self.queries[query_id].items.len() < k && !self.queries[query_id].tree_pq.is_empty() {
             self.incremental_search(query_id, k, search_exp, max_increments, exclude);
         }
+        let cnt = self.queries[query_id].items.len().min(k);
         self.queries[query_id].items.drain(0..cnt).collect()
     }
 }

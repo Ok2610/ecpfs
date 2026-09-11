@@ -11,9 +11,11 @@ Installed alongside the Rust workspace as the ``ecp-cli`` crate (binary name
    Usage: ecp <COMMAND>
 
    Commands:
-     build-index  Selects cluster representatives from `embeddings_file`, then builds the full tree over it into `save_file`
-     search       Runs a single query, pulled from row `query_row` of `query_file`, against an existing index
-     help         Print this message or the help of the given subcommand(s)
+     build-index      Selects cluster representatives from `embeddings_file`, then builds the full tree over it into `save_file`
+     search           Runs a single query, pulled from row `query_row` of `query_file`, against an existing index, or continues a previously-persisted one with `--resume`
+     info             Prints an index's `info/*` metadata without loading its tree
+     cleanup-queries  Erases persisted queries nobody has resumed, so `/queries/` doesn't grow forever on an index `search` keeps being run against
+     help             Print this message or the help of the given subcommand(s)
 
 build-index
 -----------
@@ -64,13 +66,31 @@ build-index
 search
 ------
 
+Every call to ``search`` persists the query before it exits (a no-op if
+nothing's left to resume once it finishes), printing ``query_id`` as its
+first output line. Pass that id back via ``--resume`` in a later call to
+continue the same query, without re-searching from the root:
+
+.. code-block:: bash
+
+   ecp search my_index.zarr query.h5 --k 5 --search-exp 1
+   # query_id	0
+   # 7	0.1234
+   # 19	0.2201
+   # ...
+
+   ecp search my_index.zarr --resume 0 --k 5 --search-exp 1
+   # query_id	0
+   # 3	0.3350
+   # ...
+
 .. code-block:: text
 
-   Usage: ecp search [OPTIONS] <INDEX_PATH> <QUERY_FILE>
+   Usage: ecp search [OPTIONS] <INDEX_PATH> [QUERY_FILE]
 
    Arguments:
      <INDEX_PATH>  Path to the index to search
-     <QUERY_FILE>  Zarr or HDF5 file to read the query vector from
+     [QUERY_FILE]  Zarr or HDF5 file to read the query vector from. Required unless --resume is given
 
    Options:
          --query-row <QUERY_ROW>
@@ -87,6 +107,52 @@ search
              Item ids to exclude, comma-separated
          --memory-limit-gb <MEMORY_LIMIT_GB>
              Caps how many touched nodes stay cached (LRU-evicted), in GB. Defaults to 80% of total system RAM
+         --resume <RESUME>
+             Resume a previously-persisted query (its id is printed as this tool's first output line) instead of starting a new one. Ignores query_file/query_row/query_grp_name when given
+         --with-logging
+             Turn on file-based logging for this run
+         --log-dir <LOG_DIR>
+             Directory to write the log file into
+         --log-level <LOG_LEVEL>
+             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+     -h, --help
+             Print help
+
+info
+----
+
+.. code-block:: text
+
+   Usage: ecp info <INDEX_PATH>
+
+   Arguments:
+     <INDEX_PATH>  Path to the index to inspect
+
+   Options:
+     -h, --help  Print help
+
+cleanup-queries
+----------------
+
+Erases persisted queries older than ``--older-than-hours``, so an index that
+``search`` keeps getting run against doesn't accumulate one ``/queries/{id}/``
+group per invocation forever:
+
+.. code-block:: bash
+
+   # Erase anything persisted more than a day ago.
+   ecp cleanup-queries my_index.zarr --older-than-hours 24
+
+.. code-block:: text
+
+   Usage: ecp cleanup-queries [OPTIONS] --older-than-hours <OLDER_THAN_HOURS> <INDEX_PATH>
+
+   Arguments:
+     <INDEX_PATH>  Path to the index to clean up
+
+   Options:
+         --older-than-hours <OLDER_THAN_HOURS>
+             Erase any persisted query older than this many hours
          --with-logging
              Turn on file-based logging for this run
          --log-dir <LOG_DIR>

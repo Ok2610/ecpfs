@@ -2,6 +2,7 @@ use ecp_core::search::Index;
 use ndarray::Array1;
 use numpy::{PyArrayMethods, PyReadonlyArray1};
 use ordered_float::NotNan;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -10,6 +11,17 @@ use std::path::PathBuf;
 #[pyclass(module = "ecp.index")]
 pub struct IndexWrapper {
     inner: Index,
+    closed: bool,
+}
+
+impl IndexWrapper {
+    fn check_not_closed(&self) -> PyResult<()> {
+        if self.closed {
+            Err(PyValueError::new_err("I/O operation on closed Index"))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[pymethods]
@@ -24,6 +36,7 @@ impl IndexWrapper {
     fn new(index_path: PathBuf, memory_limit_bytes: usize) -> PyResult<Self> {
         Ok(IndexWrapper {
             inner: Index::load(index_path, Some(memory_limit_bytes)),
+            closed: false,
         })
     }
 
@@ -32,8 +45,10 @@ impl IndexWrapper {
     /// Raises or lowers the memory limit on an already-loaded index, no
     /// reload needed. Lowering below what's currently resident evicts
     /// immediately.
-    fn set_memory_limit_bytes(&mut self, memory_limit_bytes: usize) {
+    fn set_memory_limit_bytes(&mut self, memory_limit_bytes: usize) -> PyResult<()> {
+        self.check_not_closed()?;
         self.inner.set_memory_limit_bytes(Some(memory_limit_bytes));
+        Ok(())
     }
 
     /// new_search(self, query: np.ndarray[f32, 1], k: int,
@@ -51,6 +66,7 @@ impl IndexWrapper {
         max_increments: i32,
         exclude_vec: Vec<u32>,
     ) -> PyResult<(Vec<(f32, u32)>, usize)> {
+        self.check_not_closed()?;
         let query: Array1<f32> = query.to_owned_array();
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
 
@@ -78,6 +94,7 @@ impl IndexWrapper {
         max_increments: i32,
         exclude_vec: Vec<u32>,
     ) -> PyResult<Vec<(f32, u32)>> {
+        self.check_not_closed()?;
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
         let results: Vec<(NotNan<f32>, u32)> =
             self.inner
@@ -87,5 +104,44 @@ impl IndexWrapper {
             .into_iter()
             .map(|(nn, id)| (nn.into_inner(), id))
             .collect())
+    }
+
+    /// cleanup_persisted_queries_older_than(self, cutoff_unix_secs: float) -> int
+    ///
+    /// Erases every persisted query persisted before cutoff_unix_secs (a
+    /// Unix timestamp, e.g. datetime.datetime(...).timestamp()), freeing
+    /// disk space from queries nobody resumed. Returns how many were
+    /// erased.
+    fn cleanup_persisted_queries_older_than(&mut self, cutoff_unix_secs: f64) -> PyResult<usize> {
+        self.check_not_closed()?;
+        Ok(self
+            .inner
+            .cleanup_persisted_queries_older_than(cutoff_unix_secs as u64))
+    }
+
+    /// close(self)
+    ///
+    /// Persists every in-flight query to disk and marks this index closed;
+    /// every other method raises ValueError afterward. Safe to call more
+    /// than once.
+    fn close(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.inner.shutdown();
+        self.closed = true;
+    }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<Bound<'_, PyAny>>,
+        _exc_value: Option<Bound<'_, PyAny>>,
+        _traceback: Option<Bound<'_, PyAny>>,
+    ) {
+        self.close();
     }
 }

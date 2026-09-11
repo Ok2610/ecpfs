@@ -1,5 +1,6 @@
 from enum import Enum
 from pathlib import Path
+from types import TracebackType
 from typing import Sequence
 
 import numpy as np
@@ -35,6 +36,16 @@ class Index:
         max_increments: int,
         exclude_vec: Sequence[int],
     ) -> list[tuple[float, int]]: ...
+
+    def cleanup_persisted_queries_older_than(self, cutoff_unix_secs: float) -> int: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> "Index": ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
 
 class Builder:
     def __init__(

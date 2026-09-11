@@ -7,7 +7,13 @@ use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
 use ecp_core::search::Index;
-use ecp_core::utils::{EmbeddingDtype, Metric};
+use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
+use ecp_core::utils::{default_memory_limit_bytes, EmbeddingDtype, Metric};
+
+/// Default `--memory-limit-gb` for both subcommands: 80% of system RAM.
+fn default_memory_limit_gib() -> usize {
+    default_memory_limit_bytes() / (1024 * 1024 * 1024)
+}
 
 #[derive(Parser)]
 #[command(name = "ecp", about = "Build and search eCP indexes")]
@@ -164,12 +170,17 @@ struct BuildIndexArgs {
     rep_selection: RepSelectionArg,
 
     /// Memory budget for the build process, in GB (not strictly enforced).
-    #[arg(long, default_value_t = 4)]
+    /// Defaults to 80% of total system RAM.
+    #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
     /// Row batch size used when a source has no natural on-disk chunk to align to.
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
+
+    /// Max size for one on-disk chunk, in MB.
+    #[arg(long, default_value_t = DEFAULT_MAX_CHUNK_BYTES / (1024 * 1024))]
+    max_chunk_mb: usize,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -186,6 +197,7 @@ fn build_index(args: BuildIndexArgs) {
         args.is_normalized,
         memory_limit_bytes,
         args.embedding_dtype.into(),
+        args.max_chunk_mb * 1024 * 1024,
     );
     builder.select_representatives(&source, args.target_cluster_items, args.rep_selection.into(), args.fallback_batch_rows);
     builder.build(&source, args.fallback_batch_rows);
@@ -226,9 +238,9 @@ struct SearchArgs {
     exclude: Vec<u32>,
 
     /// Caps how many touched nodes stay cached (LRU-evicted), in GB.
-    /// Unset means every touched node stays cached for the process's life.
-    #[arg(long)]
-    memory_limit_gb: Option<usize>,
+    /// Defaults to 80% of total system RAM.
+    #[arg(long, default_value_t = default_memory_limit_gib())]
+    memory_limit_gb: usize,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -236,8 +248,8 @@ struct SearchArgs {
 
 fn search(args: SearchArgs) {
     args.logging.init_if_requested();
-    let memory_limit_bytes = args.memory_limit_gb.map(|gb| gb * 1024 * 1024 * 1024);
-    let mut index = Index::load(args.index_path, memory_limit_bytes);
+    let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
+    let mut index = Index::load(args.index_path, Some(memory_limit_bytes));
     let source = EmbeddingsSource::open(&args.query_file, &args.query_grp_name);
     let query = source.read_vecs(args.query_row, args.query_row + 1).row(0).to_owned();
     let exclude = args.exclude.into_iter().collect();

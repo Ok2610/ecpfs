@@ -43,9 +43,11 @@ build-index
          --rep-selection <REP_SELECTION>
              How representatives are selected [default: offset] [possible values: offset, random]
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Memory budget for the build process, in GB (not strictly enforced) [default: 4]
+             Memory budget for the build process, in GB (not strictly enforced). Defaults to 80% of total system RAM
          --fallback-batch-rows <FALLBACK_BATCH_ROWS>
              Row batch size used when a source has no natural on-disk chunk to align to [default: 100000]
+         --max-chunk-mb <MAX_CHUNK_MB>
+             Max size for one on-disk chunk, in MB [default: 50]
          --with-logging
              Turn on file-based logging for this run
          --log-dir <LOG_DIR>
@@ -84,7 +86,7 @@ search
          --exclude <EXCLUDE>
              Item ids to exclude, comma-separated
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Caps how many touched nodes stay cached (LRU-evicted), in GB. Unset means every touched node stays cached for the process's life
+             Caps how many touched nodes stay cached (LRU-evicted), in GB. Defaults to 80% of total system RAM
          --with-logging
              Turn on file-based logging for this run
          --log-dir <LOG_DIR>

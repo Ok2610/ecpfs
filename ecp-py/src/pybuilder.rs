@@ -26,15 +26,24 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
 
 #[pymethods]
 impl BuilderWrapper {
-    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=4 GiB, embedding_dtype=None)
+    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=<80% of system RAM>, embedding_dtype=None, max_chunk_bytes=50 MiB)
     ///
     /// Creates a fresh index at `index_path` and returns a Builder ready to
     /// build into it. memory_limit_bytes is the memory budget for the build
     /// process (not strictly enforced). embedding_dtype of None matches
     /// each source's own dtype; forcing F16 against an f32 source
-    /// downcasts real precision and logs a warning.
+    /// downcasts real precision and logs a warning. max_chunk_bytes is the
+    /// max size for one on-disk chunk.
     #[new]
-    #[pyo3(signature = (index_path, levels, metric, is_normalized=false, memory_limit_bytes=4 * 1024 * 1024 * 1024, embedding_dtype=None))]
+    #[pyo3(signature = (
+        index_path,
+        levels,
+        metric,
+        is_normalized=false,
+        memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes(),
+        embedding_dtype=None,
+        max_chunk_bytes=ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES,
+    ))]
     fn new(
         index_path: PathBuf,
         levels: u32,
@@ -42,6 +51,7 @@ impl BuilderWrapper {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<PyEmbeddingDtype>,
+        max_chunk_bytes: usize,
     ) -> Self {
         BuilderWrapper {
             inner: Builder::create(
@@ -51,6 +61,7 @@ impl BuilderWrapper {
                 is_normalized,
                 memory_limit_bytes,
                 embedding_dtype.map(Into::into),
+                max_chunk_bytes,
             ),
         }
     }

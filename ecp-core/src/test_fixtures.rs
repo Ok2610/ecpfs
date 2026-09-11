@@ -46,9 +46,9 @@ pub fn write_node(
     write_children(store, group_path, child_key, children);
 }
 
-/// Like `write_node`, but stores `embeddings` as zarr's `float16` dtype - exercises
-/// `Node::embeddings()`'s f16-upcast branch, which `write_node` (always float32)
-/// never reaches.
+/// Like `write_node`, but stores `embeddings` as zarr's `float16` dtype, so it
+/// exercises `Node::embeddings()`'s f16-upcast branch, which `write_node`
+/// (always float32) never reaches.
 pub fn write_node_f16(
     store: &Arc<MemoryStore>,
     group_path: &str,
@@ -71,10 +71,10 @@ pub fn write_node_f16(
     write_children(store, group_path, child_key, children);
 }
 
-/// Like `write_node`, but stores `embeddings` as zarr's `float64` dtype, which
-/// `Node::embeddings()` doesn't support (only float16/float32) - exercises the
-/// "unknown datatype" panic path for a dtype `write_node` (always float32) never
-/// reaches.
+/// Like `write_node`, but stores `embeddings` as zarr's `float64` dtype,
+/// which `Node::embeddings()` doesn't support (only float16/float32), so it
+/// exercises the unsupported-dtype panic path for a dtype `write_node`
+/// (always float32) never reaches.
 pub fn write_node_unsupported_dtype(
     store: &Arc<MemoryStore>,
     group_path: &str,

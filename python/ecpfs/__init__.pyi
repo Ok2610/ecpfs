@@ -16,8 +16,8 @@ class EmbeddingDtype(Enum):
     F32 = ...
 
 class Index:
-    def __init__(self, index_path: Path | str, memory_limit_bytes: int | None = ...) -> None: ...
-    def set_memory_limit_bytes(self, memory_limit_bytes: int | None) -> None: ...
+    def __init__(self, index_path: Path | str, memory_limit_bytes: int = ...) -> None: ...
+    def set_memory_limit_bytes(self, memory_limit_bytes: int) -> None: ...
     def new_search(
         self,
         query: NDArray[np.float32],
@@ -27,7 +27,7 @@ class Index:
         exclude_vec: Sequence[int],
     ) -> tuple[list[tuple[float, int]], int]: ...
 
-    def incremental_search(
+    def get_next_k_items(
         self,
         query_id: int,
         k: int,
@@ -45,6 +45,7 @@ class Builder:
         is_normalized: bool = ...,
         memory_limit_bytes: int = ...,
         embedding_dtype: EmbeddingDtype | None = ...,
+        max_chunk_bytes: int = ...,
     ) -> None: ...
 
     def select_representatives(

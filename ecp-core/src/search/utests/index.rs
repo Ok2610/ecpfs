@@ -1259,6 +1259,11 @@ fn concurrent_inserts_to_different_leaves_do_not_block_each_other() {
 fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
     for _ in 0..20 {
         let index = build_test_index(Metric::L2);
+        // Marks every entry evicted, then forces that eviction to run now.
+        // Which leads to node_at repopulating each leaf from scratch,
+        // under its lock, instead of returning a pre-seeded node.
+        index.nodes.invalidate_all();
+        index.nodes.run_pending_tasks();
         let barrier = Barrier::new(2);
 
         let assigned_ids: Vec<u32> = thread::scope(|scope| {

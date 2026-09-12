@@ -47,6 +47,7 @@ impl BuilderWrapper {
         embedding_dtype=None,
         max_chunk_bytes=ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         index_path: PathBuf,

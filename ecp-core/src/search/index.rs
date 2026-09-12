@@ -222,37 +222,52 @@ impl Index {
         );
     }
 
-    /// The node at `(lvl, node_id)`. A node's
-    /// on-disk directory only exists if it received at least one child
-    /// during build, so `node_id` may still turn out to be one of the
-    /// missing ones once `embeddings`/`children` are actually called on it
-    /// (handled by returning `None`).
-    ///
-    /// A cache miss at the leaf level takes that leaf's read lock around
-    /// the disk read, so it can't race an `insert` appending to the same
-    /// leaf. Non-leaf levels are never mutated by insert, so they stay
-    /// fully lock-free. A cache hit never touches any lock either way.
+    /// The node at `(lvl, node_id)`, reading it from disk on a cache miss.
+    /// `node_id` may not exist on disk (only nodes that received a child
+    /// during build do); `embeddings`/`children` return `None` for those.
     fn node_at(&self, lvl: usize, node_id: u32) -> Arc<Node> {
         let is_leaf = lvl + 1 == self.levels as usize;
         let child_key = if is_leaf { "item_ids" } else { "node_ids" };
-        self.nodes.get_with((lvl, node_id), || {
-            let node = Node::new(
-                self.store.clone().readable_listable(),
-                format!("/lvl_{}/node_{node_id}", lvl + 1),
-                child_key.to_string(),
-            );
-            if is_leaf {
-                let lock = self
-                    .leaf_locks
-                    .entry(node_id)
-                    .or_insert_with(|| Arc::new(RwLock::new(())))
-                    .clone();
-                let _guard = lock.read().unwrap();
-                node.embeddings();
-                node.children();
-            }
-            Arc::new(node)
-        })
+
+        // Internal Node
+        if !is_leaf {
+            return self.nodes.get_with((lvl, node_id), || {
+                Arc::new(Node::new(
+                    self.store.clone().readable_listable(),
+                    format!("/lvl_{}/node_{node_id}", lvl + 1),
+                    child_key.to_string(),
+                ))
+            });
+        }
+
+        // Leaf node already cached
+        if let Some(hit) = self.nodes.get(&(lvl, node_id)) {
+            return hit;
+        }
+
+        // Acquire lock before reading from disk
+        let lock = self
+            .leaf_locks
+            .entry(node_id)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone();
+        let _guard = lock.read().unwrap();
+
+        // Someone else may have populated it while we waited for the lock.
+        if let Some(hit) = self.nodes.get(&(lvl, node_id)) {
+            return hit;
+        }
+        let node = Arc::new(Node::new(
+            self.store.clone().readable_listable(),
+            format!("/lvl_{}/node_{node_id}", lvl + 1),
+            child_key.to_string(),
+        ));
+        node.embeddings();
+        node.children();
+        // Store before the lock drops, so insert's invalidate() can never
+        // land in between and miss this entry.
+        self.nodes.insert((lvl, node_id), node.clone());
+        node
     }
 
     /// Cache miss falls back to a single-flight disk load; `None` if truly

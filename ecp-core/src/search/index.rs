@@ -2,11 +2,12 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use ndarray::Array1;
 use ndarray::Array2;
 
+use dashmap::DashMap;
 use half::f16;
 use moka::sync::Cache;
 use zarrs::array::Array;
@@ -17,6 +18,7 @@ use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 use ordered_float::NotNan;
 use std::collections::BinaryHeap;
 
+use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data, write_total_items};
 use crate::search::node::Node;
 use crate::utils::HeapEntry;
 use crate::utils::{Metric, calculate_distances};
@@ -52,6 +54,16 @@ type QueryCache = Cache<usize, Arc<Mutex<QueryState>>>;
 ///
 /// `queries` is lazy the same way: `load` only discovers persisted ids,
 /// not their content (`get_or_load_query` reads on first use).
+///
+/// `leaf_locks` and `total_items` back `insert`'s fine-grained concurrency:
+/// a leaf's lock is only taken around that leaf's own on-disk write or cold
+/// read, so two operations on different leaves never block each other.
+///
+/// `leaf_locks` is not protecting against concurrent reads/writes of a
+/// node's own chunks; zarrs already parallelizes that internally. It
+/// guards a different hazard zarrs explicitly leaves to its callers.
+/// Two separate calls can still race on the same array, such as a
+/// search reading a leaf while an insert appends to it.
 pub struct Index {
     store: ReadableWritableListableStorage,
     metric: Metric,
@@ -63,6 +75,8 @@ pub struct Index {
     next_query_id: AtomicUsize,
     memory_limit_bytes: Option<usize>,
     accepting: AtomicBool,
+    leaf_locks: DashMap<u32, Arc<RwLock<()>>>,
+    total_items: Mutex<u32>,
 }
 
 impl Index {
@@ -108,6 +122,8 @@ impl Index {
             .max()
             .map_or(0, |max_id| max_id + 1);
 
+        let total_items = read_total_items(&store.clone().readable_listable());
+
         Index {
             store,
             metric,
@@ -119,6 +135,8 @@ impl Index {
             next_query_id: AtomicUsize::new(next_query_id),
             memory_limit_bytes,
             accepting: AtomicBool::new(true),
+            leaf_locks: DashMap::new(),
+            total_items: Mutex::new(total_items),
         }
     }
 
@@ -204,24 +222,36 @@ impl Index {
         );
     }
 
-    /// The node at `(lvl, node_id)`, inserting a fresh (still-unread) one
-    /// on first visit rather than requiring it to exist upfront. A node's
+    /// The node at `(lvl, node_id)`. A node's
     /// on-disk directory only exists if it received at least one child
     /// during build, so `node_id` may still turn out to be one of the
     /// missing ones once `embeddings`/`children` are actually called on it
-    /// (they handle that by returning `None`).
+    /// (handled by returning `None`).
+    ///
+    /// A cache miss at the leaf level takes that leaf's read lock around
+    /// the disk read, so it can't race an `insert` appending to the same
+    /// leaf. Non-leaf levels are never mutated by insert, so they stay
+    /// fully lock-free. A cache hit never touches any lock either way.
     fn node_at(&self, lvl: usize, node_id: u32) -> Arc<Node> {
-        let child_key = if lvl + 1 == self.levels as usize {
-            "item_ids"
-        } else {
-            "node_ids"
-        };
+        let is_leaf = lvl + 1 == self.levels as usize;
+        let child_key = if is_leaf { "item_ids" } else { "node_ids" };
         self.nodes.get_with((lvl, node_id), || {
-            Arc::new(Node::new(
+            let node = Node::new(
                 self.store.clone().readable_listable(),
                 format!("/lvl_{}/node_{node_id}", lvl + 1),
                 child_key.to_string(),
-            ))
+            );
+            if is_leaf {
+                let lock = self
+                    .leaf_locks
+                    .entry(node_id)
+                    .or_insert_with(|| Arc::new(RwLock::new(())))
+                    .clone();
+                let _guard = lock.read().unwrap();
+                node.embeddings();
+                node.children();
+            }
+            Arc::new(node)
         })
     }
 
@@ -484,6 +514,82 @@ impl Index {
         }
         self.drain_items(query_id, k)
     }
+
+    /// Assigns each embedding row the next available id (`total_items..
+    /// total_items+embeddings.nrows()`, row order), routes it to its
+    /// nearest leaf, and appends it there. No rebalancing. Concurrent
+    /// inserts and searches are safe; two operations only serialize when
+    /// they land on the same leaf. Returns the assigned id range.
+    ///
+    /// Not atomic: a panic or crash partway through can leave `total_items`
+    /// ahead of what actually landed on disk, permanently skipping the
+    /// unwritten ids (never reusing or colliding with one already written).
+    pub fn insert(&self, embeddings: Array2<f32>) -> std::ops::Range<u32> {
+        if embeddings.nrows() == 0 {
+            let total = *self.total_items.lock().unwrap();
+            return total..total;
+        }
+
+        // Not cached on Index. Read from index_root/embeddings's own
+        // on-disk metadata, which every node in the tree shares.
+        let root_array = Array::open(self.store.clone(), "/index_root/embeddings")
+            .expect("Failed to open index_root/embeddings");
+        let root_dtype = root_array.data_type();
+        let embedding_dtype = if *root_dtype == float32() {
+            crate::utils::EmbeddingDtype::F32
+        } else if *root_dtype == float16() {
+            crate::utils::EmbeddingDtype::F16
+        } else {
+            panic!(
+                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
+            )
+        };
+        let chunk_shape: Vec<u64> = root_array
+            .chunk_shape_usize(&[0, 0])
+            .expect("Failed to read index_root/embeddings chunk shape")
+            .into_iter()
+            .map(|v| v as u64)
+            .collect();
+
+        // A throwaway cache for this call's own internal-node reads;
+        // small since a naive insert only ever touches its own descent
+        // path, not the whole tree.
+        let cache_capacity_bytes = self.memory_limit_bytes.unwrap_or(usize::MAX) as u64 / 20;
+        let node_cache = BuildNodeCache::new(cache_capacity_bytes);
+        let config = BuildConfig {
+            store: &self.store,
+            node_cache: &node_cache,
+            target_level: self.levels,
+            total_levels: self.levels,
+            metric: self.metric,
+            is_normalized: self.is_normalized,
+            chunk_shape: &chunk_shape,
+            embedding_dtype,
+            leaf_locks: Some(&self.leaf_locks),
+        };
+
+        // Reserving the range and persisting it happen under the same lock
+        // so two concurrent inserts can never write total_items out of
+        // order (whichever finishes its disk write last would otherwise
+        // overwrite the other's larger value).
+        let start = {
+            let mut total = self.total_items.lock().unwrap();
+            let start = *total;
+            *total += embeddings.nrows() as u32;
+            write_total_items(&self.store, *total);
+            start
+        };
+        let end = start + embeddings.nrows() as u32;
+        let ids = Array1::from_iter(start..end);
+
+        let touched = add_data(&config, &self.root, &embeddings, &ids);
+        for (level, node_id) in touched {
+            // node_at's cache key is 0-based; on-disk level is 1-based.
+            self.nodes.invalidate(&(level as usize - 1, node_id));
+        }
+
+        start..end
+    }
 }
 
 /// Reads `info/levels`, `info/metric`, and `info/is_normalized`, the 3
@@ -513,6 +619,16 @@ fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric, bool) {
     (levels, metric, is_normalized)
 }
 
+/// Reads `info/total_items`, shared by `IndexInfo::load_from_store` and
+/// `Index::load_from_store`.
+fn read_total_items(store: &ReadableListableStorage) -> u32 {
+    let array =
+        Array::open(store.clone(), "/info/total_items").expect("Failed to open info/total_items");
+    array
+        .retrieve_array_subset::<Vec<u32>>(&array.subset_all())
+        .expect("Failed to retrieve info/total_items")[0]
+}
+
 /// An index's `info/*` metadata plus its representative count, read without
 /// loading the tree. `total_representatives` comes from `/rep_item_ids`'s
 /// shape rather than its own field, the same cheap read `Index::load` uses
@@ -535,12 +651,7 @@ impl IndexInfo {
 
     fn load_from_store(store: ReadableListableStorage) -> Self {
         let (levels, metric, is_normalized) = read_info_fields(&store);
-
-        let total_items_array = Array::open(store.clone(), "/info/total_items")
-            .expect("Failed to open info/total_items");
-        let total_items: u32 = total_items_array
-            .retrieve_array_subset::<Vec<u32>>(&total_items_array.subset_all())
-            .expect("Failed to retrieve info/total_items")[0];
+        let total_items = read_total_items(&store);
 
         let rep_ids_array =
             Array::open(store.clone(), "/rep_item_ids").expect("Failed to open rep_item_ids");

@@ -150,7 +150,7 @@ fn append_node_batch_grows_an_existing_node_across_multiple_calls() {
 }
 
 #[test]
-fn node_cache_is_unbounded_until_set_limit_is_called() {
+fn node_cache_holds_an_entry_within_its_capacity() {
     let store = new_memory_store();
     let store = as_readable_writable_listable(&store);
     append_node_batch(
@@ -163,18 +163,18 @@ fn node_cache_is_unbounded_until_set_limit_is_called() {
         EmbeddingDtype::F32,
     );
 
-    let cache = NodeCache::new();
+    let cache = NodeCache::new(1_000_000);
     let first = cache.get_or_read(&store, "/lvl_1/node_0");
     let second = cache.get_or_read(&store, "/lvl_1/node_0");
 
     assert!(
         Arc::ptr_eq(&first, &second),
-        "an entry must survive without set_limit ever being called"
+        "a second lookup within capacity must return the same cached entry"
     );
 }
 
 #[test]
-fn node_cache_set_limit_evicts_the_least_recently_used_entry() {
+fn node_cache_evicts_once_over_capacity() {
     let store = new_memory_store();
     let store = as_readable_writable_listable(&store);
     append_node_batch(
@@ -196,32 +196,27 @@ fn node_cache_set_limit_evicts_the_least_recently_used_entry() {
         EmbeddingDtype::F32,
     );
 
-    let cache = NodeCache::new();
-    let node_0_first = cache.get_or_read(&store, "/lvl_1/node_0");
-    let node_1_first = cache.get_or_read(&store, "/lvl_1/node_1");
-    // Touch node_0 again so node_1 becomes the least-recently-used entry.
+    // 1 embedding row (2 f32s) + 1 child id (1 u32) = 12 bytes: room for
+    // exactly one entry, so caching both forces an eviction.
+    let cache = NodeCache::new(12);
     cache.get_or_read(&store, "/lvl_1/node_0");
+    cache.get_or_read(&store, "/lvl_1/node_1");
+    cache.cache.run_pending_tasks();
 
-    // 1 embedding row (2 f32s) + 1 child id (1 u32) = 12 bytes: room for exactly one entry.
-    cache.set_limit(12);
-
-    let node_0_after = cache.get_or_read(&store, "/lvl_1/node_0");
     assert!(
-        Arc::ptr_eq(&node_0_first, &node_0_after),
-        "node_0 was touched more recently, so it must survive eviction"
+        cache.cache.entry_count() < 2,
+        "caching both entries under a one-entry capacity must have evicted one of them"
     );
-
-    let node_1_after = cache.get_or_read(&store, "/lvl_1/node_1");
     assert!(
-        !Arc::ptr_eq(&node_1_first, &node_1_after),
-        "node_1 was the least-recently-used entry, so it must have been evicted"
+        cache.cache.weighted_size() <= 12,
+        "weighted size ({}) exceeded the 12-byte capacity",
+        cache.cache.weighted_size()
     );
 }
 
-/// `get_or_read` checks the cache, releases the lock, reads from disk, then
-/// re-checks the cache before inserting, so a losing thread's read never
-/// gets counted. A barrier forces every thread to call `get_or_read` at
-/// once, so that race window actually gets exercised.
+/// A barrier forces every thread to call `get_or_read` at once, so moka's
+/// own single-flight get-or-insert (`get_with`) actually gets exercised
+/// under real concurrent contention on the same key.
 #[test]
 fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
     let store = new_memory_store();
@@ -236,7 +231,7 @@ fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
         EmbeddingDtype::F32,
     );
 
-    let cache = NodeCache::new();
+    let cache = NodeCache::new(1_000_000);
     const THREADS: usize = 8;
     let barrier = Barrier::new(THREADS);
 
@@ -259,14 +254,5 @@ fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
     assert!(
         results.iter().all(|entry| Arc::ptr_eq(first, entry)),
         "every concurrent caller must share the same cached entry, not race into separate reads"
-    );
-
-    // If a losing thread's read had been double-counted into the cache's
-    // byte total, a limit sized for exactly one entry would evict it immediately.
-    cache.set_limit(12);
-    let after = cache.get_or_read(&store, "/lvl_1/node_0");
-    assert!(
-        Arc::ptr_eq(first, &after),
-        "byte accounting must not be inflated by concurrent misses racing on the same entry"
     );
 }

@@ -4,6 +4,8 @@ use crate::test_fixtures::{
     write_index_root, write_node, write_rep_item_ids, write_total_items,
 };
 use ndarray::array;
+use std::sync::Barrier;
+use std::thread;
 
 /// Builds a node cache pre-populated with `((level, node_id), Node)`
 /// entries, for fixtures that hand-construct an `Index` via struct literal
@@ -22,6 +24,7 @@ fn nodes_cache(
 fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
+    write_total_items(&store, 8);
     write_index_root(
         &store,
         &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
@@ -88,6 +91,7 @@ fn index_info_reads_all_5_fields_without_loading_the_tree() {
 fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order() {
     let store = new_memory_store();
     write_index_info(&store, 2, "L2", false);
+    write_total_items(&store, 8);
     write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0]]);
 
     write_node(
@@ -172,6 +176,7 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
 /// 0, 1, 2, 3, 4, 5, 6, 7.
 fn build_test_index(metric: Metric) -> Index {
     let store = new_memory_store();
+    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0]]);
 
     // lvl_1: node_ids are the *global leader ids* assigned to that root leader.
     write_node(
@@ -284,6 +289,8 @@ fn build_test_index(metric: Metric) -> Index {
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
+        leaf_locks: DashMap::new(),
+        total_items: Mutex::new(8),
     }
 }
 
@@ -554,6 +561,10 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
 /// directly by its global id.
 fn build_ivf_style_index(metric: Metric) -> Index {
     let store = new_memory_store();
+    write_index_root(
+        &store,
+        &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
+    );
 
     write_node(
         &store,
@@ -630,6 +641,8 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
+        leaf_locks: DashMap::new(),
+        total_items: Mutex::new(8),
     }
 }
 
@@ -648,6 +661,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
 /// id order, same shape of assertion as `l2_search_returns_nearest_items_in_order`.
 fn build_three_level_test_index() -> Index {
     let store = new_memory_store();
+    write_index_root(&store, &array![[0.0f32, 0.0], [10.0, 10.0]]);
 
     write_node(
         &store,
@@ -816,6 +830,8 @@ fn build_three_level_test_index() -> Index {
         next_query_id: AtomicUsize::new(0),
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
+        leaf_locks: DashMap::new(),
+        total_items: Mutex::new(4),
     }
 }
 
@@ -912,6 +928,7 @@ fn concurrent_searches_from_multiple_threads_return_correct_results() {
 fn write_ivf_style_fixture() -> Arc<zarrs::storage::store::MemoryStore> {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
+    write_total_items(&store, 8);
     write_index_root(
         &store,
         &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
@@ -1158,4 +1175,126 @@ fn repersisting_after_more_progress_reflects_the_latest_state() {
         vec![3, 4, 5, 6, 7],
         "must continue from the second process's progress, not the first's stale state"
     );
+}
+
+#[test]
+fn insert_invalidates_exactly_the_touched_cache_entry() {
+    let index = build_test_index(Metric::L2);
+    let before: Vec<((usize, u32), Arc<Node>)> =
+        index.nodes.iter().map(|(key, node)| (*key, node)).collect();
+    assert_eq!(before.len(), 6, "sanity check: every node is pre-cached");
+
+    // Close enough to item 0 (in leaf (1, 0)) to route to that exact leaf.
+    index.insert(array![[0.01f32, 0.01]]);
+
+    assert!(
+        index.nodes.get(&(1, 0)).is_none(),
+        "the touched leaf's entry must be invalidated"
+    );
+    for (key, node) in &before {
+        if *key == (1, 0) {
+            continue;
+        }
+        let still_there = index
+            .nodes
+            .get(key)
+            .unwrap_or_else(|| panic!("untouched entry {key:?} must not have been evicted"));
+        assert!(
+            Arc::ptr_eq(node, &still_there),
+            "untouched entry {key:?} must keep its original identity"
+        );
+    }
+}
+
+/// Inserts into 4 disjoint leaves from 4 threads at once (behind a
+/// `Barrier`, so they actually overlap). Correctness-focused: proves no
+/// data race/corruption when leaves don't overlap, not the absence of
+/// blocking (which isn't directly observable from a test).
+#[test]
+fn concurrent_inserts_to_different_leaves_do_not_block_each_other() {
+    for _ in 0..20 {
+        let index = build_test_index(Metric::L2);
+        let barrier = Barrier::new(4);
+        let new_points: [[f32; 2]; 4] =
+            [[0.01, 0.01], [1.01, 1.01], [10.01, 10.01], [11.01, 11.01]];
+
+        // Each thread's assigned id depends on reservation order, which is
+        // non-deterministic, so capture what insert actually returns rather
+        // than assuming a fixed id per point.
+        let assigned: Vec<(u32, [f32; 2])> = thread::scope(|scope| {
+            let handles: Vec<_> = new_points
+                .into_iter()
+                .map(|point| {
+                    let index = &index;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (index.insert(array![point]).start, point)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("thread panicked"))
+                .collect()
+        });
+
+        for (id, point) in assigned {
+            let (items, _) =
+                index.new_search(Array1::from_vec(point.to_vec()), 1, 4, -1, &HashSet::new());
+            assert_eq!(
+                items.iter().map(|(_, i)| *i).collect::<Vec<_>>(),
+                vec![id],
+                "item {id} must be found after concurrent inserts to disjoint leaves"
+            );
+        }
+    }
+}
+
+/// One thread repeatedly searches leaf (1, 0) while another concurrently
+/// inserts several new points into that same leaf. Proves the leaf's read
+/// lock (search) and write lock (insert) actually serialize correctly
+/// instead of racing on the same on-disk arrays.
+#[test]
+fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
+    for _ in 0..20 {
+        let index = build_test_index(Metric::L2);
+        let barrier = Barrier::new(2);
+
+        let assigned_ids: Vec<u32> = thread::scope(|scope| {
+            let searcher = &index;
+            let searcher_barrier = &barrier;
+            scope.spawn(move || {
+                searcher_barrier.wait();
+                for _ in 0..50 {
+                    searcher.new_search(array![0.0f32, 0.0], 10, 4, -1, &HashSet::new());
+                }
+            });
+
+            let inserter = &index;
+            let inserter_barrier = &barrier;
+            let handle = scope.spawn(move || {
+                inserter_barrier.wait();
+                (0..10u32)
+                    .map(|i| {
+                        inserter
+                            .insert(array![[0.01f32 + i as f32 * 0.001, 0.01]])
+                            .start
+                    })
+                    .collect::<Vec<u32>>()
+            });
+            handle.join().expect("inserter thread panicked")
+        });
+
+        let (items, _) = index.new_search(array![0.0f32, 0.0], 12, 4, -1, &HashSet::new());
+        let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+        ids.sort_unstable();
+        let mut expected: Vec<u32> = assigned_ids;
+        expected.extend([0, 1]);
+        expected.sort_unstable();
+        assert_eq!(
+            ids, expected,
+            "every concurrently inserted item plus the original leaf contents must be present, with no duplicates or losses"
+        );
+    }
 }

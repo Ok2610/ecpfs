@@ -11,9 +11,9 @@ name = "ecp_core"
 crate-type = ["rlib"]
 
 [dependencies]
+dashmap = "6.1.0"
 half = "2.7.1"
 log = { version = "0.4.28", features = ["std"] }
-lru = "0.18.4"
 moka = { version = "0.12.10", features = ["sync"] }
 ndarray = "0.17.2"
 num-traits = "0.2.19"

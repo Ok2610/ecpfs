@@ -131,6 +131,7 @@ fn load_reads_a_real_index_from_disk_and_searches_correctly() {
     write_scalar_u32(&store, "/info/levels", 1);
     write_scalar_string(&store, "/info/metric", "L2");
     write_scalar_bool(&store, "/info/is_normalized", false);
+    write_scalar_u32(&store, "/info/total_items", 4);
 
     let root_shape = vec![2u64, 2];
     let root_array = ArrayBuilder::new(root_shape.clone(), root_shape, float32(), 0.0f32)

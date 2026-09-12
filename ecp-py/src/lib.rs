@@ -13,11 +13,7 @@ use pyindex::IndexWrapper;
 use pylogging::init_logging;
 use pymetric::PyMetric;
 
-// PyO3 0.29 defaults every module to declaring free-threaded (no-GIL)
-// support. IndexWrapper/BuilderWrapper's &mut self methods aren't racy
-// under that (PyO3's own per-object exclusive-borrow check still applies),
-// but ecp_core::Index's internal caching isn't real interior-mutability
-// yet.
+// Every I/O-bound method in this module releases the GIL via py.detach.
 #[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;

@@ -1,6 +1,6 @@
 project = "ecpfs"
 author = "Omar Shahbaz Khan"
-release = "0.9.8"
+release = "0.9.95"
 
 extensions = [
     "sphinx.ext.autodoc",

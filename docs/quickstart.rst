@@ -65,6 +65,59 @@ Searching an index
        )
    # The `with` block's __exit__ calls close() automatically, see below.
 
+Adding data to an existing index
+---------------------------------
+
+``insert`` routes each new point to its nearest leaf and appends it there,
+the same descent search already does. Ids are assigned automatically,
+starting at the index's current item count, the same convention the
+initial build already uses for its own dataset. ``insert`` returns the
+assigned ``(start_id, end_id)`` range (``end_id`` excluded) so the caller
+can map its own external ids to them.
+
+.. code-block:: python
+
+   import numpy as np
+   from ecpfs import Index
+
+   with Index("my_index.zarr") as index:
+       # 2 new rows, matching the index's own dimensionality
+       new_embeddings = np.random.rand(2, 128).astype(np.float32) 
+       start_id, end_id = index.insert(embeddings=new_embeddings)
+       # start_id, end_id = 1000, 1002; the two rows got ids 1000 and 1001.
+
+There's no rebalancing. A leaf that keeps growing just keeps growing, so
+search quality degrades gradually as an index accumulates far more
+inserts than its original build accounted for. A real rebuild is the only
+fix for that currently.
+
+``insert`` is not atomic. A crash partway through can leave the index's
+item count ahead of what actually landed on disk, permanently skipping
+the unwritten ids rather than reusing or colliding with one already
+written. All-or-nothing insert semantics are planned for after 1.0; until
+then, do not assume an index survives a crash mid-insert without a gap.
+
+Concurrent inserts and searches on one loaded ``Index`` are safe and
+fine-grained. Two operations only serialize when they land on the same
+leaf, and a search may briefly see pre-insert (stale) data for a leaf an
+insert is concurrently touching rather than wait for it. This holds
+across Python threads too. ecpfs releases the GIL during search and
+insert, so they run with true multithreading rather than just the
+appearance of it. It does not extend across separate processes. Two
+independent processes (or two separate ``Index(...)`` handles anywhere)
+writing to the same index path can race and corrupt data, so the caller
+must ensure only one writer touches a given path at a time.
+
+The caller is responsible for new embeddings already matching the
+index's ``metric``/``is_normalized``/dtype convention.
+
+The CLI equivalent bulk-loads a whole file in one process, auto-numbering
+new ids the same way:
+
+.. code-block:: bash
+
+   ecp add-data my_index.zarr new_embeddings.h5
+
 Persisting and resuming queries
 --------------------------------
 

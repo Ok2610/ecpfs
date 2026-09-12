@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
+use dashmap::DashMap;
 use half::f16;
-use lru::LruCache;
+use moka::sync::Cache;
 use ndarray::{Array1, Array2, Axis, s};
 use rayon::prelude::*;
 use zarrs::array::data_type::{bool, float16, float32, string, uint32};
@@ -169,89 +170,88 @@ pub fn append_node_batch(
 /// A cached node's `(centroids, children)`.
 type CachedNode = Arc<(Array2<f32>, Array1<u32>)>;
 
-/// `(entries, resident_bytes, limit_bytes)`.
-type CacheState = (LruCache<String, CachedNode>, usize, usize);
-
 /// Caches a node's `(centroids, children)` across every batch and pass of
-/// one `build_tree` call, so a shallow node isn't re-read from disk every
-/// time a deeper pass routes through it. Unbounded until `set_limit` gives
-/// it a real budget (adjusted per pass, since it depends on that pass's
-/// batch size); least-recently-used entries are evicted first.
-struct NodeCache {
-    state: Mutex<CacheState>,
+/// one `build_tree` (or `Index::insert`) call, so a shallow node isn't
+/// re-read from disk every time a deeper pass routes through it. Capacity
+/// is fixed at construction; moka evicts by weight (bytes) once it's full.
+pub(crate) struct NodeCache {
+    // Key: node group_path (e.g. "/lvl_1/node_3"). Value: (centroids, children).
+    cache: Cache<String, CachedNode>,
 }
 
 impl NodeCache {
-    fn new() -> Self {
+    fn entry_bytes(entry: &(Array2<f32>, Array1<u32>)) -> u32 {
+        (entry.0.len() * size_of::<f32>() + entry.1.len() * size_of::<u32>()) as u32
+    }
+
+    pub(crate) fn new(max_capacity_bytes: u64) -> Self {
         NodeCache {
-            state: Mutex::new((LruCache::unbounded(), 0, usize::MAX)),
-        }
-    }
-
-    fn entry_bytes(entry: &(Array2<f32>, Array1<u32>)) -> usize {
-        entry.0.len() * size_of::<f32>() + entry.1.len() * size_of::<u32>()
-    }
-
-    /// Evicts down to `limit_bytes` if needed, then adopts it as the limit
-    /// for future inserts.
-    fn set_limit(&self, limit_bytes: usize) {
-        let mut state = self.state.lock().unwrap();
-        state.2 = limit_bytes;
-        while state.1 > state.2 {
-            let Some((_, evicted)) = state.0.pop_lru() else {
-                break;
-            };
-            state.1 -= Self::entry_bytes(&evicted);
+            cache: Cache::builder()
+                .max_capacity(max_capacity_bytes)
+                .weigher(|_, v: &CachedNode| Self::entry_bytes(v))
+                .build(),
         }
     }
 
     /// `group_path`'s `(centroids, children)`, from cache or disk.
     fn get_or_read(&self, store: &ReadableWritableListableStorage, group_path: &str) -> CachedNode {
-        if let Some(hit) = self.state.lock().unwrap().0.get(group_path) {
-            return hit.clone();
-        }
-
-        let read_store: ReadableListableStorage = store.clone().readable_listable();
-        let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
-        let centroids = node
-            .embeddings()
-            .as_ref()
-            .expect("intermediate node must already have embeddings from an earlier level pass")
-            .clone();
-        let child_ids = node
-            .children()
-            .as_ref()
-            .expect("intermediate node must already have children from an earlier level pass")
-            .clone();
-        let entry = Arc::new((centroids, child_ids));
-
-        let mut state = self.state.lock().unwrap();
-        if let Some(hit) = state.0.get(group_path) {
-            return hit.clone();
-        }
-        state.1 += Self::entry_bytes(&entry);
-        state.0.put(group_path.to_string(), entry.clone());
-        while state.1 > state.2 {
-            let Some((_, evicted)) = state.0.pop_lru() else {
-                break;
-            };
-            state.1 -= Self::entry_bytes(&evicted);
-        }
-        entry
+        self.cache.get_with(group_path.to_string(), || {
+            let read_store: ReadableListableStorage = store.clone().readable_listable();
+            let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
+            let centroids = node
+                .embeddings()
+                .as_ref()
+                .expect(
+                    "node embeddings missing: never written by build, or insert routed into a \
+                     branch with zero descendants from the original build",
+                )
+                .clone();
+            let child_ids = node
+                .children()
+                .as_ref()
+                .expect(
+                    "node children missing: never written by build, or insert routed into a \
+                     branch with zero descendants from the original build",
+                )
+                .clone();
+            Arc::new((centroids, child_ids))
+        })
     }
 }
 
-/// Parameters that stay constant across one `build_tree` call's whole
-/// recursive descent, bundled to keep `add_data`'s signature manageable.
-struct BuildConfig<'a> {
-    store: &'a ReadableWritableListableStorage,
-    node_cache: &'a NodeCache,
-    target_level: u32,
-    total_levels: u32,
-    metric: Metric,
-    is_normalized: bool,
-    chunk_shape: &'a [u64],
-    embedding_dtype: EmbeddingDtype,
+/// Parameters that stay constant across one recursive descent, bundled to
+/// keep `add_data`/`route_batch_to_node`'s signatures manageable.
+pub(crate) struct BuildConfig<'a> {
+    pub(crate) store: &'a ReadableWritableListableStorage,
+    pub(crate) node_cache: &'a NodeCache,
+    pub(crate) target_level: u32,
+    pub(crate) total_levels: u32,
+    pub(crate) metric: Metric,
+    pub(crate) is_normalized: bool,
+    pub(crate) chunk_shape: &'a [u64],
+    pub(crate) embedding_dtype: EmbeddingDtype,
+
+    /// Locks a leaf during a write. Only set when inserting into an
+    /// already-built index; build_tree passes None.
+    pub(crate) leaf_locks: Option<&'a DashMap<u32, Arc<RwLock<()>>>>,
+}
+
+/// Calls `process(i)` for each `i` in `0..count` and collects the results.
+/// Runs on rayon's thread pool, unless `on_caller_thread` is true, in
+/// which case every call runs on the thread that called `fan_out`
+/// instead.
+///
+/// Set `on_caller_thread` whenever `process` might wait on a leaf's
+/// write lock, to avoid deadlocking rayon's thread pool.
+fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Vec<(u32, u32)>
+where
+    F: Fn(usize) -> Vec<(u32, u32)> + Sync + Send,
+{
+    if on_caller_thread {
+        (0..count).flat_map(process).collect()
+    } else {
+        (0..count).into_par_iter().flat_map(process).collect()
+    }
 }
 
 /// Routes a batch of data points (already known to belong under `node_idx`
@@ -259,13 +259,17 @@ struct BuildConfig<'a> {
 /// level, otherwise reads `node_idx`'s own centroids/children (written by
 /// an earlier `target_level` pass), splits the batch by nearest centroid,
 /// and recurses into each non-empty child.
-fn add_data(
+///
+/// Returns the on-disk `(level, node_idx)` of every leaf actually written
+/// to, so a caller mutating an already-loaded `Index` can invalidate
+/// exactly those cached nodes.
+fn route_batch_to_node(
     config: &BuildConfig,
     level: u32,
     node_idx: u32,
     data_embeddings: &Array2<f32>,
     data_ids: &Array1<u32>,
-) {
+) -> Vec<(u32, u32)> {
     let group_path = format!("/lvl_{level}/node_{node_idx}");
 
     if level == config.target_level {
@@ -274,20 +278,33 @@ fn add_data(
         } else {
             "node_ids"
         };
-        append_node_batch(
-            config.store,
-            &group_path,
-            child_key,
-            data_embeddings,
-            data_ids,
-            config.chunk_shape,
-            config.embedding_dtype,
-        );
-        return;
+        let write = || {
+            append_node_batch(
+                config.store,
+                &group_path,
+                child_key,
+                data_embeddings,
+                data_ids,
+                config.chunk_shape,
+                config.embedding_dtype,
+            )
+        };
+        match config.leaf_locks {
+            Some(locks) => {
+                let lock = locks
+                    .entry(node_idx)
+                    .or_insert_with(|| Arc::new(RwLock::new(())))
+                    .clone();
+                let _guard = lock.write().unwrap();
+                write();
+            }
+            None => write(),
+        }
+        return vec![(level, node_idx)];
     }
 
-    // Cached across every batch/pass of this build_tree call, not re-read
-    // from disk on every visit.
+    // Cached across every batch/pass of this build_tree (or insert) call,
+    // not re-read from disk on every visit.
     let entry = config.node_cache.get_or_read(config.store, &group_path);
     let (centroids, child_ids) = (&entry.0, &entry.1);
 
@@ -298,11 +315,11 @@ fn add_data(
         config.is_normalized,
     );
 
-    (0..centroids.nrows()).into_par_iter().for_each(|child| {
+    fan_out(centroids.nrows(), config.leaf_locks.is_some(), |child| {
         let start = offsets[child] as usize;
         let end = offsets[child + 1] as usize;
         if start == end {
-            return;
+            return Vec::new();
         }
         let vec_indices: Vec<usize> = assignment
             .slice(s![start..end])
@@ -311,14 +328,56 @@ fn add_data(
             .collect();
         let child_embeddings = data_embeddings.select(Axis(0), &vec_indices);
         let child_ids_batch = Array1::from_iter(vec_indices.iter().map(|&i| data_ids[i]));
-        add_data(
+        route_batch_to_node(
             config,
             level + 1,
             child_ids[child],
             &child_embeddings,
             &child_ids_batch,
-        );
-    });
+        )
+    })
+}
+
+/// Routes a batch of new data toward `config.target_level`: assigns each
+/// point to its nearest root centroid, then routes/writes each non-empty
+/// group via `route_batch_to_node` starting at level 1. Shared by
+/// `build_tree` (one call per pass, `target_level` = that pass's level)
+/// and `Index::insert` (one call, `target_level` = `total_levels`).
+///
+/// Returns the on-disk `(level, node_idx)` of every leaf actually written
+/// to.
+pub(crate) fn add_data(
+    config: &BuildConfig,
+    root_embeddings: &Array2<f32>,
+    data_embeddings: &Array2<f32>,
+    data_ids: &Array1<u32>,
+) -> Vec<(u32, u32)> {
+    let (offsets, assignment) = determine_node_assignments(
+        root_embeddings,
+        data_embeddings,
+        config.metric,
+        config.is_normalized,
+    );
+
+    fan_out(
+        root_embeddings.nrows(),
+        config.leaf_locks.is_some(),
+        |root_node| {
+            let start = offsets[root_node] as usize;
+            let end = offsets[root_node + 1] as usize;
+            if start == end {
+                return Vec::new();
+            }
+            let vec_indices: Vec<usize> = assignment
+                .slice(s![start..end])
+                .iter()
+                .map(|&i| i as usize)
+                .collect();
+            let node_embeddings = data_embeddings.select(Axis(0), &vec_indices);
+            let node_ids = Array1::from_iter(vec_indices.iter().map(|&i| data_ids[i]));
+            route_batch_to_node(config, 1, root_node as u32, &node_embeddings, &node_ids)
+        },
+    )
 }
 
 /// `build_tree`'s parameters, bundled to keep its own signature manageable.
@@ -365,10 +424,19 @@ pub fn build_tree(args: &BuildTreeArgs) {
     } = *args;
 
     let node_size = root_embeddings.nrows() as u64;
-    let node_cache = NodeCache::new();
     let tracked_budget = (memory_limit_bytes as f64 * TRACKED_MEMORY_FRACTION) as usize;
     let bytes_per_vec = (root_embeddings.ncols() * size_of::<f32>()).max(1);
-    let mut nodes_bytes_needed = 0usize;
+
+    // node_cache gets up to 75% of the tracked budget, sized once for the
+    // whole build (not ratcheted per pass): the total bytes every non-leaf
+    // level will need once fully on disk.
+    let total_cacheable_bytes: usize = (1..total_levels)
+        .map(|l| node_size.pow(l + 1) as usize * bytes_per_vec)
+        .sum();
+    let cache_capacity = total_cacheable_bytes.min(tracked_budget * 3 / 4);
+    let batch_share = tracked_budget.saturating_sub(cache_capacity);
+    let memory_floor_vecs = (batch_share / bytes_per_vec).max(1);
+    let node_cache = NodeCache::new(cache_capacity as u64);
 
     for target_level in 1..=total_levels {
         let source = if target_level == total_levels {
@@ -382,16 +450,7 @@ pub fn build_tree(args: &BuildTreeArgs) {
         } else {
             (node_size.pow(target_level + 1) as usize).min(total_vec_count)
         };
-
-        // node_cache gets up to 75% budget
-        let batch_share = if nodes_bytes_needed > tracked_budget * 3 / 4 {
-            tracked_budget / 4
-        } else {
-            tracked_budget - nodes_bytes_needed
-        };
-        let memory_floor_vecs = (batch_share / bytes_per_vec).max(1);
         let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs);
-        node_cache.set_limit(tracked_budget.saturating_sub(batch_vecs * bytes_per_vec));
 
         let config = BuildConfig {
             store,
@@ -402,6 +461,7 @@ pub fn build_tree(args: &BuildTreeArgs) {
             is_normalized,
             chunk_shape,
             embedding_dtype,
+            leaf_locks: None,
         };
 
         let mut start = 0;
@@ -410,38 +470,8 @@ pub fn build_tree(args: &BuildTreeArgs) {
             log::debug!("target_level={target_level}: processing vecs {start}..{end}");
             let batch_embeddings = source.read_vecs(start, end);
             let batch_ids: Array1<u32> = (start as u32..end as u32).collect();
-
-            let (offsets, assignment) = determine_node_assignments(
-                root_embeddings,
-                &batch_embeddings,
-                metric,
-                is_normalized,
-            );
-
-            (0..root_embeddings.nrows())
-                .into_par_iter()
-                .for_each(|root_node| {
-                    let s = offsets[root_node] as usize;
-                    let e = offsets[root_node + 1] as usize;
-                    if s == e {
-                        return;
-                    }
-                    let vec_indices: Vec<usize> = assignment
-                        .slice(s![s..e])
-                        .iter()
-                        .map(|&i| i as usize)
-                        .collect();
-                    let node_embeddings = batch_embeddings.select(Axis(0), &vec_indices);
-                    let node_ids = Array1::from_iter(vec_indices.iter().map(|&i| batch_ids[i]));
-                    add_data(&config, 1, root_node as u32, &node_embeddings, &node_ids);
-                });
-
+            add_data(&config, root_embeddings, &batch_embeddings, &batch_ids);
             start = end;
-        }
-
-        // This level is now on disk, so it's cacheable for every later pass.
-        if target_level < total_levels {
-            nodes_bytes_needed += node_size.pow(target_level + 1) as usize * bytes_per_vec;
         }
     }
 }

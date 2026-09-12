@@ -37,6 +37,12 @@ which expanded the search breadth-first at every level instead.
 It also supports incremental search, which pulls further results for an
 already-run query without restarting it.
 
+An index isn't build-once. `insert` (Python) and `ecp add-data` (CLI) add
+new points to an already-built index, routing each to its nearest leaf the
+same way search descends. Concurrent inserts and searches on one loaded
+index are safe and fine-grained (see `docs/quickstart.rst`), though naive
+insert never rebalances, so a leaf that keeps growing just keeps growing.
+
 The on-disk format is Zarr: each tree node is a group of plain arrays,
 deliberately "whitebox" so it stays human-inspectable and easy to extend
 later without touching the loader. A second, minimal binary backend is

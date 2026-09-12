@@ -12,6 +12,7 @@ Installed alongside the Rust workspace as the ``ecp-cli`` crate (binary name
 
    Commands:
      build-index      Selects cluster representatives from `embeddings_file`, then builds the full tree over it into `save_file`
+     add-data         Bulk-appends new vectors from `embeddings_file` into an already-built index
      search           Runs a single query, pulled from row `query_row` of `query_file`, against an existing index, or continues a previously-persisted one with `--resume`
      info             Prints an index's `info/*` metadata without loading its tree
      cleanup-queries  Erases persisted queries nobody has resumed, so `/queries/` doesn't grow forever on an index `search` keeps being run against
@@ -62,6 +63,42 @@ build-index
    Thread count is controlled by the RAYON_NUM_THREADS environment variable
    (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies
    process-wide, for the lifetime of the run.
+
+add-data
+--------
+
+Offline counterpart to calling ``Index.insert`` from a live session. Loads
+the index, bulk-appends every vector in ``embeddings_file``, exits.
+New ids are assigned automatically, starting at the index's current
+``total_items``.
+
+.. code-block:: bash
+
+   ecp add-data my_index.zarr new_embeddings.h5
+
+.. code-block:: text
+
+   Usage: ecp add-data [OPTIONS] <INDEX_PATH> <EMBEDDINGS_FILE>
+
+   Arguments:
+     <INDEX_PATH>       Path to the index to insert into
+     <EMBEDDINGS_FILE>  Zarr or HDF5 file with the new data vectors to append
+
+   Options:
+         --emb-grp-name <EMB_GRP_NAME>
+             Group name for the embeddings dataset [default: embeddings]
+         --fallback-batch-rows <FALLBACK_BATCH_ROWS>
+             Row batch size used when the source has no natural on-disk chunk to align to (same meaning as build-index's flag of the same name) [default: 100000]
+         --memory-limit-gb <MEMORY_LIMIT_GB>
+             Caps how many touched nodes stay cached, in GB. Defaults to 80% of total system RAM
+         --with-logging
+             Turn on file-based logging for this run
+         --log-dir <LOG_DIR>
+             Directory to write the log file into
+         --log-level <LOG_LEVEL>
+             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+     -h, --help
+             Print help
 
 search
 ------

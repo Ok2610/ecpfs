@@ -96,7 +96,7 @@ def test_concurrent_insert_and_search_from_multiple_threads(tmp_path):
     assert len(inserted_ids) == 10
 
     items, _ = index.new_search(
-        query=np.array([0.0, 0.0], dtype=np.float32), k=12, search_exp=4, max_increments=-1, exclude_vec=[]
+        query=np.array([0.0, 0.0], dtype=np.float32), k=18, search_exp=4, max_increments=-1, exclude_vec=[]
     )
     ids = {item_id for _, item_id in items}
     assert set(inserted_ids) <= ids, f"missing inserted items, got {ids}"

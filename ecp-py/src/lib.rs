@@ -13,11 +13,7 @@ use pyindex::IndexWrapper;
 use pylogging::init_logging;
 use pymetric::PyMetric;
 
-// PyO3 0.29 defaults every module to declaring free-threaded (no-GIL)
-// support. IndexWrapper's concurrent-hot-path methods (new_search,
-// get_next_k_items, insert) are interior-mutable and release the GIL
-// already, so they don't rely on it for correctness. BuilderWrapper is
-// unaudited: its methods still hold the GIL for their whole duration.
+// Every I/O-bound method in this module releases the GIL via py.detach.
 #[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;

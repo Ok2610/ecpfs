@@ -177,7 +177,7 @@ wheels = [
 
 [[package]]
 name = "ecpfs"
-version = "0.9.94"
+version = "0.9.95"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

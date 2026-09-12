@@ -26,6 +26,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     BuildIndex(BuildIndexArgs),
+    AddData(AddDataArgs),
     Search(SearchArgs),
     Info(InfoArgs),
     CleanupQueries(CleanupQueriesArgs),
@@ -213,6 +214,59 @@ fn build_index(args: BuildIndexArgs) {
     builder.build(&source, args.fallback_batch_rows);
 }
 
+/// Bulk-appends new vectors from `embeddings_file` into an already-built
+/// index. Offline counterpart to calling `Index::insert` from a live
+/// session. One process, batches the file, exits.
+#[derive(clap::Args)]
+struct AddDataArgs {
+    /// Path to the index to insert into.
+    index_path: PathBuf,
+
+    /// Zarr or HDF5 file with the new data vectors to append.
+    embeddings_file: PathBuf,
+
+    /// Group name for the embeddings dataset.
+    #[arg(long, default_value = "embeddings")]
+    emb_grp_name: String,
+
+    /// Row batch size used when the source has no natural on-disk chunk to
+    /// align to (same meaning as build-index's flag of the same name).
+    #[arg(long, default_value_t = 100_000)]
+    fallback_batch_rows: usize,
+
+    /// Caps how many touched nodes stay cached, in GB. Defaults to 80% of
+    /// total system RAM.
+    #[arg(long, default_value_t = default_memory_limit_gib())]
+    memory_limit_gb: usize,
+
+    #[command(flatten)]
+    logging: LoggingArgs,
+}
+
+fn add_data(args: AddDataArgs) {
+    args.logging.init_if_requested();
+    let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
+    let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
+    let first_id = IndexInfo::load(args.index_path.clone()).total_items;
+    let index = Index::load(args.index_path, Some(memory_limit_bytes));
+
+    let (total_vecs, _dim) = source.shape();
+    let batch_vecs =
+        source.chunk_aligned_batch_vecs(args.fallback_batch_rows, args.fallback_batch_rows);
+
+    let mut start = 0usize;
+    while start < total_vecs {
+        let end = (start + batch_vecs).min(total_vecs);
+        index.insert(source.read_vecs(start, end));
+        start = end;
+    }
+
+    println!(
+        "inserted {total_vecs} items (ids {first_id}..{})",
+        first_id + total_vecs as u32
+    );
+}
+
 /// Runs a query against an index, or continues a persisted one with
 /// `--resume`. Persists before exiting; prints `query_id` as the first
 /// output line.
@@ -357,6 +411,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::BuildIndex(args) => build_index(args),
+        Command::AddData(args) => add_data(args),
         Command::Search(args) => search(args),
         Command::Info(args) => info(args),
         Command::CleanupQueries(args) => cleanup_queries(args),

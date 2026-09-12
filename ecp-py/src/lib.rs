@@ -14,10 +14,10 @@ use pylogging::init_logging;
 use pymetric::PyMetric;
 
 // PyO3 0.29 defaults every module to declaring free-threaded (no-GIL)
-// support. IndexWrapper/BuilderWrapper's &mut self methods aren't racy
-// under that (PyO3's own per-object exclusive-borrow check still applies),
-// but ecp_core::Index's internal caching isn't real interior-mutability
-// yet.
+// support. IndexWrapper's concurrent-hot-path methods (new_search,
+// get_next_k_items, insert) are interior-mutable and release the GIL
+// already, so they don't rely on it for correctness. BuilderWrapper is
+// unaudited: its methods still hold the GIL for their whole duration.
 #[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;

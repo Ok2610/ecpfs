@@ -35,7 +35,8 @@ impl BuilderWrapper {
     /// process (not strictly enforced). embedding_dtype of None matches
     /// each source's own dtype; forcing F16 against an f32 source
     /// downcasts real precision and logs a warning. max_chunk_bytes is the
-    /// max size for one on-disk chunk.
+    /// max size for one on-disk chunk. Releases the GIL for the actual
+    /// work, same as every other method on this class.
     #[new]
     #[pyo3(signature = (
         index_path,
@@ -47,6 +48,7 @@ impl BuilderWrapper {
         max_chunk_bytes=ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES,
     ))]
     fn new(
+        py: Python<'_>,
         index_path: PathBuf,
         levels: u32,
         metric: PyMetric,
@@ -55,17 +57,20 @@ impl BuilderWrapper {
         embedding_dtype: Option<PyEmbeddingDtype>,
         max_chunk_bytes: usize,
     ) -> Self {
-        BuilderWrapper {
-            inner: Builder::create(
+        let metric = metric.into();
+        let embedding_dtype = embedding_dtype.map(Into::into);
+        let inner = py.detach(|| {
+            Builder::create(
                 &index_path,
                 levels,
-                metric.into(),
+                metric,
                 is_normalized,
                 memory_limit_bytes,
-                embedding_dtype.map(Into::into),
+                embedding_dtype,
                 max_chunk_bytes,
-            ),
-        }
+            )
+        });
+        BuilderWrapper { inner }
     }
 
     /// select_representatives(embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings")
@@ -76,6 +81,7 @@ impl BuilderWrapper {
     #[pyo3(signature = (embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings"))]
     fn select_representatives(
         &mut self,
+        py: Python<'_>,
         embeddings_file: PathBuf,
         target_cluster_items: usize,
         strategy: &str,
@@ -83,13 +89,16 @@ impl BuilderWrapper {
         grp_name: &str,
     ) -> PyResult<()> {
         let strategy = parse_strategy(strategy)?;
-        let source = EmbeddingsSource::open(&embeddings_file, grp_name);
-        self.inner.select_representatives(
-            &source,
-            target_cluster_items,
-            strategy,
-            fallback_batch_rows,
-        );
+        let grp_name = grp_name.to_string();
+        py.detach(|| {
+            let source = EmbeddingsSource::open(&embeddings_file, &grp_name);
+            self.inner.select_representatives(
+                &source,
+                target_cluster_items,
+                strategy,
+                fallback_batch_rows,
+            );
+        });
         Ok(())
     }
 
@@ -101,11 +110,13 @@ impl BuilderWrapper {
     /// build.
     fn select_representatives_custom(
         &mut self,
+        py: Python<'_>,
         ids: PyReadonlyArray1<u32>,
         embeddings: PyReadonlyArray2<f32>,
     ) {
-        self.inner
-            .select_representatives_custom(ids.to_owned_array(), embeddings.to_owned_array());
+        let ids = ids.to_owned_array();
+        let embeddings = embeddings.to_owned_array();
+        py.detach(|| self.inner.select_representatives_custom(ids, embeddings));
     }
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")
@@ -114,8 +125,17 @@ impl BuilderWrapper {
     /// `embeddings_file`, using the representatives already selected via
     /// select_representatives or select_representatives_custom.
     #[pyo3(signature = (embeddings_file, fallback_batch_rows, grp_name="embeddings"))]
-    fn build(&mut self, embeddings_file: PathBuf, fallback_batch_rows: usize, grp_name: &str) {
-        let dataset = EmbeddingsSource::open(&embeddings_file, grp_name);
-        self.inner.build(&dataset, fallback_batch_rows);
+    fn build(
+        &mut self,
+        py: Python<'_>,
+        embeddings_file: PathBuf,
+        fallback_batch_rows: usize,
+        grp_name: &str,
+    ) {
+        let grp_name = grp_name.to_string();
+        py.detach(|| {
+            let dataset = EmbeddingsSource::open(&embeddings_file, &grp_name);
+            self.inner.build(&dataset, fallback_batch_rows);
+        });
     }
 }

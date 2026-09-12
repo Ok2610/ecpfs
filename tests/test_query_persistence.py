@@ -28,6 +28,7 @@ def build_two_clusters_index(tmp_path):
         ),
         lambda index: index.get_next_k_items(0, k=1, search_exp=1, max_increments=-1, exclude_vec=[]),
         lambda index: index.cleanup_persisted_queries_older_than(0.0),
+        lambda index: index.insert(embeddings=np.array([[0.0, 0.0]], dtype=np.float32)),
     ],
 )
 def test_calling_a_method_after_close_raises_value_error(tmp_path, call):

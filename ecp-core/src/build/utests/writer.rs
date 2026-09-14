@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
-use crate::utils::EmbeddingDtype;
+use crate::utils::{EmbeddingDtype, read_subset_as_f32};
 use half::f16;
 use ndarray::array;
 
@@ -121,5 +121,107 @@ fn zarrs_append_writes_f16_when_requested() {
             [f16::from_f32(1.5), f16::from_f32(2.5)],
             [f16::from_f32(3.5), f16::from_f32(4.5)]
         ]
+    );
+}
+
+/// Unlike the f16 case above, integer-valued data survives a uint8 round
+/// trip exactly, which is the whole point of offering the dtype.
+#[test]
+fn zarrs_append_round_trips_integer_values_through_uint8_exactly() {
+    let store = new_memory_store();
+    let store = as_readable_writable_listable(&store);
+
+    zarrs_append(
+        &store,
+        "/node/embeddings",
+        "/node/item_ids",
+        &array![[0.0f32, 255.0], [1.0, 128.0]],
+        &array![10u32, 20],
+        &[100, 2],
+        EmbeddingDtype::UInt8,
+    );
+
+    let embeddings =
+        Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
+    assert_eq!(*embeddings.data_type(), zarrs::array::data_type::uint8());
+    assert_eq!(
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        array![[0.0f32, 255.0], [1.0, 128.0]],
+        "every stored value must read back bit-for-bit as the f32 it went in as"
+    );
+}
+
+#[test]
+fn zarrs_append_round_trips_integer_values_through_int8_exactly() {
+    let store = new_memory_store();
+    let store = as_readable_writable_listable(&store);
+
+    zarrs_append(
+        &store,
+        "/node/embeddings",
+        "/node/item_ids",
+        &array![[-128.0f32, 127.0], [-1.0, 0.0]],
+        &array![10u32, 20],
+        &[100, 2],
+        EmbeddingDtype::Int8,
+    );
+
+    let embeddings =
+        Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
+    assert_eq!(*embeddings.data_type(), zarrs::array::data_type::int8());
+    assert_eq!(
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        array![[-128.0f32, 127.0], [-1.0, 0.0]]
+    );
+}
+
+/// Rust's float-to-int `as` saturates rather than wrapping, so an
+/// out-of-range value clamps to the nearest end and NaN becomes 0. Pinned
+/// as a contract: the write path relies on it instead of range-checking,
+/// and `resolve_dtype` only warns about it.
+#[test]
+fn storing_out_of_range_values_as_uint8_saturates_rather_than_wrapping() {
+    let store = new_memory_store();
+    let store = as_readable_writable_listable(&store);
+
+    zarrs_append(
+        &store,
+        "/node/embeddings",
+        "/node/item_ids",
+        &array![[300.0f32, -5.0], [f32::NAN, 2.7]],
+        &array![10u32, 20],
+        &[100, 2],
+        EmbeddingDtype::UInt8,
+    );
+
+    let embeddings =
+        Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
+    assert_eq!(
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        array![[255.0f32, 0.0], [0.0, 2.0]],
+        "300 clamps to 255, -5 clamps to 0, NaN becomes 0, and 2.7 truncates to 2"
+    );
+}
+
+#[test]
+fn storing_out_of_range_values_as_int8_saturates_rather_than_wrapping() {
+    let store = new_memory_store();
+    let store = as_readable_writable_listable(&store);
+
+    zarrs_append(
+        &store,
+        "/node/embeddings",
+        "/node/item_ids",
+        &array![[200.0f32, -200.0]],
+        &array![10u32],
+        &[100, 2],
+        EmbeddingDtype::Int8,
+    );
+
+    let embeddings =
+        Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
+    assert_eq!(
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        array![[127.0f32, -128.0]]
     );
 }

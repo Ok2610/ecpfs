@@ -8,20 +8,18 @@ use ndarray::Array1;
 use ndarray::Array2;
 
 use dashmap::DashMap;
-use half::f16;
 use moka::sync::Cache;
 use zarrs::array::Array;
-use zarrs::array::data_type::{float16, float32};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
 use ordered_float::NotNan;
 use std::collections::BinaryHeap;
 
-use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data, write_total_items};
+use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data, write_info_u32};
 use crate::search::node::Node;
 use crate::utils::HeapEntry;
-use crate::utils::{Metric, calculate_distances};
+use crate::utils::{Metric, calculate_distances, dtype_of_array, read_subset_as_f32};
 
 #[path = "persistence.rs"]
 mod persistence;
@@ -55,9 +53,15 @@ type QueryCache = Cache<usize, Arc<Mutex<QueryState>>>;
 /// `queries` is lazy the same way: `load` only discovers persisted ids,
 /// not their content (`get_or_load_query` reads on first use).
 ///
-/// `leaf_locks` and `total_items` back `insert`'s fine-grained concurrency:
-/// a leaf's lock is only taken around that leaf's own on-disk write or cold
-/// read, so two operations on different leaves never block each other.
+/// `leaf_locks`, `next_item_id` and `total_items` back `insert`'s
+/// fine-grained concurrency: a leaf's lock is only taken around that leaf's
+/// own on-disk write or cold read, so two operations on different leaves
+/// never block each other.
+///
+/// `next_item_id` allocates ids and only ever increases; `total_items`
+/// counts what is actually stored. They match until a crash mid-insert
+/// leaves a reserved range unwritten, which is why they are separate
+/// fields rather than one counter serving both roles.
 ///
 /// `leaf_locks` is not protecting against concurrent reads/writes of a
 /// node's own chunks; zarrs already parallelizes that internally. It
@@ -76,6 +80,7 @@ pub struct Index {
     memory_limit_bytes: Option<usize>,
     accepting: AtomicBool,
     leaf_locks: DashMap<u32, Arc<RwLock<()>>>,
+    next_item_id: Mutex<u32>,
     total_items: Mutex<u32>,
 }
 
@@ -99,21 +104,11 @@ impl Index {
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
-        let root_dtype = root_array.data_type();
-        let root: Array2<f32> = if *root_dtype == float32() {
-            root_array
-                .retrieve_array_subset::<Array2<f32>>(&root_array.subset_all())
-                .expect("Failed to retrieve index_root/embeddings")
-        } else if *root_dtype == float16() {
-            root_array
-                .retrieve_array_subset::<Array2<f16>>(&root_array.subset_all())
-                .expect("Failed to retrieve index_root/embeddings")
-                .mapv(|x| x.to_f32())
-        } else {
-            panic!(
-                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
-            )
-        };
+        let root: Array2<f32> = read_subset_as_f32(
+            &root_array,
+            &root_array.subset_all(),
+            "index_root/embeddings",
+        );
 
         let (nodes, queries) = Self::build_caches(memory_limit_bytes, store.clone());
 
@@ -122,7 +117,9 @@ impl Index {
             .max()
             .map_or(0, |max_id| max_id + 1);
 
-        let total_items = read_total_items(&store.clone().readable_listable());
+        let readable = store.clone().readable_listable();
+        let next_item_id = read_info_u32(&readable, "next_item_id");
+        let total_items = read_info_u32(&readable, "total_items");
 
         Index {
             store,
@@ -136,6 +133,7 @@ impl Index {
             memory_limit_bytes,
             accepting: AtomicBool::new(true),
             leaf_locks: DashMap::new(),
+            next_item_id: Mutex::new(next_item_id),
             total_items: Mutex::new(total_items),
         }
     }
@@ -530,35 +528,28 @@ impl Index {
         self.drain_items(query_id, k)
     }
 
-    /// Assigns each embedding row the next available id (`total_items..
-    /// total_items+embeddings.nrows()`, row order), routes it to its
+    /// Assigns each embedding row the next available id (`next_item_id..
+    /// next_item_id+embeddings.nrows()`, row order), routes it to its
     /// nearest leaf, and appends it there. No rebalancing. Concurrent
     /// inserts and searches are safe; two operations only serialize when
     /// they land on the same leaf. Returns the assigned id range.
     ///
-    /// Not atomic: a panic or crash partway through can leave `total_items`
+    /// Not atomic: a panic or crash partway through can leave `next_item_id`
     /// ahead of what actually landed on disk, permanently skipping the
     /// unwritten ids (never reusing or colliding with one already written).
+    /// `total_items` is written only once the vectors are stored, so it
+    /// keeps counting what exists rather than what was reserved.
     pub fn insert(&self, embeddings: Array2<f32>) -> std::ops::Range<u32> {
         if embeddings.nrows() == 0 {
-            let total = *self.total_items.lock().unwrap();
-            return total..total;
+            let next = *self.next_item_id.lock().unwrap();
+            return next..next;
         }
 
         // Not cached on Index. Read from index_root/embeddings's own
         // on-disk metadata, which every node in the tree shares.
         let root_array = Array::open(self.store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
-        let root_dtype = root_array.data_type();
-        let embedding_dtype = if *root_dtype == float32() {
-            crate::utils::EmbeddingDtype::F32
-        } else if *root_dtype == float16() {
-            crate::utils::EmbeddingDtype::F16
-        } else {
-            panic!(
-                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
-            )
-        };
+        let embedding_dtype = dtype_of_array(&root_array, "index_root/embeddings");
         let chunk_shape: Vec<u64> = root_array
             .chunk_shape_usize(&[0, 0])
             .expect("Failed to read index_root/embeddings chunk shape")
@@ -584,14 +575,15 @@ impl Index {
         };
 
         // Reserving the range and persisting it happen under the same lock
-        // so two concurrent inserts can never write total_items out of
+        // so two concurrent inserts can never write next_item_id out of
         // order (whichever finishes its disk write last would otherwise
-        // overwrite the other's larger value).
+        // overwrite the other's larger value). Reserved before the write, so
+        // a crash skips ids rather than risking a collision.
         let start = {
-            let mut total = self.total_items.lock().unwrap();
-            let start = *total;
-            *total += embeddings.nrows() as u32;
-            write_total_items(&self.store, *total);
+            let mut next = self.next_item_id.lock().unwrap();
+            let start = *next;
+            *next += embeddings.nrows() as u32;
+            write_info_u32(&self.store, "next_item_id", *next);
             start
         };
         let end = start + embeddings.nrows() as u32;
@@ -601,6 +593,14 @@ impl Index {
         for (level, node_id) in touched {
             // node_at's cache key is 0-based; on-disk level is 1-based.
             self.nodes.invalidate(&(level as usize - 1, node_id));
+        }
+
+        // Counted only now the vectors are on disk. Relative, so two
+        // concurrent inserts both land whichever order they finish in.
+        {
+            let mut total = self.total_items.lock().unwrap();
+            *total += embeddings.nrows() as u32;
+            write_info_u32(&self.store, "total_items", *total);
         }
 
         start..end
@@ -634,14 +634,15 @@ fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric, bool) {
     (levels, metric, is_normalized)
 }
 
-/// Reads `info/total_items`, shared by `IndexInfo::load_from_store` and
-/// `Index::load_from_store`.
-fn read_total_items(store: &ReadableListableStorage) -> u32 {
+/// Reads a rank-0 `info/{name}` scalar, shared by `IndexInfo::load_from_store`
+/// and `Index::load_from_store`.
+fn read_info_u32(store: &ReadableListableStorage, name: &str) -> u32 {
+    let path = format!("/info/{name}");
     let array =
-        Array::open(store.clone(), "/info/total_items").expect("Failed to open info/total_items");
+        Array::open(store.clone(), &path).unwrap_or_else(|e| panic!("Failed to open {path}: {e}"));
     array
         .retrieve_array_subset::<Vec<u32>>(&array.subset_all())
-        .expect("Failed to retrieve info/total_items")[0]
+        .unwrap_or_else(|e| panic!("Failed to retrieve {path}: {e}"))[0]
 }
 
 /// An index's `info/*` metadata plus its representative count, read without
@@ -653,6 +654,9 @@ pub struct IndexInfo {
     pub metric: Metric,
     pub is_normalized: bool,
     pub total_items: u32,
+    /// The next id `insert` will hand out. Ahead of `total_items` when a
+    /// crash left a reserved range unwritten, level with it otherwise.
+    pub next_item_id: u32,
     pub total_representatives: u32,
 }
 
@@ -666,7 +670,8 @@ impl IndexInfo {
 
     fn load_from_store(store: ReadableListableStorage) -> Self {
         let (levels, metric, is_normalized) = read_info_fields(&store);
-        let total_items = read_total_items(&store);
+        let total_items = read_info_u32(&store, "total_items");
+        let next_item_id = read_info_u32(&store, "next_item_id");
 
         let rep_ids_array =
             Array::open(store.clone(), "/rep_item_ids").expect("Failed to open rep_item_ids");
@@ -677,6 +682,7 @@ impl IndexInfo {
             metric,
             is_normalized,
             total_items,
+            next_item_id,
             total_representatives,
         }
     }

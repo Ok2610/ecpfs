@@ -21,8 +21,11 @@ Building an index
        metric=Metric.L2,
        is_normalized=False,
        # Omit embedding_dtype to match the source's own dtype (the
-       # default). Pass EmbeddingDtype.F16/.F32 to force one; forcing
-       # F16 against an f32 source logs a downcast warning.
+       # default). Pass EmbeddingDtype.F32/.F16/.UInt8/.Int8 to force one;
+       # forcing a narrower dtype than the source logs a warning, since it
+       # loses precision and, for the integer dtypes, truncates fractions
+       # and clamps out-of-range values. Every read widens back to f32, so
+       # a narrow dtype saves disk and read bandwidth, not memory.
        embedding_dtype=None,
    )
    builder.select_representatives(

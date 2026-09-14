@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{Array1, Array2};
-use zarrs::array::data_type::{bool, float16, float32, float64, string, uint32};
+use zarrs::array::data_type::{bool, float16, float32, float64, string, uint8, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
@@ -74,6 +74,31 @@ pub fn write_node_f16(
         .expect("failed to store embeddings metadata");
     emb_array
         .store_chunk(&[0, 0], &embeddings_f16)
+        .expect("failed to store embeddings chunk");
+
+    write_children(store, group_path, child_key, children);
+}
+
+/// Writes a node whose embeddings are stored as `uint8`, mirroring a build
+/// that chose `EmbeddingDtype::UInt8`.
+pub fn write_node_uint8(
+    store: &Arc<MemoryStore>,
+    group_path: &str,
+    embeddings: &Array2<f32>,
+    child_key: &str,
+    children: &Array1<u32>,
+) {
+    let embeddings_u8 = embeddings.mapv(|x| x as u8);
+    let emb_path = format!("{group_path}/embeddings");
+    let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, uint8(), 0u8)
+        .build(store.clone(), &emb_path)
+        .expect("failed to build embeddings array");
+    emb_array
+        .store_metadata()
+        .expect("failed to store embeddings metadata");
+    emb_array
+        .store_chunk(&[0, 0], &embeddings_u8)
         .expect("failed to store embeddings chunk");
 
     write_children(store, group_path, child_key, children);
@@ -149,19 +174,28 @@ pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_
         .expect("failed to store info/is_normalized chunk");
 }
 
-/// Writes `info/total_items` as a rank-0 (scalar) array, mirroring
-/// `write_total_items`.
-pub fn write_total_items(store: &Arc<MemoryStore>, total_items: u32) {
+/// Writes `info/{name}` as a rank-0 (scalar) array, mirroring
+/// `write_info_u32`.
+pub fn write_info_u32(store: &Arc<MemoryStore>, name: &str, value: u32) {
     let scalar_shape: Vec<u64> = vec![];
+    let path = format!("/info/{name}");
     let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, uint32(), 0u32)
-        .build(store.clone(), "/info/total_items")
-        .expect("failed to build info/total_items array");
+        .build(store.clone(), &path)
+        .unwrap_or_else(|e| panic!("failed to build {path} array: {e}"));
     field
         .store_metadata()
-        .expect("failed to store info/total_items metadata");
+        .unwrap_or_else(|e| panic!("failed to store {path} metadata: {e}"));
     field
-        .store_chunk(&[], vec![total_items])
-        .expect("failed to store info/total_items chunk");
+        .store_chunk(&[], vec![value])
+        .unwrap_or_else(|e| panic!("failed to store {path} chunk: {e}"));
+}
+
+/// Writes both id fields level with each other, as a fresh build leaves
+/// them. Tests that need the allocator ahead of the count (a crash mid-insert)
+/// write `next_item_id` themselves afterwards.
+pub fn write_item_counts(store: &Arc<MemoryStore>, total_items: u32) {
+    write_info_u32(store, "total_items", total_items);
+    write_info_u32(store, "next_item_id", total_items);
 }
 
 /// Writes `/rep_item_ids`, mirroring the representative id array a real

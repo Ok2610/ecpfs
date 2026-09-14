@@ -11,16 +11,22 @@ use crate::build::representatives::{
 };
 use crate::build::source::EmbeddingsSource;
 use crate::build::tree::{
-    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_total_items,
+    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_info_u32,
 };
 use crate::build::writer::zarrs_append;
 use crate::utils::{EmbeddingDtype, Metric};
 
-/// `requested` if set, else `native`. Warns on an `F32`-to-`F16` downcast.
+/// `requested` if set, else `native`. Warns when the requested dtype can't
+/// represent everything the source's can, since the write then narrows the
+/// data: a float target loses precision, while an integer target also
+/// truncates fractions and clamps anything outside its range.
 fn resolve_dtype(requested: Option<EmbeddingDtype>, native: EmbeddingDtype) -> EmbeddingDtype {
     let resolved = requested.unwrap_or(native);
-    if resolved == EmbeddingDtype::F16 && native == EmbeddingDtype::F32 {
-        log::warn!("writing embeddings as f16 downcasts the source's f32 precision");
+    if resolved.narrows(native) {
+        log::warn!(
+            "writing embeddings as {resolved:?} narrows the source's {native:?} values and loses information; \
+             integer targets additionally clamp out-of-range values and truncate fractions"
+        );
     }
     resolved
 }
@@ -190,8 +196,11 @@ impl Builder {
             self.levels,
             self.metric
         );
+        // A fresh build hands out ids 0..total_items, so the count and the
+        // allocator start level; only a later insert can move them apart.
         let (total_items, _) = dataset.shape();
-        write_total_items(&self.store, total_items as u32);
+        write_info_u32(&self.store, "total_items", total_items as u32);
+        write_info_u32(&self.store, "next_item_id", total_items as u32);
 
         let representatives = self
             .representatives

@@ -2,6 +2,7 @@ use super::*;
 use crate::test_fixtures::{as_readable_listable, new_memory_store};
 use ndarray::array;
 use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type::float32;
 
 fn write_embeddings(
     store: &std::sync::Arc<zarrs::storage::store::MemoryStore>,
@@ -166,6 +167,66 @@ fn zarr_f16_source_reports_its_native_dtype() {
     };
 
     assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::F16);
+}
+
+/// SIFT-style descriptors: stored as uint8, read back as f32 with no
+/// rounding, since f32 represents every integer up to 2^24 exactly.
+#[test]
+fn zarr_uint8_source_reports_its_dtype_and_reads_back_exactly() {
+    let store = new_memory_store();
+    let embeddings = array![[0.0f32, 255.0], [1.0, 128.0]];
+    let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let array = ArrayBuilder::new(shape.clone(), shape, zarrs::array::data_type::uint8(), 0u8)
+        .build(store.clone(), "/embeddings")
+        .expect("failed to build embeddings array");
+    array
+        .store_metadata()
+        .expect("failed to store embeddings metadata");
+    array
+        .store_array_subset(
+            &zarrs::array::ArraySubset::new_with_ranges(&[
+                0..embeddings.nrows() as u64,
+                0..embeddings.ncols() as u64,
+            ]),
+            embeddings.mapv(|x| x as u8),
+        )
+        .expect("failed to store embeddings");
+    let source = EmbeddingsSource::Zarr {
+        store: as_readable_listable(&store),
+        path: "/embeddings".to_string(),
+    };
+
+    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::UInt8);
+    assert_eq!(source.read_vecs(0, 2), embeddings);
+}
+
+#[test]
+fn zarr_int8_source_reports_its_dtype_and_reads_back_exactly() {
+    let store = new_memory_store();
+    let embeddings = array![[-128.0f32, 127.0], [-1.0, 0.0]];
+    let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let array = ArrayBuilder::new(shape.clone(), shape, zarrs::array::data_type::int8(), 0i8)
+        .build(store.clone(), "/embeddings")
+        .expect("failed to build embeddings array");
+    array
+        .store_metadata()
+        .expect("failed to store embeddings metadata");
+    array
+        .store_array_subset(
+            &zarrs::array::ArraySubset::new_with_ranges(&[
+                0..embeddings.nrows() as u64,
+                0..embeddings.ncols() as u64,
+            ]),
+            embeddings.mapv(|x| x as i8),
+        )
+        .expect("failed to store embeddings");
+    let source = EmbeddingsSource::Zarr {
+        store: as_readable_listable(&store),
+        path: "/embeddings".to_string(),
+    };
+
+    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::Int8);
+    assert_eq!(source.read_vecs(0, 2), embeddings);
 }
 
 #[test]

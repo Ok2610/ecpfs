@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_fixtures::{
     as_readable_listable, as_readable_writable_listable, new_memory_store, write_index_info,
-    write_index_root, write_node, write_rep_item_ids, write_total_items,
+    write_index_root, write_item_counts, write_node, write_rep_item_ids,
 };
 use ndarray::array;
 use std::sync::Barrier;
@@ -24,7 +24,7 @@ fn nodes_cache(
 fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
-    write_total_items(&store, 8);
+    write_item_counts(&store, 8);
     write_index_root(
         &store,
         &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
@@ -71,7 +71,7 @@ fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
 fn index_info_reads_all_5_fields_without_loading_the_tree() {
     let store = new_memory_store();
     write_index_info(&store, 2, "IP", true);
-    write_total_items(&store, 1_000);
+    write_item_counts(&store, 1_000);
     write_rep_item_ids(&store, &array![0u32, 5, 10, 15]);
 
     let info = IndexInfo::load_from_store(as_readable_listable(&store));
@@ -91,7 +91,7 @@ fn index_info_reads_all_5_fields_without_loading_the_tree() {
 fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order() {
     let store = new_memory_store();
     write_index_info(&store, 2, "L2", false);
-    write_total_items(&store, 8);
+    write_item_counts(&store, 8);
     write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0]]);
 
     write_node(
@@ -290,6 +290,7 @@ fn build_test_index(metric: Metric) -> Index {
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
         leaf_locks: DashMap::new(),
+        next_item_id: Mutex::new(8),
         total_items: Mutex::new(8),
     }
 }
@@ -642,6 +643,7 @@ fn build_ivf_style_index(metric: Metric) -> Index {
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
         leaf_locks: DashMap::new(),
+        next_item_id: Mutex::new(8),
         total_items: Mutex::new(8),
     }
 }
@@ -831,6 +833,7 @@ fn build_three_level_test_index() -> Index {
         memory_limit_bytes: None,
         accepting: AtomicBool::new(true),
         leaf_locks: DashMap::new(),
+        next_item_id: Mutex::new(4),
         total_items: Mutex::new(4),
     }
 }
@@ -928,7 +931,7 @@ fn concurrent_searches_from_multiple_threads_return_correct_results() {
 fn write_ivf_style_fixture() -> Arc<zarrs::storage::store::MemoryStore> {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
-    write_total_items(&store, 8);
+    write_item_counts(&store, 8);
     write_index_root(
         &store,
         &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],

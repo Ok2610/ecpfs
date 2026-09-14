@@ -98,11 +98,27 @@ fn insert_then_reload_finds_the_new_item_by_search() {
     );
 }
 
+/// Overwrites an existing `/info/{name}` scalar, to set up id-space states
+/// that only a crash mid-insert would otherwise produce.
+fn overwrite_info_u32(index_path: &std::path::Path, name: &str, value: u32) {
+    let store: zarrs::storage::ReadableWritableListableStorage =
+        Arc::new(FilesystemStore::new(index_path).expect("failed to reopen store"));
+    let array =
+        Array::open(store, &format!("/info/{name}")).expect("failed to open the info field");
+    array
+        .store_chunk(&[], vec![value])
+        .expect("failed to overwrite the info field");
+}
+
 #[test]
-fn insert_updates_total_items() {
+fn insert_advances_both_the_count_and_the_allocator() {
     let index_path = build_two_clusters_index();
     let before = IndexInfo::load(index_path.clone());
     assert_eq!(before.total_items, 8);
+    assert_eq!(
+        before.next_item_id, 8,
+        "a fresh build leaves the allocator level with the count"
+    );
 
     let index = Index::load(index_path.clone(), None);
     index.insert(array![[0.05f32, 0.05], [10.05, 10.05]]);
@@ -110,6 +126,63 @@ fn insert_updates_total_items() {
 
     let after = IndexInfo::load(index_path);
     assert_eq!(after.total_items, 10);
+    assert_eq!(after.next_item_id, 10);
+}
+
+/// A crash between reserving an id range and writing its vectors leaves the
+/// allocator ahead of the count. Reachable in production, since `insert`
+/// persists the reservation before `add_data` stores anything.
+#[test]
+fn a_reserved_but_unwritten_range_leaves_the_count_honest() {
+    let index_path = build_two_clusters_index();
+    overwrite_info_u32(&index_path, "next_item_id", 20);
+
+    let gapped = IndexInfo::load(index_path.clone());
+    assert_eq!(gapped.total_items, 8, "only 8 items were ever written");
+    assert_eq!(
+        gapped.next_item_id, 20,
+        "ids 8..20 were reserved and lost, so they must never be handed out again"
+    );
+
+    let index = Index::load(index_path.clone(), None);
+    let assigned = index.insert(array![[0.05f32, 0.05]]);
+    assert_eq!(
+        assigned,
+        20..21,
+        "allocation continues from the allocator, never reusing a lost id"
+    );
+    drop(index);
+
+    let after = IndexInfo::load(index_path);
+    assert_eq!(
+        after.total_items, 9,
+        "the count tracks items that exist (8 built + 1 inserted), not the id space"
+    );
+    assert_eq!(after.next_item_id, 21);
+}
+
+#[test]
+fn concurrent_inserts_all_land_in_the_count() {
+    let index_path = build_two_clusters_index();
+    let index = Arc::new(Index::load(index_path.clone(), None));
+
+    std::thread::scope(|scope| {
+        for i in 0..4 {
+            let index = Arc::clone(&index);
+            scope.spawn(move || {
+                let offset = i as f32 * 0.01;
+                index.insert(array![[0.05f32 + offset, 0.05], [10.05 + offset, 10.05]]);
+            });
+        }
+    });
+    drop(index);
+
+    let after = IndexInfo::load(index_path);
+    assert_eq!(
+        after.total_items, 16,
+        "8 built plus 4 threads x 2 items; an absolute write would lose whichever finished first"
+    );
+    assert_eq!(after.next_item_id, 16);
 }
 
 #[test]

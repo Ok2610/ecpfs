@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_fixtures::{
-    as_readable_listable, new_memory_store, write_node, write_node_f16,
+    as_readable_listable, new_memory_store, write_node, write_node_f16, write_node_uint8,
     write_node_unsupported_dtype,
 };
 use ndarray::{Array1, Array2, array};
@@ -43,9 +43,51 @@ fn loads_f16_embeddings_upcast_to_f32() {
     assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
 }
 
-/// f16 and f32 are the only supported embedding dtypes; anything else (e.g. an
-/// embeddings array left as float64 by an upstream caller that never cast it)
-/// must fail loudly at load time rather than silently truncating precision.
+/// Unlike the f16 case, the widening here is exact for every possible stored
+/// value: f32 represents all 256 uint8 values without rounding.
+#[test]
+fn loads_uint8_embeddings_widened_to_f32() {
+    let store = new_memory_store();
+    let embeddings: Array2<f32> = array![[0.0, 255.0], [1.0, 128.0]];
+    let children: Array1<u32> = array![10, 20];
+    write_node_uint8(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+    let node = Node::new(
+        as_readable_listable(&store),
+        "/lvl_1/node_0".to_string(),
+        "node_ids".to_string(),
+    );
+
+    assert_eq!(node.embeddings().as_ref().unwrap(), &embeddings);
+}
+
+/// Everything is cached as f32 whatever the stored width, so a uint8 node
+/// accounts for 4 bytes per value, not 1. The memory budget is sized off
+/// resident bytes, so reporting the on-disk width here would overcommit it.
+#[test]
+fn resident_bytes_counts_the_widened_f32_size_not_the_stored_width() {
+    let store = new_memory_store();
+    let embeddings: Array2<f32> = array![[0.0, 255.0], [1.0, 128.0]];
+    let children: Array1<u32> = array![10, 20];
+    write_node_uint8(&store, "/lvl_1/node_0", &embeddings, "node_ids", &children);
+
+    let node = Node::new(
+        as_readable_listable(&store),
+        "/lvl_1/node_0".to_string(),
+        "node_ids".to_string(),
+    );
+    node.embeddings();
+    node.children();
+
+    assert_eq!(
+        node.resident_bytes(),
+        4 * size_of::<f32>() + 2 * size_of::<u32>()
+    );
+}
+
+/// Anything outside the supported dtypes (e.g. an embeddings array left as
+/// float64 by an upstream caller that never cast it) must fail loudly at
+/// load time rather than silently truncating precision.
 #[test]
 #[should_panic(expected = "unsupported embeddings dtype")]
 fn unsupported_dtype_panics_instead_of_silently_truncating() {

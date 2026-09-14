@@ -40,7 +40,7 @@ build-index
          --is-normalized
              Set if every embedding is already unit-length, to skip norm computation
          --embedding-dtype <EMBEDDING_DTYPE>
-             Precision to write embeddings as. `native` matches the source (warns if `f16` is forced against an `f32` source, a real precision loss) [default: native] [possible values: native, f16, f32]
+             Width to write embeddings as. `native` matches the source; anything narrower than the source warns, since it loses precision and, for the integer dtypes, truncates fractions and clamps out-of-range values. Every read widens back to f32, so this saves disk, not memory [default: native] [possible values: native, uint8, int8, f16, f32]
          --emb-grp-name <EMB_GRP_NAME>
              Group name for the embeddings dataset [default: embeddings]
          --rep-selection <REP_SELECTION>
@@ -69,8 +69,10 @@ add-data
 
 Offline counterpart to calling ``Index.insert`` from a live session. Loads
 the index, bulk-appends every vector in ``embeddings_file``, exits.
-New ids are assigned automatically, starting at the index's current
-``total_items``.
+New ids are assigned automatically from the index's ``next_item_id``, not
+from ``total_items``, so ids left reserved by an interrupted earlier insert
+are skipped rather than reused. The command prints the range it actually
+assigned.
 
 .. code-block:: bash
 
@@ -167,6 +169,11 @@ info
 
    Options:
      -h, --help  Print help
+
+``Total Items`` counts the items actually stored, while ``Next Item Id`` is
+the id the next insert will hand out. They match unless a crash mid-insert
+left a reserved id range unwritten, in which case the id is ahead of the
+count and ``info`` reports the size of the gap. Those ids are never reused.
 
 cleanup-queries
 ----------------

@@ -37,9 +37,9 @@ fn write_index_info_round_trips_through_index_load() {
 }
 
 #[test]
-fn write_total_items_stores_the_count() {
+fn write_info_u32_stores_a_named_scalar() {
     let store = new_memory_store();
-    write_total_items(&as_readable_writable_listable(&store), 42);
+    write_info_u32(&as_readable_writable_listable(&store), "total_items", 42);
 
     let total_items =
         Array::open(store.clone(), "/info/total_items").expect("failed to open info/total_items");
@@ -48,6 +48,24 @@ fn write_total_items_stores_the_count() {
             .retrieve_array_subset::<Vec<u32>>(&total_items.subset_all())
             .expect("failed to read total_items"),
         vec![42]
+    );
+}
+
+#[test]
+fn write_info_u32_overwrites_an_existing_scalar() {
+    let store = new_memory_store();
+    let writable = as_readable_writable_listable(&store);
+    write_info_u32(&writable, "next_item_id", 42);
+    write_info_u32(&writable, "next_item_id", 99);
+
+    let field =
+        Array::open(store.clone(), "/info/next_item_id").expect("failed to open info/next_item_id");
+    assert_eq!(
+        field
+            .retrieve_array_subset::<Vec<u32>>(&field.subset_all())
+            .expect("failed to read next_item_id"),
+        vec![99],
+        "insert rewrites these fields in place on every call"
     );
 }
 

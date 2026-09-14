@@ -489,3 +489,67 @@ fn explicit_f16_downcasts_an_f32_source_and_still_searches() {
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
+
+/// Integer-valued vectors, so the uint8 build stores them exactly rather
+/// than clamping or truncating. The two indexes must then agree on every
+/// returned distance bit-for-bit, not merely approximately: widening uint8
+/// to f32 is exact, and the search arithmetic is identical from there.
+#[test]
+fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
+    let vectors = array![
+        [0.0f32, 0.0],
+        [2.0, 2.0],
+        [5.0, 5.0],
+        [7.0, 7.0],
+        [200.0, 200.0],
+        [202.0, 202.0],
+        [205.0, 205.0],
+        [207.0, 207.0]
+    ];
+
+    let build_with = |dtype: EmbeddingDtype| {
+        let tmp = tempfile::tempdir().expect("failed to create temp dir");
+        let index_path = tmp.keep().join("index.zarr");
+        let store =
+            Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
+        write_embeddings(&store, "/dataset", &vectors);
+        let dataset = EmbeddingsSource::open(&index_path, "dataset");
+
+        let mut builder = Builder::create(
+            &index_path,
+            2,
+            Metric::L2,
+            false,
+            1_000_000_000,
+            Some(dtype),
+            DEFAULT_MAX_CHUNK_BYTES,
+        );
+        builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
+        builder.build(&dataset, 100);
+        index_path
+    };
+
+    let uint8_path = build_with(EmbeddingDtype::UInt8);
+    let f32_path = build_with(EmbeddingDtype::F32);
+
+    let root = Array::open(
+        Arc::new(FilesystemStore::new(&uint8_path).unwrap()),
+        "/index_root/embeddings",
+    )
+    .unwrap();
+    assert_eq!(*root.data_type(), zarrs::array::data_type::uint8());
+
+    let query = array![1.0f32, 1.0];
+    let (uint8_items, _) =
+        Index::load(uint8_path, None).new_search(query.clone(), 8, 4, -1, &HashSet::new());
+    let (f32_items, _) = Index::load(f32_path, None).new_search(query, 8, 4, -1, &HashSet::new());
+
+    assert_eq!(
+        uint8_items, f32_items,
+        "a uint8 index must return the same ids in the same order with the same distances"
+    );
+    assert_eq!(
+        uint8_items.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4, 5, 6, 7]
+    );
+}

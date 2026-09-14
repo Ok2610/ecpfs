@@ -15,7 +15,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::build::tree::{
-    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_total_items,
+    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_info_u32,
 };
 use ecp_core::search::Index;
 use ecp_core::utils::{EmbeddingDtype, Metric};
@@ -77,7 +77,8 @@ fn build_tree_produces_a_structure_that_searches_correctly() {
     let root_embeddings = array![[0.0f32, 0.0], [1.0, 1.0]];
 
     write_index_info(&store_rw, 2, Metric::L2, false);
-    write_total_items(&store_rw, 8);
+    write_info_u32(&store_rw, "total_items", 8);
+    write_info_u32(&store_rw, "next_item_id", 8);
     write_index_root(&store_rw, &root_embeddings, &[100, 2], EmbeddingDtype::F32);
     build_tree(&BuildTreeArgs {
         store: &store_rw,

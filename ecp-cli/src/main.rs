@@ -254,24 +254,29 @@ fn add_data(args: AddDataArgs) {
     args.logging.init_if_requested();
     let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
-    let first_id = IndexInfo::load(args.index_path.clone()).total_items;
     let index = Index::load(args.index_path, Some(memory_limit_bytes));
 
     let (total_vecs, _dim) = source.shape();
     let batch_vecs =
         source.chunk_aligned_batch_vecs(args.fallback_batch_rows, args.fallback_batch_rows);
 
+    // Reported from what insert actually assigned, never predicted: a
+    // reserved-but-lost range means ids are not simply "the old count onward".
+    let mut first_id: Option<u32> = None;
+    let mut last_id_end = 0u32;
     let mut start = 0usize;
     while start < total_vecs {
         let end = (start + batch_vecs).min(total_vecs);
-        index.insert(source.read_vecs(start, end));
+        let assigned = index.insert(source.read_vecs(start, end));
+        first_id.get_or_insert(assigned.start);
+        last_id_end = assigned.end;
         start = end;
     }
 
-    println!(
-        "inserted {total_vecs} items (ids {first_id}..{})",
-        first_id + total_vecs as u32
-    );
+    match first_id {
+        Some(first) => println!("inserted {total_vecs} items (ids {first}..{last_id_end})"),
+        None => println!("inserted 0 items"),
+    }
 }
 
 /// Runs a query against an index, or continues a persisted one with
@@ -380,6 +385,13 @@ fn info(args: InfoArgs) {
     println!("Metric: {}", info.metric.as_str());
     println!("Normalized: {}", info.is_normalized);
     println!("Total Items: {}", info.total_items);
+    println!("Next Item Id: {}", info.next_item_id);
+    if info.next_item_id > info.total_items {
+        println!(
+            "  ({} id(s) reserved but never written, likely a crash mid-insert)",
+            info.next_item_id - info.total_items
+        );
+    }
     println!("Total Representatives: {}", info.total_representatives);
 }
 

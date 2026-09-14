@@ -11,7 +11,7 @@ use crate::build::representatives::{
 };
 use crate::build::source::EmbeddingsSource;
 use crate::build::tree::{
-    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_total_items,
+    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_info_u32,
 };
 use crate::build::writer::zarrs_append;
 use crate::utils::{EmbeddingDtype, Metric};
@@ -196,8 +196,11 @@ impl Builder {
             self.levels,
             self.metric
         );
+        // A fresh build hands out ids 0..total_items, so the count and the
+        // allocator start level; only a later insert can move them apart.
         let (total_items, _) = dataset.shape();
-        write_total_items(&self.store, total_items as u32);
+        write_info_u32(&self.store, "total_items", total_items as u32);
+        write_info_u32(&self.store, "next_item_id", total_items as u32);
 
         let representatives = self
             .representatives

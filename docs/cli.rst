@@ -168,6 +168,11 @@ info
    Options:
      -h, --help  Print help
 
+``Total Items`` counts the items actually stored, while ``Next Item Id`` is
+the id the next insert will hand out. They match unless a crash mid-insert
+left a reserved id range unwritten, in which case the id is ahead of the
+count and ``info`` reports the size of the gap. Those ids are never reused.
+
 cleanup-queries
 ----------------
 

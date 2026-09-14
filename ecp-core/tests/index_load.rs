@@ -109,6 +109,7 @@ fn index_info_load_reads_info_and_representative_count_from_disk() {
     write_scalar_string(&store, "/info/metric", "IP");
     write_scalar_bool(&store, "/info/is_normalized", true);
     write_scalar_u32(&store, "/info/total_items", 1_000);
+    write_scalar_u32(&store, "/info/next_item_id", 1_000);
     write_rep_item_ids(&store, &array![0u32, 5, 10, 15]);
 
     let info = IndexInfo::load(index_path);
@@ -117,6 +118,7 @@ fn index_info_load_reads_info_and_representative_count_from_disk() {
     assert_eq!(info.metric, Metric::IP);
     assert!(info.is_normalized);
     assert_eq!(info.total_items, 1_000);
+    assert_eq!(info.next_item_id, 1_000);
     assert_eq!(info.total_representatives, 4);
 }
 
@@ -132,6 +134,7 @@ fn load_reads_a_real_index_from_disk_and_searches_correctly() {
     write_scalar_string(&store, "/info/metric", "L2");
     write_scalar_bool(&store, "/info/is_normalized", false);
     write_scalar_u32(&store, "/info/total_items", 4);
+    write_scalar_u32(&store, "/info/next_item_id", 4);
 
     let root_shape = vec![2u64, 2];
     let root_array = ArrayBuilder::new(root_shape.clone(), root_shape, float32(), 0.0f32)

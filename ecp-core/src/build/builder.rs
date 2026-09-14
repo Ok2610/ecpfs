@@ -24,8 +24,8 @@ fn resolve_dtype(requested: Option<EmbeddingDtype>, native: EmbeddingDtype) -> E
     let resolved = requested.unwrap_or(native);
     if resolved.narrows(native) {
         log::warn!(
-            "writing embeddings as {resolved:?} narrows the source's {native:?} values; \
-             out-of-range values clamp and fractions truncate"
+            "writing embeddings as {resolved:?} narrows the source's {native:?} values and loses information; \
+             integer targets additionally clamp out-of-range values and truncate fractions"
         );
     }
     resolved

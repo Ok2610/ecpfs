@@ -69,8 +69,10 @@ add-data
 
 Offline counterpart to calling ``Index.insert`` from a live session. Loads
 the index, bulk-appends every vector in ``embeddings_file``, exits.
-New ids are assigned automatically, starting at the index's current
-``total_items``.
+New ids are assigned automatically from the index's ``next_item_id``, not
+from ``total_items``, so ids left reserved by an interrupted earlier insert
+are skipped rather than reused. The command prints the range it actually
+assigned.
 
 .. code-block:: bash
 

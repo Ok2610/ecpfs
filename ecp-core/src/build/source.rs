@@ -1,20 +1,18 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use half::f16;
 use ndarray::{Array2, s};
 use rust_hdf5::{DatatypeMessage, H5Dataset, H5File};
-use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
-use crate::utils::EmbeddingDtype;
+use crate::utils::{EmbeddingDtype, dtype_of_array, read_subset_as_f32};
 
-/// A lazily-read source of 2D embeddings: a `.h5`/`.zarr` file (native dtype
-/// f16 or f32, `read_vecs` always returns f32) or an already-resident
-/// `Array2<f32>`. Reading a range from a disk-backed source doesn't
-/// load the rest of the dataset.
+/// A lazily-read source of 2D embeddings: a `.h5`/`.zarr` file (stored as
+/// f32, f16, uint8 or int8, `read_vecs` always returns f32) or an
+/// already-resident `Array2<f32>`. Reading a range from a disk-backed source
+/// doesn't load the rest of the dataset.
 pub enum EmbeddingsSource {
     Hdf5(H5Dataset),
     Zarr {
@@ -23,6 +21,30 @@ pub enum EmbeddingsSource {
     },
     /// Already resident; `read_vecs` is a plain slice, no I/O.
     Memory(Array2<f32>),
+}
+
+/// An HDF5 dataset's dtype, as the `EmbeddingDtype` it maps to.
+fn hdf5_dtype(dataset: &H5Dataset) -> EmbeddingDtype {
+    match dataset
+        .datatype()
+        .expect("Failed to read HDF5 dataset datatype")
+    {
+        DatatypeMessage::FloatingPoint { size: 2, .. } => EmbeddingDtype::F16,
+        DatatypeMessage::FloatingPoint { size: 4, .. } => EmbeddingDtype::F32,
+        DatatypeMessage::FixedPoint {
+            size: 1,
+            signed: false,
+            ..
+        } => EmbeddingDtype::UInt8,
+        DatatypeMessage::FixedPoint {
+            size: 1,
+            signed: true,
+            ..
+        } => EmbeddingDtype::Int8,
+        other => {
+            panic!("unsupported embeddings dtype: {other:?} (use float32, float16, uint8 or int8)")
+        }
+    }
 }
 
 impl EmbeddingsSource {
@@ -99,28 +121,10 @@ impl EmbeddingsSource {
     /// data.
     pub fn native_dtype(&self) -> EmbeddingDtype {
         match self {
-            EmbeddingsSource::Hdf5(dataset) => {
-                match dataset
-                    .datatype()
-                    .expect("Failed to read HDF5 dataset datatype")
-                {
-                    DatatypeMessage::FloatingPoint { size: 2, .. } => EmbeddingDtype::F16,
-                    DatatypeMessage::FloatingPoint { size: 4, .. } => EmbeddingDtype::F32,
-                    other => {
-                        panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)")
-                    }
-                }
-            }
+            EmbeddingsSource::Hdf5(dataset) => hdf5_dtype(dataset),
             EmbeddingsSource::Zarr { store, path } => {
                 let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
-                let dtype = array.data_type();
-                if *dtype == float32() {
-                    EmbeddingDtype::F32
-                } else if *dtype == float16() {
-                    EmbeddingDtype::F16
-                } else {
-                    panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
-                }
+                dtype_of_array(&array, path)
             }
             EmbeddingsSource::Memory(_) => EmbeddingDtype::F32,
         }
@@ -131,40 +135,35 @@ impl EmbeddingsSource {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
                 let dim = dataset.shape()[1];
-                match dataset
-                    .datatype()
-                    .expect("Failed to read HDF5 dataset datatype")
-                {
-                    DatatypeMessage::FloatingPoint { size: 2, .. }
-                    | DatatypeMessage::FloatingPoint { size: 4, .. } => {}
-                    other => {
-                        panic!("unsupported embeddings dtype: {other:?} (use float16 or float32)")
-                    }
-                }
-                let flat = dataset
-                    .read_numeric_slice_as::<f32>(&[start, 0], &[end - start, dim])
-                    .expect("Failed to read HDF5 vec range");
-                Array2::from_shape_vec((end - start, dim), flat)
+                let rows = end - start;
+                // f16 widens to f32 inside the HDF5 crate, but it refuses to
+                // read an integer dataset as f32, so integers are read at
+                // their own width and widened here.
+                let flat: Vec<f32> = match hdf5_dtype(dataset) {
+                    EmbeddingDtype::F16 | EmbeddingDtype::F32 => dataset
+                        .read_numeric_slice_as::<f32>(&[start, 0], &[rows, dim])
+                        .expect("Failed to read HDF5 vec range"),
+                    EmbeddingDtype::UInt8 => dataset
+                        .read_numeric_slice_as::<u8>(&[start, 0], &[rows, dim])
+                        .expect("Failed to read HDF5 vec range")
+                        .into_iter()
+                        .map(|v| v as f32)
+                        .collect(),
+                    EmbeddingDtype::Int8 => dataset
+                        .read_numeric_slice_as::<i8>(&[start, 0], &[rows, dim])
+                        .expect("Failed to read HDF5 vec range")
+                        .into_iter()
+                        .map(|v| v as f32)
+                        .collect(),
+                };
+                Array2::from_shape_vec((rows, dim), flat)
                     .expect("HDF5 vec range didn't match its declared shape")
             }
             EmbeddingsSource::Zarr { store, path } => {
                 let array = Array::open(store.clone(), path).expect("Failed to open zarr array");
                 let dim = array.shape()[1];
                 let subset = ArraySubset::new_with_ranges(&[start as u64..end as u64, 0..dim]);
-                let dtype = array.data_type();
-                if *dtype != float32() && *dtype != float16() {
-                    panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
-                }
-                if *dtype == float32() {
-                    array
-                        .retrieve_array_subset::<Array2<f32>>(&subset)
-                        .expect("Failed to read zarr vec range")
-                } else {
-                    array
-                        .retrieve_array_subset::<Array2<f16>>(&subset)
-                        .expect("Failed to read zarr vec range")
-                        .mapv(|x| x.to_f32())
-                }
+                read_subset_as_f32(&array, &subset, path)
             }
             EmbeddingsSource::Memory(embeddings) => embeddings.slice(s![start..end, ..]).to_owned(),
         }

@@ -33,6 +33,21 @@ fn resolve_dtype_uses_requested_when_set_else_native() {
         EmbeddingDtype::F32,
         "forcing f32 on an f16 source is an upcast, not a downcast"
     );
+    assert_eq!(
+        resolve_dtype(None, EmbeddingDtype::UInt8),
+        EmbeddingDtype::UInt8,
+        "a uint8 source stays uint8 unless something else is requested"
+    );
+    assert_eq!(
+        resolve_dtype(Some(EmbeddingDtype::UInt8), EmbeddingDtype::F32),
+        EmbeddingDtype::UInt8,
+        "an explicit request wins even though it clamps and truncates f32 data"
+    );
+    assert_eq!(
+        resolve_dtype(Some(EmbeddingDtype::F32), EmbeddingDtype::UInt8),
+        EmbeddingDtype::F32,
+        "widening uint8 to f32 is lossless, just wasteful of disk"
+    );
 }
 
 fn write_source(

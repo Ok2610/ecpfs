@@ -132,3 +132,52 @@ fn hdf5_read_vecs_panics_for_unsupported_dtype() {
     let source = EmbeddingsSource::open(&file_path, "embeddings");
     let _ = source.read_vecs(0, 2);
 }
+
+/// SIFT-format descriptors are commonly distributed as uint8. The HDF5
+/// crate refuses to read an integer dataset as f32, so `read_vecs` reads it
+/// at its own width and widens; this proves that path end to end.
+#[test]
+fn hdf5_uint8_source_reads_correctly_widened_to_f32() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let file_path = tmp.path().join("uint8_embeddings.h5");
+
+    let file = H5File::create(&file_path).expect("failed to create HDF5 file");
+    let dataset = file
+        .new_dataset::<u8>()
+        .shape([2usize, 2])
+        .create("embeddings")
+        .expect("failed to create HDF5 dataset");
+    dataset
+        .write_raw(&[0u8, 255, 1, 128])
+        .expect("failed to write HDF5 dataset");
+    file.close().expect("failed to close HDF5 file");
+
+    let source = EmbeddingsSource::open(&file_path, "embeddings");
+    assert_eq!(source.native_dtype(), EmbeddingDtype::UInt8);
+
+    let vecs = source.read_vecs(0, 2);
+    assert_eq!(vecs, ndarray::array![[0.0f32, 255.0], [1.0, 128.0]]);
+}
+
+#[test]
+fn hdf5_int8_source_reads_correctly_widened_to_f32() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let file_path = tmp.path().join("int8_embeddings.h5");
+
+    let file = H5File::create(&file_path).expect("failed to create HDF5 file");
+    let dataset = file
+        .new_dataset::<i8>()
+        .shape([2usize, 2])
+        .create("embeddings")
+        .expect("failed to create HDF5 dataset");
+    dataset
+        .write_raw(&[-128i8, 127, -1, 0])
+        .expect("failed to write HDF5 dataset");
+    file.close().expect("failed to close HDF5 file");
+
+    let source = EmbeddingsSource::open(&file_path, "embeddings");
+    assert_eq!(source.native_dtype(), EmbeddingDtype::Int8);
+
+    let vecs = source.read_vecs(0, 2);
+    assert_eq!(vecs, ndarray::array![[-128.0f32, 127.0], [-1.0, 0.0]]);
+}

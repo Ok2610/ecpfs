@@ -65,6 +65,10 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
 #[derive(Clone, Copy, ValueEnum)]
 enum EmbeddingDtypeArg {
     Native,
+    // Without this, clap's kebab-casing renders the variant as `u-int8`.
+    #[value(name = "uint8")]
+    UInt8,
+    Int8,
     F16,
     F32,
 }
@@ -73,6 +77,8 @@ impl From<EmbeddingDtypeArg> for Option<EmbeddingDtype> {
     fn from(dtype: EmbeddingDtypeArg) -> Self {
         match dtype {
             EmbeddingDtypeArg::Native => None,
+            EmbeddingDtypeArg::UInt8 => Some(EmbeddingDtype::UInt8),
+            EmbeddingDtypeArg::Int8 => Some(EmbeddingDtype::Int8),
             EmbeddingDtypeArg::F16 => Some(EmbeddingDtype::F16),
             EmbeddingDtypeArg::F32 => Some(EmbeddingDtype::F32),
         }
@@ -161,9 +167,10 @@ struct BuildIndexArgs {
     #[arg(long, default_value_t = false)]
     is_normalized: bool,
 
-    /// Precision to write embeddings as. `native` matches the source
-    /// (warns if `f16` is forced against an `f32` source, a real precision
-    /// loss).
+    /// Width to write embeddings as. `native` matches the source; anything
+    /// narrower than the source warns, since it loses precision and, for
+    /// the integer dtypes, truncates fractions and clamps out-of-range
+    /// values. Every read widens back to f32, so this saves disk, not memory.
     #[arg(long, value_enum, default_value_t = EmbeddingDtypeArg::Native)]
     embedding_dtype: EmbeddingDtypeArg,
 

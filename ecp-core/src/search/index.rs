@@ -8,10 +8,8 @@ use ndarray::Array1;
 use ndarray::Array2;
 
 use dashmap::DashMap;
-use half::f16;
 use moka::sync::Cache;
 use zarrs::array::Array;
-use zarrs::array::data_type::{float16, float32};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
@@ -21,7 +19,7 @@ use std::collections::BinaryHeap;
 use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data, write_total_items};
 use crate::search::node::Node;
 use crate::utils::HeapEntry;
-use crate::utils::{Metric, calculate_distances};
+use crate::utils::{Metric, calculate_distances, dtype_of_array, read_subset_as_f32};
 
 #[path = "persistence.rs"]
 mod persistence;
@@ -99,21 +97,11 @@ impl Index {
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
-        let root_dtype = root_array.data_type();
-        let root: Array2<f32> = if *root_dtype == float32() {
-            root_array
-                .retrieve_array_subset::<Array2<f32>>(&root_array.subset_all())
-                .expect("Failed to retrieve index_root/embeddings")
-        } else if *root_dtype == float16() {
-            root_array
-                .retrieve_array_subset::<Array2<f16>>(&root_array.subset_all())
-                .expect("Failed to retrieve index_root/embeddings")
-                .mapv(|x| x.to_f32())
-        } else {
-            panic!(
-                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
-            )
-        };
+        let root: Array2<f32> = read_subset_as_f32(
+            &root_array,
+            &root_array.subset_all(),
+            "index_root/embeddings",
+        );
 
         let (nodes, queries) = Self::build_caches(memory_limit_bytes, store.clone());
 
@@ -549,16 +537,7 @@ impl Index {
         // on-disk metadata, which every node in the tree shares.
         let root_array = Array::open(self.store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
-        let root_dtype = root_array.data_type();
-        let embedding_dtype = if *root_dtype == float32() {
-            crate::utils::EmbeddingDtype::F32
-        } else if *root_dtype == float16() {
-            crate::utils::EmbeddingDtype::F16
-        } else {
-            panic!(
-                "unknown datatype: index_root/embeddings is {root_dtype:?} (use float32 or float16)"
-            )
-        };
+        let embedding_dtype = dtype_of_array(&root_array, "index_root/embeddings");
         let chunk_shape: Vec<u64> = root_array
             .chunk_shape_usize(&[0, 0])
             .expect("Failed to read index_root/embeddings chunk shape")

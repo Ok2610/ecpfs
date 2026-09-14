@@ -5,7 +5,13 @@ import pytest
 
 import ecpfs
 
-from .conftest import TWO_CLUSTERS, write_h5_embeddings, write_h5_embeddings_f16
+from .conftest import (
+    TWO_CLUSTERS,
+    TWO_CLUSTERS_UINT8,
+    write_h5_embeddings,
+    write_h5_embeddings_f16,
+    write_h5_embeddings_uint8,
+)
 
 
 def read_index_root_dtype(index_path):
@@ -80,3 +86,49 @@ def test_max_chunk_bytes_is_threaded_through_to_the_on_disk_chunk_shape(tmp_path
     small_rows = read_index_root_chunk_shape(small_index_path)[0]
     assert small_rows == 8
     assert small_rows < default_rows
+
+def test_default_embedding_dtype_matches_a_uint8_source(tmp_path):
+    h5_path = tmp_path / "embeddings.h5"
+    write_h5_embeddings_uint8(h5_path, TWO_CLUSTERS_UINT8)
+    index_path = tmp_path / "index.zarr"
+
+    builder = ecpfs.Builder(index_path, levels=2, metric=ecpfs.Metric.L2)
+    builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
+    builder.build(h5_path, fallback_batch_rows=100)
+
+    assert read_index_root_dtype(index_path) == "uint8"
+
+
+def test_explicit_uint8_dtype_stores_narrow_and_still_searches(tmp_path):
+    h5_path = tmp_path / "embeddings.h5"
+    write_h5_embeddings(h5_path, TWO_CLUSTERS_UINT8.astype(np.float32))
+    index_path = tmp_path / "index.zarr"
+
+    builder = ecpfs.Builder(
+        index_path, levels=2, metric=ecpfs.Metric.L2, embedding_dtype=ecpfs.EmbeddingDtype.UInt8
+    )
+    builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
+    builder.build(h5_path, fallback_batch_rows=100)
+
+    assert read_index_root_dtype(index_path) == "uint8"
+
+    index = ecpfs.Index(index_path)
+    items, _query_id = index.new_search(
+        query=np.array([1.0, 1.0], dtype=np.float32), k=8, search_exp=4, max_increments=-1, exclude_vec=[]
+    )
+    ids = sorted(item_id for _, item_id in items)
+    assert ids == [0, 1, 2, 3, 4, 5, 6, 7]
+
+
+def test_int8_dtype_is_exposed_and_usable(tmp_path):
+    h5_path = tmp_path / "embeddings.h5"
+    write_h5_embeddings(h5_path, np.array([[-100.0, -100.0], [-98.0, -98.0], [100.0, 100.0], [102.0, 102.0]], dtype=np.float32))
+    index_path = tmp_path / "index.zarr"
+
+    builder = ecpfs.Builder(
+        index_path, levels=1, metric=ecpfs.Metric.L2, embedding_dtype=ecpfs.EmbeddingDtype.Int8
+    )
+    builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
+    builder.build(h5_path, fallback_batch_rows=100)
+
+    assert read_index_root_dtype(index_path) == "int8"

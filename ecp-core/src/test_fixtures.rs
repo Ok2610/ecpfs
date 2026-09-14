@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use half::f16;
 use ndarray::{Array1, Array2};
-use zarrs::array::data_type::{bool, float16, float32, float64, string, uint32};
+use zarrs::array::data_type::{bool, float16, float32, float64, string, uint8, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
@@ -74,6 +74,31 @@ pub fn write_node_f16(
         .expect("failed to store embeddings metadata");
     emb_array
         .store_chunk(&[0, 0], &embeddings_f16)
+        .expect("failed to store embeddings chunk");
+
+    write_children(store, group_path, child_key, children);
+}
+
+/// Writes a node whose embeddings are stored as `uint8`, mirroring a build
+/// that chose `EmbeddingDtype::UInt8`.
+pub fn write_node_uint8(
+    store: &Arc<MemoryStore>,
+    group_path: &str,
+    embeddings: &Array2<f32>,
+    child_key: &str,
+    children: &Array1<u32>,
+) {
+    let embeddings_u8 = embeddings.mapv(|x| x as u8);
+    let emb_path = format!("{group_path}/embeddings");
+    let emb_shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
+    let emb_array = ArrayBuilder::new(emb_shape.clone(), emb_shape, uint8(), 0u8)
+        .build(store.clone(), &emb_path)
+        .expect("failed to build embeddings array");
+    emb_array
+        .store_metadata()
+        .expect("failed to store embeddings metadata");
+    emb_array
+        .store_chunk(&[0, 0], &embeddings_u8)
         .expect("failed to store embeddings chunk");
 
     write_children(store, group_path, child_key, children);

@@ -40,7 +40,7 @@ build-index
          --is-normalized
              Set if every embedding is already unit-length, to skip norm computation
          --embedding-dtype <EMBEDDING_DTYPE>
-             Precision to write embeddings as. `native` matches the source (warns if `f16` is forced against an `f32` source, a real precision loss) [default: native] [possible values: native, f16, f32]
+             Width to write embeddings as. `native` matches the source; anything narrower than the source warns, since it loses precision and, for the integer dtypes, truncates fractions and clamps out-of-range values. Every read widens back to f32, so this saves disk, not memory [default: native] [possible values: native, uint8, int8, f16, f32]
          --emb-grp-name <EMB_GRP_NAME>
              Group name for the embeddings dataset [default: embeddings]
          --rep-selection <REP_SELECTION>

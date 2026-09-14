@@ -16,11 +16,17 @@ use crate::build::tree::{
 use crate::build::writer::zarrs_append;
 use crate::utils::{EmbeddingDtype, Metric};
 
-/// `requested` if set, else `native`. Warns on an `F32`-to-`F16` downcast.
+/// `requested` if set, else `native`. Warns when the requested dtype can't
+/// represent everything the source's can, since the write then narrows the
+/// data: a float target loses precision, while an integer target also
+/// truncates fractions and clamps anything outside its range.
 fn resolve_dtype(requested: Option<EmbeddingDtype>, native: EmbeddingDtype) -> EmbeddingDtype {
     let resolved = requested.unwrap_or(native);
-    if resolved == EmbeddingDtype::F16 && native == EmbeddingDtype::F32 {
-        log::warn!("writing embeddings as f16 downcasts the source's f32 precision");
+    if resolved.narrows(native) {
+        log::warn!(
+            "writing embeddings as {resolved:?} narrows the source's {native:?} values; \
+             out-of-range values clamp and fractions truncate"
+        );
     }
     resolved
 }

@@ -1,18 +1,17 @@
 use std::sync::{Arc, RwLock};
 
 use dashmap::DashMap;
-use half::f16;
 use moka::sync::Cache;
 use ndarray::{Array1, Array2, Axis, s};
 use rayon::prelude::*;
-use zarrs::array::data_type::{bool, float16, float32, string, uint32};
+use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{Array, ArrayBuilder, ArraySubset, FillValueMetadata};
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
 use crate::build::assign::determine_node_assignments;
 use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
-use crate::build::writer::zarrs_append;
+use crate::build::writer::{build_embeddings_array, store_embeddings_subset, zarrs_append};
 use crate::search::Node;
 use crate::utils::{EmbeddingDtype, Metric};
 
@@ -92,40 +91,9 @@ pub fn write_index_root(
         root_embeddings.ncols() as u64,
     ];
     let subset = ArraySubset::new_with_ranges(&[0..shape[0], 0..shape[1]]);
-    match dtype {
-        EmbeddingDtype::F32 => {
-            let mut builder =
-                ArrayBuilder::new(shape.clone(), chunk_shape.to_vec(), float32(), 0.0f32);
-            builder.bytes_to_bytes_codecs(crate::build::writer::compressor());
-            let array = builder
-                .build(store.clone(), "/index_root/embeddings")
-                .expect("Failed to build index_root/embeddings array");
-            array
-                .store_metadata()
-                .expect("Failed to store index_root/embeddings metadata");
-            array
-                .store_array_subset(&subset, root_embeddings)
-                .expect("Failed to store index_root/embeddings");
-        }
-        EmbeddingDtype::F16 => {
-            let mut builder = ArrayBuilder::new(
-                shape.clone(),
-                chunk_shape.to_vec(),
-                float16(),
-                f16::from_f32(0.0),
-            );
-            builder.bytes_to_bytes_codecs(crate::build::writer::compressor());
-            let array = builder
-                .build(store.clone(), "/index_root/embeddings")
-                .expect("Failed to build index_root/embeddings array");
-            array
-                .store_metadata()
-                .expect("Failed to store index_root/embeddings metadata");
-            array
-                .store_array_subset(&subset, root_embeddings.mapv(f16::from_f32))
-                .expect("Failed to store index_root/embeddings");
-        }
-    }
+    let path = "/index_root/embeddings";
+    let array = build_embeddings_array(store, path, shape, chunk_shape, dtype);
+    store_embeddings_subset(&array, &subset, root_embeddings, dtype, path);
 }
 
 /// Appends a batch to `group_path` (a `lvl_N/node_M` group).

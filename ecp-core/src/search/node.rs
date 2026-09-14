@@ -2,10 +2,9 @@ use std::sync::OnceLock;
 
 use ndarray::{Array1, Array2};
 use zarrs::array::Array;
-use zarrs::array::data_type::{float16, float32};
 use zarrs::storage::ReadableListableStorage;
 
-use half::f16;
+use crate::utils::read_subset_as_f32;
 
 /// One node's embeddings and children, lazily read from the store and
 /// cached on first access.
@@ -35,22 +34,11 @@ impl Node {
         self.embeddings.get_or_init(|| {
             let embeddings_path = format!("{}/embeddings", self.group_path);
             match Array::open(self.store.clone(), &embeddings_path) {
-                Ok(array) => {
-                    let dtype = array.data_type();
-                    if *dtype != float32() && *dtype != float16() {
-                        panic!("unsupported embeddings dtype: {dtype:?} (use float32 or float16)")
-                    }
-                    Some(if *dtype == float32() {
-                        array
-                            .retrieve_array_subset::<Array2<f32>>(&array.subset_all())
-                            .expect("Failed to retrieve embeddings array")
-                    } else {
-                        array
-                            .retrieve_array_subset::<Array2<f16>>(&array.subset_all())
-                            .expect("Failed to retrieve embeddings array")
-                            .mapv(|x: f16| x.to_f32())
-                    })
-                }
+                Ok(array) => Some(read_subset_as_f32(
+                    &array,
+                    &array.subset_all(),
+                    &embeddings_path,
+                )),
                 Err(_) => None,
             }
         })

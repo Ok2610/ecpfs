@@ -39,7 +39,7 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
         .expect("failed to store embeddings");
 }
 
-/// Same geometry `search::index::tests::build_test_index` hand-builds: leaders
+/// Same geometry `search::index::fixtures::build_test_index` hand-builds: leaders
 /// 0-3 = items 0,2,4,6; root = leaders 0-1; two well-separated clusters of
 /// 4 items each. Built here via `build_tree` instead of a struct
 /// literal.

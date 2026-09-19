@@ -9,7 +9,7 @@ use zarrs::storage::{
     ReadableWritableListableStorage, StorePrefix, WritableStorageTraits, discover_children,
 };
 
-use super::QueryState;
+use super::query::QueryState;
 use crate::utils::HeapEntry;
 
 fn group_path(query_id: usize) -> String {

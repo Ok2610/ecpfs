@@ -13,7 +13,7 @@ use pyindex::IndexWrapper;
 use pylogging::init_logging;
 use pymetric::PyMetric;
 
-// Every I/O-bound method in this module releases the GIL via py.detach.
+// Every method in this module that performs I/O releases the GIL via py.detach.
 #[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;

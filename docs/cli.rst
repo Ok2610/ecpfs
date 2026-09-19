@@ -12,11 +12,14 @@ Installed alongside the Rust workspace as the ``ecp-cli`` crate (binary name
 
    Commands:
      build-index      Selects cluster representatives from `embeddings_file`, then builds the full tree over it into `save_file`
-     add-data         Bulk-appends new vectors from `embeddings_file` into an already-built index
-     search           Runs a single query, pulled from row `query_row` of `query_file`, against an existing index, or continues a previously-persisted one with `--resume`
+     add-data         Bulk-appends new vectors from `embeddings_file` into an already-built index. Offline counterpart to calling `Index::insert` from a live session. One process, batches the file, exits
+     search           Runs a query against an index, or continues a persisted one with `--resume`. Persists before exiting; prints `query_id` as the first output line
      info             Prints an index's `info/*` metadata without loading its tree
      cleanup-queries  Erases persisted queries nobody has resumed, so `/queries/` doesn't grow forever on an index `search` keeps being run against
      help             Print this message or the help of the given subcommand(s)
+
+   Options:
+     -h, --help  Print help
 
 build-index
 -----------
@@ -61,7 +64,7 @@ build-index
              Print help
 
    Thread count is controlled by the RAYON_NUM_THREADS environment variable
-   (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies
+   (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag. It applies
    process-wide, for the lifetime of the run.
 
 add-data
@@ -145,9 +148,9 @@ continue the same query, without re-searching from the root:
          --exclude <EXCLUDE>
              Item ids to exclude, comma-separated
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Caps how many touched nodes stay cached (LRU-evicted), in GB. Defaults to 80% of total system RAM
+             Caps how many touched nodes stay cached, in GB. Defaults to 80% of total system RAM
          --resume <RESUME>
-             Resume a previously-persisted query (its id is printed as this tool's first output line) instead of starting a new one. Ignores query_file/query_row/query_grp_name when given
+             Resume a persisted query (id printed as this tool's first output line) instead of starting a new one. Ignores query_file/query_row/query_grp_name
          --with-logging
              Turn on file-based logging for this run
          --log-dir <LOG_DIR>

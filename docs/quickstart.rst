@@ -56,7 +56,7 @@ Searching an index
            max_increments=-1,
            exclude_vec=[],
        )
-       # items: list[(distance, item_id)]
+       # items: list[(score, item_id)], lower score is a better match
 
        # Pull further results for the same query without re-searching from the root:
        more_items = index.get_next_k_items(
@@ -72,9 +72,10 @@ Adding data to an existing index
 ---------------------------------
 
 ``insert`` routes each new point to its nearest leaf and appends it there,
-the same descent search already does. Ids are assigned automatically,
-starting at the index's current item count, the same convention the
-initial build already uses for its own dataset. ``insert`` returns the
+the same descent search already does. Ids are assigned automatically in
+row order, starting at the index's ``next_item_id``. A fresh build sets
+that to the number of items it stored, so inserted ids continue straight
+on from the build's own. ``insert`` returns the
 assigned ``(start_id, end_id)`` range (``end_id`` excluded) so the caller
 can map its own external ids to them.
 
@@ -91,13 +92,13 @@ can map its own external ids to them.
 
 There's no rebalancing. A leaf that keeps growing just keeps growing, so
 search quality degrades gradually as an index accumulates far more
-inserts than its original build accounted for. A real rebuild is the only
-fix for that currently.
+inserts than its original build accounted for. A rebuild is the only fix
+for that currently.
 
-``insert`` is not atomic. A crash partway through can leave the index's
-item count ahead of what actually landed on disk, permanently skipping
-the unwritten ids rather than reusing or colliding with one already
-written. All-or-nothing insert semantics are planned for after 1.0; until
+``insert`` is not atomic. A crash partway through can leave
+``next_item_id`` ahead of what actually landed on disk, permanently
+skipping the unwritten ids rather than reusing or colliding with one
+already written. ``total_items`` still counts only what was stored. All-or-nothing insert semantics are planned for after 1.0; until
 then, do not assume an index survives a crash mid-insert without a gap.
 
 Concurrent inserts and searches on one loaded ``Index`` are safe and

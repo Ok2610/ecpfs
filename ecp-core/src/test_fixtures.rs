@@ -29,7 +29,7 @@ fn write_children(
 }
 
 /// Writes a node's `embeddings` array and its `child_key` (node_ids/item_ids) array
-/// into `group_path` on an in-memory zarr store, mirroring what the Python builder
+/// into `group_path` on an in-memory zarr store, mirroring what `append_node_batch`
 /// writes to disk for a real index.
 pub fn write_node(
     store: &Arc<MemoryStore>,
@@ -132,8 +132,8 @@ pub fn write_node_unsupported_dtype(
 }
 
 /// Writes `info/levels`, `info/metric`, and `info/is_normalized` as rank-0
-/// (scalar) arrays, mirroring the fields `ECPBuilder.write_index_info` puts
-/// at the root of a real index.
+/// (scalar) arrays, mirroring the fields the build's own `write_index_info`
+/// puts at the root of a real index.
 pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
     let scalar_shape: Vec<u64> = vec![];
 
@@ -213,8 +213,7 @@ pub fn write_rep_item_ids(store: &Arc<MemoryStore>, ids: &Array1<u32>) {
         .expect("failed to store rep_item_ids chunk");
 }
 
-/// Writes `index_root/embeddings`, mirroring what `ECPBuilder.build_tree_fs`
-/// writes for the top-level cluster leaders.
+/// Writes `index_root/embeddings`, the top-level cluster leaders.
 pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
     let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
     let root_array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)

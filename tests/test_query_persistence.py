@@ -36,7 +36,7 @@ def test_calling_a_method_after_close_raises_value_error(tmp_path, call):
     index = ecpfs.Index(index_path)
     index.close()
 
-    # A real, catchable ValueError, unlike test_errors.py's Rust-panic
+    # A catchable ValueError, unlike test_errors.py's Rust-panic
     # exceptions (those need assert_is_panic_exception): this one is a
     # plain PyO3-raised error, so a normal pytest.raises is enough.
     with pytest.raises(ValueError, match="closed"):

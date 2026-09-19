@@ -13,3 +13,4 @@ This site covers the Python package. For the Rust crates themselves
    quickstart
    api
    cli
+   multithreading

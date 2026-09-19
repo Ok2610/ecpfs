@@ -205,7 +205,7 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
 /// A node ending up with fewer children than another (even zero) is
 /// expected, not a bug: items with tied nearest-representative scores all
 /// route to the same node. Forcing an exact tie (two representatives at
-/// the same value) drives this deliberately - lvl_1 ends up with 1 node
+/// the same value) drives this deliberately: lvl_1 ends up with 1 node
 /// instead of `ns = 2`, but its total children still add up to `ns^2`.
 #[test]
 fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
@@ -276,8 +276,8 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
 /// by listing position rather than by each node's real on-disk id, so as
 /// soon as any earlier id in a level was missing (as lvl_1/node_0 is here,
 /// same tied-leader setup as the test above), every later id in that level
-/// resolved to the wrong slot - out-of-bounds panic or silently the wrong
-/// node, depending on how the misalignment landed. This loads the same
+/// resolved to the wrong slot, either panicking on an out-of-range index or
+/// silently picking the wrong node, depending on how the misalignment landed. This loads the same
 /// built index and actually searches it, instead of only inspecting
 /// on-disk node/children counts.
 #[test]
@@ -317,14 +317,14 @@ fn search_still_finds_every_item_when_a_node_is_empty_from_tied_scores() {
 }
 
 /// First end-to-end build+search test for `Metric::IP` (previously no
-/// coverage anywhere in this suite - see `calculate_distances`, whose IP
+/// coverage anywhere in this suite; see `calculate_distances`, whose IP
 /// arm had never been exercised past a single raw-vector unit test).
 /// Deliberately uses magnitude-skewed, non-unit vectors: `is_normalized`
 /// doesn't affect IP's own assignment or distance math at all (only L2's),
 /// so nothing stops a caller from building an IP index on raw, un-normalized
 /// embeddings like this. Doing so lets one large-magnitude representative
 /// dominate the nearest-representative assignment for nearly every point,
-/// which empties out other representatives' nodes - the same failure mode
+/// which empties out other representatives' nodes, the same failure mode
 /// as the tied-score tests above, reached through IP's own math instead of
 /// a forced tie.
 #[test]

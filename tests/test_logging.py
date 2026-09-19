@@ -42,6 +42,6 @@ for line in lines:
 def test_init_logging_rejects_an_unknown_level(tmp_path):
     # parse_level runs before logging::init touches the process-global
     # logger, so this fails the same way regardless of what earlier tests
-    # already called init_logging with - no subprocess needed.
+    # already called init_logging with. No subprocess needed.
     with pytest.raises(ValueError, match="unknown log level"):
         ecpfs.init_logging(log_dir=str(tmp_path), level="bogus")

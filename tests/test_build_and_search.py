@@ -86,7 +86,7 @@ def test_ip_metric_ranks_highest_dot_product_first(tmp_path):
 
 
 def test_search_exp_larger_than_the_real_tree_still_returns_sorted_results(tmp_path):
-    # Regression for a real bug (ecp-core, fixed 2026-09-11): incremental_search
+    # Regression for a bug (ecp-core, fixed 2026-09-11): incremental_search
     # only sorted results on the exit path where leaf_cnt exactly equals
     # search_exp, so an oversized search_exp (tree exhausted first) used to
     # return results in leaf-visit order instead of nearest-first.

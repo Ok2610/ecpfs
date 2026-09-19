@@ -1,11 +1,11 @@
 //! Without a compressor, a zarr chunk is padded to its full declared size
 //! on disk regardless of how much is actually written. Since chunk_shape
 //! here is sized for I/O throughput (tens of MB), not expected cluster
-//! size (eCP doesn't enforce target_cluster_items - a single cluster can
+//! size (eCP doesn't enforce target_cluster_items, so a single cluster can
 //! absorb a wildly disproportionate share of the dataset), most nodes are
 //! mostly-empty relative to their chunk. This proves compression actually
 //! keeps that cheap, on a real filesystem where padding would otherwise
-//! show up as real disk usage.
+//! show up as disk usage.
 
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
@@ -36,7 +36,7 @@ fn a_mostly_empty_node_stays_small_on_disk_despite_a_large_chunk_shape() {
         Arc::new(FilesystemStore::new(tmp.path()).expect("failed to create filesystem store"));
 
     // A chunk sized for ~50MB at dim=768 (~17,000 vecs), but this node
-    // only ever gets 3 real vecs - the common case, not the pathological
+    // only ever gets 3 vecs. That is the common case, not the pathological
     // millions-of-items one, but the same mostly-empty-chunk shape.
     let dim = 768;
     let chunk_shape = [17_000u64, dim as u64];

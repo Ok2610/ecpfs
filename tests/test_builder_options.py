@@ -77,7 +77,7 @@ def test_max_chunk_bytes_is_threaded_through_to_the_on_disk_chunk_shape(tmp_path
 
     small_index_path = tmp_path / "small.zarr"
     # 2 floats/vec * 4 bytes = 8 bytes/vec, so max_chunk_bytes=64 caps a
-    # chunk at 8 vecs - far below the default 50 MiB chunk's row count.
+    # chunk at 8 vecs, far below the default 50 MiB chunk's row count.
     small_builder = ecpfs.Builder(small_index_path, levels=2, metric=ecpfs.Metric.L2, max_chunk_bytes=64)
     small_builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
     small_builder.build(h5_path, fallback_batch_rows=100)

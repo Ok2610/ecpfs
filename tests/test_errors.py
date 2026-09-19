@@ -56,7 +56,7 @@ def test_select_representatives_custom_rejects_mismatched_ids_and_embeddings_len
     builder = ecpfs.Builder(index_path, levels=2, metric=ecpfs.Metric.L2)
 
     ids = np.array([0, 1, 2], dtype=np.uint32)
-    embeddings = TWO_CLUSTERS[:2]  # 2 rows, but 3 ids - a real mismatch.
+    embeddings = TWO_CLUSTERS[:2]  # 2 rows, but 3 ids.
 
     with pytest.raises(BaseException, match="ids and embeddings must have the same length") as exc_info:
         builder.select_representatives_custom(ids, embeddings)

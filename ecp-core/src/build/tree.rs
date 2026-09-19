@@ -376,9 +376,11 @@ pub struct BuildTreeArgs<'a> {
 /// Example, `root_embeddings.nrows() = ns = 100`, `total_levels = 3`,
 /// `representatives.shape().0 = R = 1_000_000`:
 ///
-///   target_level=1: reads first ns^2 = 10_000 of `representatives`
-///   target_level=2: reads first ns^3 = 1_000_000 of `representatives` (all of R)
-///   target_level=3 (== total_levels): reads all of `dataset`
+/// ```text
+/// target_level=1: reads first ns^2 = 10_000 of `representatives`
+/// target_level=2: reads first ns^3 = 1_000_000 of `representatives` (all of R)
+/// target_level=3 (== total_levels): reads all of `dataset`
+/// ```
 pub fn build_tree(args: &BuildTreeArgs) {
     let BuildTreeArgs {
         store,

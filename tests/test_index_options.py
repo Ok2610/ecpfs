@@ -18,7 +18,7 @@ def build_two_clusters_index(tmp_path):
 
 
 def test_memory_limit_bytes_requires_an_int_not_none(tmp_path):
-    # Regression for a real fix (ecp-core audit, 2026-09-10): the old
+    # Regression for a fix (ecp-core audit, 2026-09-10): the old
     # None-means-cache-forever option was deliberately removed from both
     # Builder and Index's public entry points.
     index_path = build_two_clusters_index(tmp_path)

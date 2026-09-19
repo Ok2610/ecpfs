@@ -28,7 +28,7 @@ fn random_suffix_is_six_hex_chars() {
     assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-/// The only test in this crate allowed to call `init` for real - `log`'s
+/// The only test in this crate allowed to call `init` for real, since `log`'s
 /// global logger can only be set once per process. Searches for a unique
 /// marker rather than asserting exact file content, since other tests'
 /// own log calls may land in the same file if they run concurrently.

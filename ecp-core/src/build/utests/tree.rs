@@ -234,7 +234,7 @@ fn node_cache_evicts_once_over_capacity() {
 
 /// A barrier forces every thread to call `get_or_read` at once, so moka's
 /// own single-flight get-or-insert (`get_with`) actually gets exercised
-/// under real concurrent contention on the same key.
+/// under concurrent contention on the same key.
 #[test]
 fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
     let store = new_memory_store();

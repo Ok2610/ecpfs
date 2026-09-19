@@ -85,10 +85,9 @@ pub struct Index {
 }
 
 impl Index {
-    /// Loads an index from `index_path`, deriving `metric`, `levels`,
-    /// `root`, and every level's node paths from the store itself
-    /// (`info/levels`, `info/metric`, `index_root/embeddings`, and each
-    /// `lvl_N/node_M` group). `memory_limit_bytes` caps how many bytes of
+    /// Loads an index from `index_path`, deriving `metric`, `levels` and
+    /// `root` from the store itself (`info/levels`, `info/metric`,
+    /// `index_root/embeddings`). `memory_limit_bytes` caps how many bytes of
     /// node and query data stay resident.
     pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Self {
         let store: ReadableWritableListableStorage =
@@ -456,7 +455,7 @@ impl Index {
                     }
                 }
 
-                // Re-insert so the weigher re-runs now that `node`'s real
+                // Re-insert so the weigher re-runs now that `node`'s
                 // size is known (it weighed 0 when `node_at` created it).
                 // Re-visits of an already-loaded node don't need this:
                 // `get_with` above already counts as an access for moka's

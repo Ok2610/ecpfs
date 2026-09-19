@@ -28,9 +28,9 @@ impl IndexWrapper {
 impl IndexWrapper {
     /// __new__(index_path: PathBuf, memory_limit_bytes: int = <80% of system RAM>)
     ///
-    /// Loads an index from disk, deriving its metric/levels/nodes from the
+    /// Loads an index from disk, deriving its metric and levels from the
     /// store itself. memory_limit_bytes caps how many touched nodes stay
-    /// cached (LRU-evicted). Releases the GIL for the actual load.
+    /// cached. Releases the GIL for the actual load.
     #[new]
     #[pyo3(signature = (index_path, memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes()))]
     fn new(py: Python<'_>, index_path: PathBuf, memory_limit_bytes: usize) -> PyResult<Self> {
@@ -131,10 +131,10 @@ impl IndexWrapper {
     /// gives every assigned id in row order). This is the caller's own
     /// mapping back to whatever external ids it uses.
     ///
-    /// Not atomic: a crash partway through can leave the index's item
-    /// count ahead of what actually landed on disk, permanently skipping
-    /// the unwritten ids rather than reusing or colliding with one
-    /// already written.
+    /// Not atomic: a crash partway through can leave next_item_id ahead
+    /// of what actually landed on disk, permanently skipping the unwritten
+    /// ids rather than reusing or colliding with one already written.
+    /// total_items still counts only what was stored.
     fn insert(&self, py: Python<'_>, embeddings: PyReadonlyArray2<f32>) -> PyResult<(u32, u32)> {
         self.check_not_closed()?;
         let embeddings: Array2<f32> = embeddings.to_owned_array();

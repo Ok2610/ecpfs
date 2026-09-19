@@ -2,7 +2,7 @@
 //! entry points a real caller uses: build a tree with `build_tree`, then
 //! load and search it with `Index::load`. If `build_tree`'s assignment
 //! ever disagreed with search's ranking for the same points, this would
-//! catch it - a self-search from the tree's own data wouldn't come back
+//! catch it: a self-search from the tree's own data wouldn't come back
 //! in nearest-to-farthest order.
 
 use ndarray::array;
@@ -41,7 +41,7 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
 
 /// Same geometry `search::index::tests::build_test_index` hand-builds: leaders
 /// 0-3 = items 0,2,4,6; root = leaders 0-1; two well-separated clusters of
-/// 4 items each - but built here via `build_tree` instead of a struct
+/// 4 items each. Built here via `build_tree` instead of a struct
 /// literal.
 #[test]
 fn build_tree_produces_a_structure_that_searches_correctly() {

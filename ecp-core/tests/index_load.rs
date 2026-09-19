@@ -2,7 +2,7 @@
 //! every other test in this crate uses an in-memory store instead (see
 //! `search::index::tests::load_from_store_*` for the fast, storage-agnostic
 //! coverage of the same parsing logic). This is the one place that proves
-//! the real filesystem code path - directory listing, path handling - also
+//! the real filesystem code path (directory listing, path handling) also
 //! works, not just the generic zarr-store logic.
 
 use ndarray::array;

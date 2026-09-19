@@ -48,8 +48,10 @@ fn argmax_axis0(matrix: &Array2<f32>) -> Array1<u32> {
 /// representative, just stored as two flat arrays instead of a list of
 /// lists. Example: `best_ids = [1, 0, 1, 2]`, `num_reps = 3`.
 ///
-///   groups (the intuitive shape): [[1], [0, 2], [3]]
-///   offsets, data (what this returns): [0, 1, 3, 4], [1, 0, 2, 3]
+/// ```text
+/// groups (the intuitive shape): [[1], [0, 2], [3]]
+/// offsets, data (what this returns): [0, 1, 3, 4], [1, 0, 2, 3]
+/// ```
 ///
 /// `groups[r]` is `data[offsets[r]..offsets[r+1]]`.
 pub fn group_by_assignments(num_reps: usize, best_ids: &Array1<u32>) -> (Array1<u32>, Array1<u32>) {

@@ -83,7 +83,7 @@ fn index_info_reads_all_5_fields_without_loading_the_tree() {
     assert_eq!(info.total_representatives, 4);
 }
 
-/// `node_1` is written before `node_0` on purpose - if `load_from_store`
+/// `node_1` is written before `node_0` on purpose. If `load_from_store`
 /// ordered nodes by whatever order the store happens to list them in rather
 /// than parsing each `node_N` path's own numeric suffix, this would surface
 /// it as search returning items in the wrong order.
@@ -146,16 +146,16 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-/// A small 2-level eCP tree, sized and derived the way `ECPBuilder` would for
+/// A small 2-level eCP tree, sized and derived the way `Builder` would for
 /// 8 items with target_cluster_items=2 and levels=2:
 ///   total_clusters = ceil(N / target_cluster_items) = ceil(8 / 2) = 4 leaders
 ///   node_size      = ceil(total_clusters ** (1/levels)) = ceil(sqrt(4)) = 2
 ///
-/// Leaders are picked by striding, exactly like `select_cluster_representatives`'s
-/// default "offset" option (`representative_ids = item_ids[::target_cluster_items]`):
-/// every 2nd item id, i.e. item ids 0, 2, 4, 6. A leader's *global id* (0..3, its
+/// Leaders are picked by striding, like `RepresentativeStrategy::Offset`
+/// (`(0..total_items).step_by(target_cluster_items)`): every 2nd item id,
+/// i.e. item ids 0, 2, 4, 6. A leader's *global id* (0..3, its
 /// position in that strided list) is what lvl_1's "node_ids" and lvl_2's group
-/// number refer to - it is not the same number as the item id it was struck from.
+/// number refer to. It is not the same number as the item id it was struck from.
 ///
 ///   items (id=vector):  0=(0,0)  1=(0.4,0.4)  2=(1,1)  3=(1.4,1.4)
 ///                       4=(10,10) 5=(10.4,10.4) 6=(11,11) 7=(11.4,11.4)
@@ -167,7 +167,7 @@ fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order(
 ///   lvl_1/node_0 = {leader 0}            (root leader 0 is its own only member)
 ///   lvl_1/node_1 = {leader 1, 2, 3}
 ///
-/// lvl_2 (leaf) buckets every real item under its nearest leader overall, which
+/// lvl_2 (leaf) buckets every item under its nearest leader overall, which
 /// does come out even here (2 items per leader, matching target_cluster_items):
 ///   lvl_2/node_0 = {items 0,1}   lvl_2/node_1 = {items 2,3}
 ///   lvl_2/node_2 = {items 4,5}   lvl_2/node_3 = {items 6,7}
@@ -438,7 +438,7 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
 }
 
 /// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
-/// ids 0,1) - not enough for k=4. With max_increments=-1 (unlimited), the
+/// ids 0,1), not enough for k=4. With max_increments=-1 (unlimited), the
 /// retry path at index.rs's `leaf_cnt == search_exp` check must double
 /// search_exp (1 -> 2) and keep going, exploring a 2nd cluster (ids 2,3) to
 /// reach k. Never exercised before: every existing fixture used a search_exp
@@ -459,7 +459,7 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
 }
 
 /// Same setup as the unlimited-retry test above, but with a *finite*
-/// max_increments=1 - i.e. "at most 1 retry" - which should be just enough
+/// max_increments=1 (i.e. "at most 1 retry"), which should be just enough
 /// to go from search_exp=1 to 2 and reach k=4, identically to the unlimited
 /// case. This isolates the finite-counter comparison (`increments >
 /// max_increments`) from the `max_increments == -1` special case, which is
@@ -505,9 +505,9 @@ fn new_search_stops_once_max_increments_is_exhausted() {
 /// runs one query at a time, so cross-query indexing bugs (e.g. a query's
 /// `tree_pq`/`items` bleeding into another's) would go unnoticed. This test
 /// opens two queries against the *same* `Index` from opposite corners of the
-/// fixture - query A from the origin (nearest-to-farthest: 0,1,2,3,4,5,6,7),
-/// query B from (11,11), exactly item 6's position (nearest-to-farthest:
-/// 6,7,5,4,3,2,1,0) - and interleaves `get_next_k_items` calls on both
+/// fixture: query A from the origin (nearest-to-farthest: 0,1,2,3,4,5,6,7),
+/// and query B from (11,11), exactly item 6's position (nearest-to-farthest:
+/// 6,7,5,4,3,2,1,0). It interleaves `get_next_k_items` calls on both
 /// `query_id`s, asserting each stream stays independent throughout.
 #[test]
 fn interleaved_queries_on_the_same_index_stay_independent() {
@@ -556,7 +556,7 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
 
 /// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =
 /// total_clusters, the root holds *every* leader directly, and the single
-/// level (nodes[0]) holds the leaf clusters - there is no intermediate level
+/// level (nodes[0]) holds the leaf clusters. There is no intermediate level
 /// to descend through. Same 8 items/4 leaders as `build_test_index`, just
 /// flattened: root = all 4 leaders, and each leader's cluster is looked up
 /// directly by its global id.
@@ -652,13 +652,13 @@ fn build_ivf_style_index(metric: Metric) -> Index {
 /// far tops out at levels=2, where the intermediate level (nodes[0]) always
 /// has `(level + 1) == (levels - 1)`, so its children are pushed straight as
 /// leaves (index.rs's `if` branch of that check). With levels=3, lvl_1's
-/// children (into lvl_2) instead take the `else` branch - pushed as another
-/// non-leaf level - which no existing test reaches. Only lvl_2's children
+/// children (into lvl_2) instead take the `else` branch, pushed as another
+/// non-leaf level, which no existing test reaches. Only lvl_2's children
 /// (into lvl_3) hit the leaf branch.
 ///
 /// Kept deliberately linear (one child per intermediate node) so the descent
 /// path is unambiguous: root has 2 leaders, each lvl_1 node fans out to 2
-/// lvl_2 nodes, and each lvl_2 node has exactly 1 lvl_3 child - 4 items total,
+/// lvl_2 nodes, and each lvl_2 node has exactly 1 lvl_3 child, 4 items total,
 /// laid out on a line so nearest-to-farthest from the origin query is item
 /// id order, same shape of assertion as `l2_search_returns_nearest_items_in_order`.
 fn build_three_level_test_index() -> Index {
@@ -863,7 +863,7 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
 
     // In a levels=1 tree every popped node is a leaf, so leaf_cnt (what
     // search_exp actually counts) advances once per cluster regardless of
-    // how many total node lookups that involves - search_exp=4 here means
+    // how many total node lookups that involves. search_exp=4 here means
     // "don't stop before all 4 clusters have been scanned", not "check 4
     // nodes" in general (those only coincide because there's nothing but
     // leaves in this particular tree).
@@ -1040,7 +1040,7 @@ fn shutdown_is_idempotent() {
 
 /// Excluding every item forces `items` to stay empty even once `tree_pq` is
 /// genuinely drained (not just not-yet-populated), the only way to reach a
-/// real "nothing left to explore, nothing left to hand back" state.
+/// "nothing left to explore, nothing left to hand back" state.
 #[test]
 fn exhausted_query_is_erased_not_persisted() {
     let store = write_ivf_style_fixture();

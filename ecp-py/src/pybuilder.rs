@@ -33,8 +33,8 @@ impl BuilderWrapper {
     /// Creates a fresh index at `index_path` and returns a Builder ready to
     /// build into it. memory_limit_bytes is the memory budget for the build
     /// process (not strictly enforced). embedding_dtype of None matches
-    /// each source's own dtype; forcing F16 against an f32 source
-    /// downcasts real precision and logs a warning. max_chunk_bytes is the
+    /// each source's own dtype; forcing F16 against an f32 source loses
+    /// precision and logs a warning. max_chunk_bytes is the
     /// max size for one on-disk chunk. Releases the GIL for the actual
     /// work, same as every other method on this class.
     #[new]

@@ -30,7 +30,7 @@ fn l2_distances_are_euclidean_norms() {
 
 /// Same vectors as `l2_distances_are_euclidean_norms`, but normalized to
 /// unit length and passed with `is_normalized: true`, exercising the
-/// `‖e−q‖² = 1 − 2·e·q + ‖q‖²` fast path instead of the general one - the
+/// `‖e−q‖² = 1 − 2·e·q + ‖q‖²` fast path instead of the general one. The
 /// two must still agree on the actual distance values, not just ranking.
 #[test]
 fn l2_with_is_normalized_true_matches_general_formula_on_unit_vectors() {

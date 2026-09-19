@@ -101,7 +101,7 @@ fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, Embeddi
 
 /// `memory_limit_bytes = 1_000_000` makes `batch_vecs` far exceed the
 /// fixture's 6 total items, also proving `end`'s `.min(total_items)` clamp
-/// holds; without it, `read_vecs` would panic on an out-of-bounds range.
+/// holds; without it, `read_vecs` would panic reading past the end.
 #[test]
 fn collect_representatives_persists_matched_vecs_and_ids() {
     let (_source_store, source) = source_with_skippable_middle_chunk();

@@ -140,7 +140,7 @@ impl LoggingArgs {
 #[derive(clap::Args)]
 #[command(
     after_help = "Thread count is controlled by the RAYON_NUM_THREADS environment variable \
-(e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies process-wide, for the \
+(e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag. It applies process-wide, for the \
 lifetime of the run."
 )]
 struct BuildIndexArgs {
@@ -316,14 +316,14 @@ struct SearchArgs {
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<u32>,
 
-    /// Caps how many touched nodes stay cached (LRU-evicted), in GB.
+    /// Caps how many touched nodes stay cached, in GB.
     /// Defaults to 80% of total system RAM.
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
     /// Resume a persisted query (id printed as this tool's first output
-    /// line) instead of starting a new one. Ignores query_file/query_row/
-    /// query_grp_name.
+    /// line) instead of starting a new one. Ignores
+    /// query_file/query_row/query_grp_name.
     #[arg(long, conflicts_with = "query_file")]
     resume: Option<usize>,
 

@@ -133,7 +133,7 @@ fn zarr_source_reports_its_native_dtype() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::F32);
+    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::F32);
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn zarr_f16_source_reports_its_native_dtype() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::F16);
+    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::F16);
 }
 
 /// SIFT-style descriptors: stored as uint8, read back as f32 with no
@@ -196,7 +196,7 @@ fn zarr_uint8_source_reports_its_dtype_and_reads_back_exactly() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::UInt8);
+    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::UInt8);
     assert_eq!(source.read_vecs(0, 2), embeddings);
 }
 
@@ -225,7 +225,7 @@ fn zarr_int8_source_reports_its_dtype_and_reads_back_exactly() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::Int8);
+    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::Int8);
     assert_eq!(source.read_vecs(0, 2), embeddings);
 }
 
@@ -233,7 +233,7 @@ fn zarr_int8_source_reports_its_dtype_and_reads_back_exactly() {
 fn memory_source_native_dtype_is_always_f32() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
-    assert_eq!(source.native_dtype(), crate::utils::EmbeddingDtype::F32);
+    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::F32);
 }
 
 fn int32_source() -> (

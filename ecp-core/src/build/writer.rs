@@ -3,13 +3,15 @@ use std::sync::Arc;
 use half::f16;
 use ndarray::{Array1, Array2};
 use zarrs::array::codec::ZstdCodec;
-use zarrs::array::data_type::{float16, float32, int8, uint8, uint32};
+use zarrs::array::data_type::{bool, float16, float32, int8, string, uint8, uint32};
 use zarrs::array::{
     Array, ArrayBuilder, ArraySubset, BytesToBytesCodecTraits, DataType, FillValue,
+    FillValueMetadata,
 };
 use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableStorageTraits};
 
-use crate::utils::EmbeddingDtype;
+use crate::dtype::EmbeddingDtype;
+use crate::metric::Metric;
 
 /// Without a compressor, a chunk is padded to its full declared size on
 /// disk regardless of how much of it is actually written. Since a chunk is
@@ -146,6 +148,129 @@ pub fn zarrs_append(
                 .store_array_subset(&ArraySubset::new_with_ranges(&[0..ids_shape[0]]), ids)
                 .expect("Failed to store ids");
         }
+    }
+}
+
+/// Writes `info/levels`, `info/metric`, and `info/is_normalized`.
+pub fn write_index_info(
+    store: &ReadableWritableListableStorage,
+    levels: u32,
+    metric: Metric,
+    is_normalized: bool,
+) {
+    // Zarr has no bare-scalar type; each of these is a rank-0 array.
+    let scalar_shape: Vec<u64> = vec![];
+
+    let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), uint32(), 0u32)
+        .build(store.clone(), "/info/levels")
+        .expect("Failed to build info/levels array");
+    field
+        .store_metadata()
+        .expect("Failed to store info/levels metadata");
+    field
+        .store_chunk(&[], vec![levels])
+        .expect("Failed to store info/levels chunk");
+
+    let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape.clone(), string(), "")
+        .build(store.clone(), "/info/metric")
+        .expect("Failed to build info/metric array");
+    field
+        .store_metadata()
+        .expect("Failed to store info/metric metadata");
+    field
+        .store_chunk(&[], vec![metric.as_str().to_string()])
+        .expect("Failed to store info/metric chunk");
+
+    let field = ArrayBuilder::new(
+        scalar_shape.clone(),
+        scalar_shape,
+        bool(),
+        FillValueMetadata::Bool(false),
+    )
+    .build(store.clone(), "/info/is_normalized")
+    .expect("Failed to build info/is_normalized array");
+    field
+        .store_metadata()
+        .expect("Failed to store info/is_normalized metadata");
+    field
+        .store_chunk(&[], vec![is_normalized])
+        .expect("Failed to store info/is_normalized chunk");
+}
+
+/// Writes `info/{name}` as a rank-0 (scalar) `uint32` array, overwriting it
+/// if it already exists. Split out from `write_index_info` since these
+/// fields change after construction: `total_items` and `next_item_id` are
+/// only known once `build`'s `dataset` is available, and `insert` rewrites
+/// both.
+pub fn write_info_u32(store: &ReadableWritableListableStorage, name: &str, value: u32) {
+    let scalar_shape: Vec<u64> = vec![];
+    let path = format!("/info/{name}");
+
+    let field = ArrayBuilder::new(scalar_shape.clone(), scalar_shape, uint32(), 0u32)
+        .build(store.clone(), &path)
+        .unwrap_or_else(|e| panic!("Failed to build {path} array: {e}"));
+    field
+        .store_metadata()
+        .unwrap_or_else(|e| panic!("Failed to store {path} metadata: {e}"));
+    field
+        .store_chunk(&[], vec![value])
+        .unwrap_or_else(|e| panic!("Failed to store {path} chunk: {e}"));
+}
+
+/// Writes `index_root/embeddings`, the top-level cluster leaders. Small by
+/// construction, written once, no appending needed.
+pub fn write_index_root(
+    store: &ReadableWritableListableStorage,
+    root_embeddings: &Array2<f32>,
+    chunk_shape: &[u64],
+    dtype: EmbeddingDtype,
+) {
+    let shape = vec![
+        root_embeddings.nrows() as u64,
+        root_embeddings.ncols() as u64,
+    ];
+    let subset = ArraySubset::new_with_ranges(&[0..shape[0], 0..shape[1]]);
+    let path = "/index_root/embeddings";
+    let array = build_embeddings_array(store, path, shape, chunk_shape, dtype);
+    store_embeddings_subset(&array, &subset, root_embeddings, dtype, path);
+}
+
+/// Appends a batch to `group_path` (a `lvl_N/node_M` group).
+/// Creates its `embeddings`/`child_key`/`border` arrays on the first call
+/// for that path, appends to them on every later call.
+///
+/// `border` is left at its fill value here, never populated.
+pub fn append_node_batch(
+    store: &ReadableWritableListableStorage,
+    group_path: &str,
+    child_key: &str,
+    embeddings: &Array2<f32>,
+    children: &Array1<u32>,
+    chunk_shape: &[u64],
+    dtype: EmbeddingDtype,
+) {
+    let embeddings_path = format!("{group_path}/embeddings");
+    let children_path = format!("{group_path}/{child_key}");
+    let is_new = Array::open(store.clone(), &embeddings_path).is_err();
+
+    zarrs_append(
+        store,
+        &embeddings_path,
+        &children_path,
+        embeddings,
+        children,
+        chunk_shape,
+        dtype,
+    );
+
+    if is_new {
+        let border_shape = vec![2u64];
+        let border_array = ArrayBuilder::new(border_shape.clone(), border_shape, float32(), 0.0f32)
+            .build(store.clone(), &format!("{group_path}/border"))
+            .expect("Failed to build border array");
+        border_array
+            .store_metadata()
+            .expect("Failed to store border metadata");
     }
 }
 

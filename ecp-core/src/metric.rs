@@ -1,0 +1,80 @@
+use ndarray::{Array1, Array2, Axis};
+
+/// `as_str`/`FromStr` round-trip through the strings stored in a built
+/// index's `info/metric` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Metric {
+    L2,
+    IP,
+}
+
+impl Metric {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Metric::L2 => "L2",
+            Metric::IP => "IP",
+        }
+    }
+}
+
+impl std::str::FromStr for Metric {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "L2" => Ok(Metric::L2),
+            "IP" => Ok(Metric::IP),
+            other => Err(format!("unknown metric `{other}` (use \"L2\" or \"IP\")")),
+        }
+    }
+}
+
+/// `is_normalized`: true if every `embeddings` row is already unit-length,
+/// letting `L2` skip computing their norms (`‖e−q‖² = ‖e‖² − 2·e·q + ‖q‖²`
+/// with `‖e‖²` known to be 1). `q`'s norm is always computed, since a query
+/// isn't guaranteed pre-normalized. No effect on `IP`.
+pub fn calculate_distances(
+    embeddings: &Array2<f32>,
+    q: &Array1<f32>,
+    metric: &Metric,
+    is_normalized: bool,
+) -> Array1<f32> {
+    assert_eq!(
+        embeddings.ncols(),
+        q.len(),
+        "embeddings and query must have the same dim"
+    );
+
+    match metric {
+        Metric::IP => embeddings.dot(q),
+        Metric::L2 if is_normalized => {
+            let dots = embeddings.dot(q);
+            let q_norm_sq = q.dot(q);
+            (1.0 - 2.0 * dots + q_norm_sq).mapv(f32::sqrt)
+        }
+        Metric::L2 => {
+            let q_2d = q.clone().insert_axis(Axis(0));
+            let neg_dist_sq = negative_squared_distances(embeddings, &q_2d);
+            neg_dist_sq.column(0).mapv(|v| (-v).sqrt())
+        }
+    }
+}
+
+/// `‖a−b‖² = ‖a‖² − 2·a·b + ‖b‖²`, negated so higher is always better -
+/// shape `(a.nrows(), b.nrows())`. Shared by `calculate_distances` (search)
+/// and `build::assign` (clustering), so the two never disagree on what L2
+/// distance means.
+pub fn negative_squared_distances(a: &Array2<f32>, b: &Array2<f32>) -> Array2<f32> {
+    let a_norms_sq = a.map_axis(Axis(1), |row| row.dot(&row));
+    let b_norms_sq = b.map_axis(Axis(1), |row| row.dot(&row));
+    let cross = a.dot(&b.t());
+
+    let mut neg_dist_sq = 2.0 * cross;
+    neg_dist_sq -= &a_norms_sq.insert_axis(Axis(1));
+    neg_dist_sq -= &b_norms_sq.insert_axis(Axis(0));
+    neg_dist_sq
+}
+
+#[cfg(test)]
+#[path = "utests/metric.rs"]
+mod tests;

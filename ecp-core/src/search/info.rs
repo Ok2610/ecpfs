@@ -6,7 +6,7 @@ use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
-use crate::utils::Metric;
+use crate::metric::Metric;
 
 /// Reads `info/levels`, `info/metric`, and `info/is_normalized`, the 3
 /// fields both `Index::load` and `IndexInfo::load` need.

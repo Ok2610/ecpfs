@@ -10,11 +10,10 @@ use crate::build::representatives::{
     select_representative_ids,
 };
 use crate::build::source::EmbeddingsSource;
-use crate::build::tree::{
-    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_info_u32,
-};
-use crate::build::writer::zarrs_append;
-use crate::utils::{EmbeddingDtype, Metric};
+use crate::build::tree::{BuildTreeArgs, build_tree};
+use crate::build::writer::{write_index_info, write_index_root, write_info_u32, zarrs_append};
+use crate::dtype::EmbeddingDtype;
+use crate::metric::Metric;
 
 /// `requested` if set, else `native`. Warns when the requested dtype can't
 /// represent everything the source's can, since the write then narrows the

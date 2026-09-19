@@ -13,16 +13,17 @@ use zarrs::storage::ReadableWritableListableStorage;
 
 use ordered_float::NotNan;
 
-use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data, write_info_u32};
+use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data};
+use crate::build::writer::write_info_u32;
+use crate::dtype::{dtype_of_array, read_subset_as_f32};
+use crate::metric::Metric;
 use crate::search::info::{read_info_fields, read_info_u32};
 use crate::search::node::Node;
-use crate::utils::HeapEntry;
-use crate::utils::{Metric, dtype_of_array, read_subset_as_f32};
 
 mod persistence;
 mod query;
 
-use query::QueryState;
+use query::{HeapEntry, QueryState};
 
 /// Fraction of `memory_limit_bytes` reserved for in-flight query state,
 /// leaving the rest for the node cache. Mirrors `TRACKED_MEMORY_FRACTION`

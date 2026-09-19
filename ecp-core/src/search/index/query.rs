@@ -6,12 +6,42 @@ use ndarray::{Array1, Array2};
 use ordered_float::NotNan;
 
 use super::{Index, persistence};
-use crate::utils::{HeapEntry, Metric, calculate_distances};
+use crate::metric::{Metric, calculate_distances};
 
 pub(super) struct QueryState {
     pub(super) query: Array1<f32>,
     pub(super) tree_pq: BinaryHeap<HeapEntry>,
     pub(super) items: Vec<(NotNan<f32>, u32)>,
+}
+
+/// A candidate node in a search's priority queue, ordered by `score`.
+#[derive(Debug, Clone)]
+pub(super) struct HeapEntry {
+    pub(super) score: NotNan<f32>,
+    pub(super) is_leaf: i32,
+    pub(super) level: u32,
+    pub(super) node_id: u32,
+}
+
+// We only compare on `score`:
+impl PartialEq for HeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+    }
+}
+impl Eq for HeapEntry {}
+
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // forward to `Ord::cmp`
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare only on score:
+        self.score.cmp(&other.score)
+    }
 }
 
 impl Index {

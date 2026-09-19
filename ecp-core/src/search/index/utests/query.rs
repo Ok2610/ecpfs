@@ -291,3 +291,32 @@ fn concurrent_searches_from_multiple_threads_return_correct_results() {
         handle.join().expect("worker thread panicked");
     }
 }
+
+#[test]
+fn heap_entry_orders_by_score_only() {
+    let mut heap = BinaryHeap::new();
+    heap.push(HeapEntry {
+        score: NotNan::new(1.0).unwrap(),
+        is_leaf: 0,
+        level: 5,
+        node_id: 99,
+    });
+    heap.push(HeapEntry {
+        score: NotNan::new(3.0).unwrap(),
+        is_leaf: 1,
+        level: 0,
+        node_id: 1,
+    });
+    heap.push(HeapEntry {
+        score: NotNan::new(2.0).unwrap(),
+        is_leaf: 0,
+        level: 2,
+        node_id: 7,
+    });
+
+    // BinaryHeap is a max-heap: highest score pops first, regardless of the
+    // other fields (level/node_id/is_leaf take no part in ordering).
+    assert_eq!(heap.pop().unwrap().node_id, 1);
+    assert_eq!(heap.pop().unwrap().node_id, 7);
+    assert_eq!(heap.pop().unwrap().node_id, 99);
+}

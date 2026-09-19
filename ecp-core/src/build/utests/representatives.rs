@@ -1,5 +1,5 @@
 use super::*;
-use crate::utils::EmbeddingDtype;
+use crate::dtype::EmbeddingDtype;
 use std::collections::HashSet;
 use zarrs::array::Array;
 use zarrs::storage::store::MemoryStore;

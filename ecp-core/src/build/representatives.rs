@@ -5,7 +5,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
-use crate::utils::EmbeddingDtype;
+use crate::dtype::EmbeddingDtype;
 
 /// How to pick which items become cluster leaders.
 #[derive(Debug, Clone, Copy)]

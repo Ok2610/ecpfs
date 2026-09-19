@@ -14,9 +14,8 @@ use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableWritableListableStorage;
 
 use ecp_core::build::source::EmbeddingsSource;
-use ecp_core::build::tree::{
-    BuildTreeArgs, build_tree, write_index_info, write_index_root, write_info_u32,
-};
+use ecp_core::build::tree::{BuildTreeArgs, build_tree};
+use ecp_core::build::writer::{write_index_info, write_index_root, write_info_u32};
 use ecp_core::search::Index;
 use ecp_core::utils::{EmbeddingDtype, Metric};
 

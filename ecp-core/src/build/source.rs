@@ -7,7 +7,7 @@ use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
-use crate::utils::{EmbeddingDtype, dtype_of_array, read_subset_as_f32};
+use crate::dtype::{EmbeddingDtype, dtype_of_array, read_subset_as_f32};
 
 /// A lazily-read source of 2D embeddings: a `.h5`/`.zarr` file (stored as
 /// f32, f16, uint8 or int8, `read_vecs` always returns f32) or an

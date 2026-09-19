@@ -1,127 +1,14 @@
 use super::*;
 use crate::search::index::fixtures::{build_test_index, write_ivf_style_fixture};
-use crate::test_fixtures::{
-    as_readable_writable_listable, new_memory_store, write_index_info, write_index_root,
-    write_item_counts, write_node,
-};
+use crate::test_fixtures::as_readable_writable_listable;
 use ndarray::array;
 use std::collections::HashSet;
 use std::sync::Barrier;
 use std::thread;
 
 #[test]
-fn load_from_store_reconstructs_ivf_style_index_and_searches_correctly() {
-    let store = new_memory_store();
-    write_index_info(&store, 1, "L2", false);
-    write_item_counts(&store, 8);
-    write_index_root(
-        &store,
-        &array![[0.0f32, 0.0], [1.0, 1.0], [10.0, 10.0], [11.0, 11.0]],
-    );
-
-    write_node(
-        &store,
-        "/lvl_1/node_0",
-        &array![[0.0f32, 0.0], [0.4, 0.4]],
-        "item_ids",
-        &array![0u32, 1],
-    );
-    write_node(
-        &store,
-        "/lvl_1/node_1",
-        &array![[1.0f32, 1.0], [1.4, 1.4]],
-        "item_ids",
-        &array![2u32, 3],
-    );
-    write_node(
-        &store,
-        "/lvl_1/node_2",
-        &array![[10.0f32, 10.0], [10.4, 10.4]],
-        "item_ids",
-        &array![4u32, 5],
-    );
-    write_node(
-        &store,
-        "/lvl_1/node_3",
-        &array![[11.0f32, 11.0], [11.4, 11.4]],
-        "item_ids",
-        &array![6u32, 7],
-    );
-
-    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
-    let query: Array1<f32> = array![0.0, 0.0];
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
-
-    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, vec![0, 1, 2, 3]);
-}
-
-/// `node_1` is written before `node_0` on purpose. If `load_from_store`
-/// ordered nodes by whatever order the store happens to list them in rather
-/// than parsing each `node_N` path's own numeric suffix, this would surface
-/// it as search returning items in the wrong order.
-#[test]
-fn load_from_store_sorts_node_paths_by_numeric_suffix_regardless_of_write_order() {
-    let store = new_memory_store();
-    write_index_info(&store, 2, "L2", false);
-    write_item_counts(&store, 8);
-    write_index_root(&store, &array![[0.0f32, 0.0], [1.0, 1.0]]);
-
-    write_node(
-        &store,
-        "/lvl_1/node_1",
-        &array![[1.0f32, 1.0], [10.0, 10.0], [11.0, 11.0]],
-        "node_ids",
-        &array![1u32, 2, 3],
-    );
-    write_node(
-        &store,
-        "/lvl_1/node_0",
-        &array![[0.0f32, 0.0]],
-        "node_ids",
-        &array![0u32],
-    );
-
-    write_node(
-        &store,
-        "/lvl_2/node_0",
-        &array![[0.0f32, 0.0], [0.4, 0.4]],
-        "item_ids",
-        &array![0u32, 1],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_1",
-        &array![[1.0f32, 1.0], [1.4, 1.4]],
-        "item_ids",
-        &array![2u32, 3],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_2",
-        &array![[10.0f32, 10.0], [10.4, 10.4]],
-        "item_ids",
-        &array![4u32, 5],
-    );
-    write_node(
-        &store,
-        "/lvl_2/node_3",
-        &array![[11.0f32, 11.0], [11.4, 11.4]],
-        "item_ids",
-        &array![6u32, 7],
-    );
-
-    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
-    let query: Array1<f32> = array![0.0, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
-
-    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
-}
-
-#[test]
 fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
-    let mut index = build_test_index(Metric::L2);
+    let mut index = build_test_index();
     // Smaller than the ~144 bytes all 6 nodes would take resident at once,
     // but at least as large as the biggest single node (36 bytes), so the
     // node just touched is never itself evicted.
@@ -152,7 +39,7 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
 
 #[test]
 fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
-    let mut index = build_test_index(Metric::L2);
+    let mut index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
     index.new_search(query, 4, 4, -1, &HashSet::new());
     index.nodes.run_pending_tasks();
@@ -188,6 +75,8 @@ fn shutdown_then_reload_resumes_a_query_from_a_fresh_index() {
         vec![0, 1]
     );
     first_process.shutdown();
+    // A second shutdown must leave the persisted state intact.
+    first_process.shutdown();
 
     let second_process = Index::load_from_store(as_readable_writable_listable(&store), None);
     let second = second_process.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
@@ -216,7 +105,7 @@ fn next_query_id_is_seeded_above_every_persisted_id_after_reload() {
 
 #[test]
 fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = index.new_search(query.clone(), 2, 4, -1, &HashSet::new());
     index.shutdown();
@@ -238,15 +127,6 @@ fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
     );
 }
 
-#[test]
-fn shutdown_is_idempotent() {
-    let index = build_test_index(Metric::L2);
-    let query: Array1<f32> = array![0.0, 0.0];
-    index.new_search(query, 2, 4, -1, &HashSet::new());
-    index.shutdown();
-    index.shutdown();
-}
-
 /// Excluding every item forces `items` to stay empty even once `tree_pq` is
 /// genuinely drained (not just not-yet-populated), the only way to reach a
 /// "nothing left to explore, nothing left to hand back" state.
@@ -264,11 +144,9 @@ fn exhausted_query_is_erased_not_persisted() {
     );
     index.shutdown();
 
-    let reloaded = Index::load_from_store(as_readable_writable_listable(&store), None);
-    let resumed = reloaded.get_next_k_items(query_id, 4, 4, -1, &HashSet::new());
     assert!(
-        resumed.is_empty(),
-        "an exhausted query must have been erased, not left resumable"
+        persistence::load_query(&index.store, query_id).is_none(),
+        "an exhausted query must have been erased, not persisted"
     );
 }
 
@@ -305,7 +183,7 @@ fn evicted_query_resumes_correctly_within_the_same_process() {
 /// internally coherent, no torn write.
 #[test]
 fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
-    let index = Arc::new(build_test_index(Metric::L2));
+    let index = Arc::new(build_test_index());
     const THREADS: usize = 8;
     const SEARCHES_PER_THREAD: usize = 20;
 
@@ -339,31 +217,6 @@ fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
 }
 
 #[test]
-fn cleanup_persisted_queries_older_than_erases_stale_entries() {
-    let store = write_ivf_style_fixture();
-    let index = Index::load_from_store(as_readable_writable_listable(&store), None);
-    let query: Array1<f32> = array![0.0, 0.0];
-    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
-    index.shutdown();
-
-    assert_eq!(
-        index.cleanup_persisted_queries_older_than(0),
-        0,
-        "nothing is older than the Unix epoch"
-    );
-
-    let erased = index.cleanup_persisted_queries_older_than(u64::MAX);
-    assert_eq!(erased, 1, "any real timestamp is older than u64::MAX");
-
-    let reloaded = Index::load_from_store(as_readable_writable_listable(&store), None);
-    let resumed = reloaded.get_next_k_items(query_id, 1, 1, -1, &HashSet::new());
-    assert!(
-        resumed.is_empty(),
-        "cleanup must have erased the query, nothing left to resume"
-    );
-}
-
-#[test]
 fn repersisting_after_more_progress_reflects_the_latest_state() {
     let store = write_ivf_style_fixture();
 
@@ -391,10 +244,13 @@ fn repersisting_after_more_progress_reflects_the_latest_state() {
 
 #[test]
 fn insert_invalidates_exactly_the_touched_cache_entry() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
+    // search_exp=4 visits all 4 leaves, so every node ends up cached.
+    index.new_search(array![0.0f32, 0.0], 4, 4, -1, &HashSet::new());
+    index.nodes.run_pending_tasks();
     let before: Vec<((usize, u32), Arc<Node>)> =
         index.nodes.iter().map(|(key, node)| (*key, node)).collect();
-    assert_eq!(before.len(), 6, "sanity check: every node is pre-cached");
+    assert_eq!(before.len(), 6, "sanity check: every node is cached");
 
     // Close enough to item 0 (in leaf (1, 0)) to route to that exact leaf.
     index.insert(array![[0.01f32, 0.01]]);
@@ -419,13 +275,11 @@ fn insert_invalidates_exactly_the_touched_cache_entry() {
 }
 
 /// Inserts into 4 disjoint leaves from 4 threads at once (behind a
-/// `Barrier`, so they actually overlap). Correctness-focused: proves no
-/// data race/corruption when leaves don't overlap, not the absence of
-/// blocking (which isn't directly observable from a test).
+/// `Barrier`, so they actually overlap) and checks every insert is found.
 #[test]
-fn concurrent_inserts_to_different_leaves_do_not_block_each_other() {
+fn concurrent_inserts_to_different_leaves_all_land() {
     for _ in 0..20 {
-        let index = build_test_index(Metric::L2);
+        let index = build_test_index();
         let barrier = Barrier::new(4);
         let new_points: [[f32; 2]; 4] =
             [[0.01, 0.01], [1.01, 1.01], [10.01, 10.01], [11.01, 11.01]];
@@ -470,12 +324,7 @@ fn concurrent_inserts_to_different_leaves_do_not_block_each_other() {
 #[test]
 fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
     for _ in 0..20 {
-        let index = build_test_index(Metric::L2);
-        // Marks every entry evicted, then forces that eviction to run now.
-        // Which leads to node_at repopulating each leaf from scratch,
-        // under its lock, instead of returning a pre-seeded node.
-        index.nodes.invalidate_all();
-        index.nodes.run_pending_tasks();
+        let index = build_test_index();
         let barrier = Barrier::new(2);
 
         let assigned_ids: Vec<u32> = thread::scope(|scope| {

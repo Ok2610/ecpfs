@@ -40,8 +40,8 @@ fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarr
 
 /// Same geometry `search::index::fixtures::build_test_index` hand-builds: leaders
 /// 0-3 = items 0,2,4,6; root = leaders 0-1; two well-separated clusters of
-/// 4 items each. Built here via `build_tree` instead of a struct
-/// literal.
+/// 4 items each. Built here via `build_tree` instead of hand-written
+/// nodes.
 #[test]
 fn build_tree_produces_a_structure_that_searches_correctly() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");

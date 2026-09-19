@@ -6,7 +6,7 @@ use ndarray::array;
 
 #[test]
 fn l2_search_returns_nearest_items_in_order() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
@@ -30,7 +30,7 @@ fn l2_search_returns_nearest_items_in_order() {
 /// forces exactly that exit path on every call.
 #[test]
 fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reached() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 8, 100, -1, &HashSet::new());
@@ -41,7 +41,7 @@ fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reach
 
 #[test]
 fn l2_search_respects_exclude_set() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = [0].into_iter().collect();
 
@@ -51,32 +51,12 @@ fn l2_search_respects_exclude_set() {
     assert_eq!(ids, vec![1, 2, 3, 4], "excluded item 0 must not appear");
 }
 
-#[test]
-fn incremental_search_resumes_and_drains_remaining_items() {
-    let index = build_test_index(Metric::L2);
-    let query: Array1<f32> = array![0.0, 0.0];
-
-    // First page: nearest 2 items.
-    let (first, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
-    assert_eq!(
-        first.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
-        vec![0, 1]
-    );
-
-    // Second page: continues from where the first left off, same query_id.
-    let second = index.get_next_k_items(query_id, 2, 4, -1, &HashSet::new());
-    assert_eq!(
-        second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
-        vec![2, 3]
-    );
-}
-
 /// k=1, search_exp=1 explores only the nearest leaf (items 0 and 1, both
 /// pushed since a leaf is never partially processed) and drains 1, leaving
 /// item 1 buffered.
 #[test]
 fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
@@ -97,7 +77,7 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
 /// large enough to satisfy k on the first pass.
 #[test]
 fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new());
@@ -113,12 +93,12 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
 /// Same setup as the unlimited-retry test above, but with a *finite*
 /// max_increments=1 (i.e. "at most 1 retry"), which should be just enough
 /// to go from search_exp=1 to 2 and reach k=4, identically to the unlimited
-/// case. This isolates the finite-counter comparison (`increments >
+/// case. This isolates the finite-counter comparison (`increments <
 /// max_increments`) from the `max_increments == -1` special case, which is
 /// the only branch the test above exercises.
 #[test]
 fn finite_max_increments_still_allows_configured_number_of_retries() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new());
@@ -139,7 +119,7 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
 /// permitted retry), not all 8.
 #[test]
 fn new_search_stops_once_max_increments_is_exhausted() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new());
@@ -152,18 +132,16 @@ fn new_search_stops_once_max_increments_is_exhausted() {
     );
 }
 
-/// `Index.queries: Vec<QueryState>` holds every in-flight query, keyed by the
-/// `query_id` returned from `new_search`. Every other test so far only ever
-/// runs one query at a time, so cross-query indexing bugs (e.g. a query's
-/// `tree_pq`/`items` bleeding into another's) would go unnoticed. This test
-/// opens two queries against the *same* `Index` from opposite corners of the
+/// `Index.queries` holds every in-flight query, keyed by the `query_id`
+/// `new_search` returns, so one query's `tree_pq`/`items` must never bleed
+/// into another's. This test opens two queries against the *same* `Index` from opposite corners of the
 /// fixture: query A from the origin (nearest-to-farthest: 0,1,2,3,4,5,6,7),
 /// and query B from (11,11), exactly item 6's position (nearest-to-farthest:
 /// 6,7,5,4,3,2,1,0). It interleaves `get_next_k_items` calls on both
 /// `query_id`s, asserting each stream stays independent throughout.
 #[test]
 fn interleaved_queries_on_the_same_index_stay_independent() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
     let query_a: Array1<f32> = array![0.0, 0.0];
     let query_b: Array1<f32> = array![11.0, 11.0];
 
@@ -226,7 +204,7 @@ fn three_level_tree_descends_through_intermediate_level() {
 
 #[test]
 fn levels_1_index_searches_like_ivf_without_panicking() {
-    let index = build_ivf_style_index(Metric::L2);
+    let index = build_ivf_style_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
     // In a levels=1 tree every popped node is a leaf, so leaf_cnt (what
@@ -247,7 +225,7 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
 /// nothing wrong.
 #[test]
 fn missing_query_id_returns_empty_instead_of_panicking() {
-    let index = build_test_index(Metric::L2);
+    let index = build_test_index();
 
     let items = index.get_next_k_items(999, 4, 4, -1, &HashSet::new());
     assert!(items.is_empty());
@@ -263,7 +241,7 @@ fn missing_query_id_returns_empty_instead_of_panicking() {
 /// or cross-query contamination.
 #[test]
 fn concurrent_searches_from_multiple_threads_return_correct_results() {
-    let index = Arc::new(build_test_index(Metric::L2));
+    let index = Arc::new(build_test_index());
     const THREADS: usize = 8;
     const SEARCHES_PER_THREAD: usize = 20;
 

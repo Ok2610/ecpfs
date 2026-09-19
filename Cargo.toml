@@ -5,3 +5,9 @@ members = ["ecp-core", "ecp-py", "ecp-cli"]
 [profile.release]
 lto = "thin"
 codegen-units = 4
+strip = true
+
+# Dependency debug info is most of target/'s size on macOS. 
+# The workspace's own crates keep theirs.
+[profile.dev.package."*"]
+debug = false

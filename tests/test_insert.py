@@ -4,35 +4,7 @@ import numpy as np
 
 import ecpfs
 
-from .test_build_and_search import build_two_clusters_index
-
-
-def test_insert_makes_a_new_item_findable_by_search(tmp_path):
-    index_path = build_two_clusters_index(tmp_path)
-    index = ecpfs.Index(index_path)
-
-    start_id, end_id = index.insert(embeddings=np.array([[0.05, 0.05]], dtype=np.float32))
-    assert (start_id, end_id) == (8, 9)
-
-    items, _ = index.new_search(
-        query=np.array([0.0, 0.0], dtype=np.float32), k=9, search_exp=4, max_increments=-1, exclude_vec=[]
-    )
-    ids = [item_id for _, item_id in items]
-    assert 8 in ids
-
-
-def test_insert_is_visible_to_a_freshly_opened_index_on_the_same_path(tmp_path):
-    index_path = build_two_clusters_index(tmp_path)
-    index = ecpfs.Index(index_path)
-    index.insert(embeddings=np.array([[0.05, 0.05]], dtype=np.float32))
-    index.close()
-
-    reloaded = ecpfs.Index(index_path)
-    items, _ = reloaded.new_search(
-        query=np.array([0.0, 0.0], dtype=np.float32), k=9, search_exp=4, max_increments=-1, exclude_vec=[]
-    )
-    ids = [item_id for _, item_id in items]
-    assert 8 in ids
+from .conftest import build_two_clusters_index
 
 
 def test_insert_multiple_points_in_one_call_are_all_findable(tmp_path):
@@ -56,7 +28,7 @@ def test_insert_multiple_points_in_one_call_are_all_findable(tmp_path):
 
 
 def test_concurrent_insert_and_search_from_multiple_threads(tmp_path):
-    """Real threading.Thread's against one shared Index, releasing the GIL
+    """Python threads against one shared Index, which releases the GIL
     during both insert and search (see pyindex.rs's py.detach calls).
     This is what actually exercises ecp-core's per-leaf locking from
     Python, not just proves the Rust API accepts the calls."""

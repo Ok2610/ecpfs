@@ -5,18 +5,7 @@ import pytest
 
 import ecpfs
 
-from .conftest import TWO_CLUSTERS, write_h5_embeddings
-
-
-def build_two_clusters_index(tmp_path):
-    h5_path = tmp_path / "embeddings.h5"
-    write_h5_embeddings(h5_path, TWO_CLUSTERS)
-    index_path = tmp_path / "index.zarr"
-
-    builder = ecpfs.Builder(index_path, levels=2, metric=ecpfs.Metric.L2)
-    builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
-    builder.build(h5_path, fallback_batch_rows=100)
-    return index_path
+from .conftest import build_two_clusters_index
 
 
 @pytest.mark.parametrize(
@@ -41,13 +30,6 @@ def test_calling_a_method_after_close_raises_value_error(tmp_path, call):
     # plain PyO3-raised error, so a normal pytest.raises is enough.
     with pytest.raises(ValueError, match="closed"):
         call(index)
-
-
-def test_close_is_idempotent(tmp_path):
-    index_path = build_two_clusters_index(tmp_path)
-    index = ecpfs.Index(index_path)
-    index.close()
-    index.close()
 
 
 def test_close_persists_a_buffered_query_for_a_fresh_index_to_resume(tmp_path):
@@ -96,6 +78,8 @@ def test_context_manager_closes_on_exit(tmp_path):
             query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[]
         )
 
+    # A second close is a no-op.
+    index.close()
     with pytest.raises(ValueError, match="closed"):
         index.set_memory_limit_bytes(1024)
 

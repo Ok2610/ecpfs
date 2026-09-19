@@ -8,14 +8,14 @@ import pytest
 import ecpfs
 
 
-def test_init_logging_creates_a_real_jsonl_file_with_valid_log_lines(tmp_path):
+def test_init_logging_creates_a_jsonl_file_with_valid_log_lines(tmp_path):
     # ecp_core::logging::init's global logger can only be set once per
-    # process (log::set_boxed_logger), so init_logging is idempotent -
-    # a later call in the same process silently returns the first call's
+    # process (log::set_boxed_logger), so init_logging is idempotent: a
+    # later call in the same process silently returns the first call's
     # path, ignoring its own log_dir/level. A plain in-process call here
     # would be at the mercy of whatever other test ran first in this
     # pytest session, so this runs in its own subprocess to guarantee it's
-    # really the first (and only) call.
+    # the first (and only) call.
     script = f"""
 import json
 import ecpfs

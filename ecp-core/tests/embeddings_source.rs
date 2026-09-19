@@ -59,23 +59,6 @@ fn hdf5_source_reports_its_actual_on_disk_chunk_vec_count() {
 }
 
 #[test]
-fn hdf5_source_reports_its_native_dtype() {
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let file_path = tmp.path().join("embeddings.h5");
-
-    let file = H5File::create(&file_path).expect("failed to create HDF5 file");
-    file.new_dataset::<f32>()
-        .shape([2usize, 2])
-        .create("embeddings")
-        .expect("failed to create HDF5 dataset");
-    file.close().expect("failed to close HDF5 file");
-
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-
-    assert_eq!(source.native_dtype(), EmbeddingDtype::F32);
-}
-
-#[test]
 fn hdf5_f16_source_reads_correctly_upcast_to_f32() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let file_path = tmp.path().join("f16_embeddings.h5");

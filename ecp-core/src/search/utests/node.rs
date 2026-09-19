@@ -73,8 +73,7 @@ fn a_confirmed_miss_is_cached_and_not_re_queried_after_data_appears() {
     assert!(node.embeddings().is_none());
     assert!(node.children().is_none());
 
-    // The node now actually exists; a naive `is_none()`-only check would
-    // re-query and find it, but a `OnceLock` already resolved to `None` must not.
+    // The node exists now, but the cached `None` must stay.
     write_node(
         &store,
         "/lvl_1/node_0",

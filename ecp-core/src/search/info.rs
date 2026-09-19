@@ -8,8 +8,7 @@ use zarrs::storage::ReadableListableStorage;
 
 use crate::metric::Metric;
 
-/// Reads `info/levels`, `info/metric`, and `info/is_normalized`, the 3
-/// fields both `Index::load` and `IndexInfo::load` need.
+/// Reads `info/levels`, `info/metric` and `info/is_normalized`.
 pub(super) fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric, bool) {
     let levels_array =
         Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
@@ -35,8 +34,7 @@ pub(super) fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric,
     (levels, metric, is_normalized)
 }
 
-/// Reads a rank-0 `info/{name}` scalar, shared by `IndexInfo::load_from_store`
-/// and `Index::load_from_store`.
+/// Reads the `u32` scalar at `info/{name}`.
 pub(super) fn read_info_u32(store: &ReadableListableStorage, name: &str) -> u32 {
     let path = format!("/info/{name}");
     let array =
@@ -46,18 +44,19 @@ pub(super) fn read_info_u32(store: &ReadableListableStorage, name: &str) -> u32 
         .unwrap_or_else(|e| panic!("Failed to retrieve {path}: {e}"))[0]
 }
 
-/// An index's `info/*` metadata plus its representative count, read without
-/// loading the tree. `total_representatives` comes from `/rep_item_ids`'s
-/// shape rather than its own field, the same cheap read `Index::load` uses
-/// for array shapes elsewhere.
+/// An index's `info/*` fields and representative count, read without
+/// loading the tree.
 pub struct IndexInfo {
+    /// Node levels below the root; the last one holds the leaves.
     pub levels: u32,
     pub metric: Metric,
+    /// Whether every stored embedding is unit-length.
     pub is_normalized: bool,
     pub total_items: u32,
     /// The next id `insert` will hand out. Ahead of `total_items` when a
     /// crash left a reserved range unwritten, level with it otherwise.
     pub next_item_id: u32,
+    /// Length of `/rep_item_ids`; not stored under `info/`.
     pub total_representatives: u32,
 }
 

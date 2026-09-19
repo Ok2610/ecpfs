@@ -27,6 +27,7 @@ pub(super) fn persist_query(
 
     write_f32_array(store, &format!("{base}/query"), state.query.to_vec());
 
+    // One array per HeapEntry field, and per items tuple field
     let mut tree_pq_score = Vec::with_capacity(state.tree_pq.len());
     let mut tree_pq_is_leaf = Vec::with_capacity(state.tree_pq.len());
     let mut tree_pq_level = Vec::with_capacity(state.tree_pq.len());
@@ -54,8 +55,7 @@ pub(super) fn persist_query(
     write_persisted_at(store, &format!("{base}/persisted_at"), now_unix_secs());
 }
 
-/// Removes `/queries/{query_id}/*`, if present. A no-op if it doesn't
-/// exist, `erase_prefix` on a nonexistent prefix is `Ok(())`.
+/// Removes `/queries/{query_id}/*`; a no-op if it doesn't exist.
 pub(super) fn erase_query(store: &ReadableWritableListableStorage, query_id: usize) {
     let prefix = StorePrefix::new(format!("queries/{query_id}/"))
         .expect("a query_id-derived prefix is always valid");

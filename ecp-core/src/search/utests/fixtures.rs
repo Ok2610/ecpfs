@@ -90,13 +90,9 @@ pub(super) fn build_test_index() -> Index {
     Index::load_from_store(as_readable_writable_listable(&store), None)
 }
 
-/// A levels=1 index is IVF-style: since node_size = ceil(total_clusters**1) =
-/// total_clusters, the root holds *every* leader directly, and the single
-/// level holds the leaf clusters. There is no intermediate level to descend
-/// through. Same 8 items/4 leaders as `build_test_index`, just flattened:
-/// root = all 4 leaders, and each leader's cluster is looked up directly by
-/// its global id. Returns the store, so a test can load a second `Index`
-/// against it to simulate a process restart.
+/// A levels=1 (IVF-style) index: root holds all 4 leaders and lvl_1 their
+/// leaf clusters, with the same 8 items as `build_test_index`. Returns the
+/// store, so a test can load a second `Index` from it to simulate a restart.
 pub(super) fn write_ivf_style_fixture() -> Arc<zarrs::storage::store::MemoryStore> {
     let store = new_memory_store();
     write_index_info(&store, 1, "L2", false);
@@ -144,18 +140,14 @@ pub(super) fn build_ivf_style_index() -> Index {
     )
 }
 
-/// A 3-level tree: root -> lvl_1 -> lvl_2 -> lvl_3 (leaf). Every other
-/// fixture tops out at levels=2, where the intermediate level (lvl_1) always
-/// has `(level + 1) == (levels - 1)`, so its children are pushed straight as
-/// leaves (query.rs's `if` branch of that check). With levels=3, lvl_1's
-/// children (into lvl_2) instead take the `else` branch, pushed as another
-/// non-leaf level. Only lvl_2's children (into lvl_3) hit the leaf branch.
+/// A 3-level tree, the only fixture where lvl_1's children are internal
+/// nodes rather than leaves:
+///   root:   2 entries -> lvl_1/node_0, lvl_1/node_1
+///   lvl_1:  node_0 -> lvl_2/node_0, node_1    node_1 -> lvl_2/node_2, node_3
+///   lvl_2:  node_i -> lvl_3/node_i
+///   lvl_3:  node_i holds item i; items 0..3 at (0,0), (1,1), (10,10), (11,11)
 ///
-/// Kept deliberately linear (one child per lvl_2 node) so the descent
-/// path is unambiguous: root has 2 leaders, each lvl_1 node fans out to 2
-/// lvl_2 nodes, and each lvl_2 node has exactly 1 lvl_3 child, 4 items total,
-/// laid out on a line so nearest-to-farthest from the origin query is item
-/// id order, same shape of assertion as `l2_search_returns_nearest_items_in_order`.
+/// Nearest-to-farthest from the origin is therefore item id order.
 pub(super) fn build_three_level_test_index() -> Index {
     let store = new_memory_store();
     write_index_info(&store, 3, "L2", false);

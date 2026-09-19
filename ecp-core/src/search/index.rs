@@ -25,71 +25,52 @@ mod query;
 
 use query::{HeapEntry, QueryState};
 
-/// Fraction of `memory_limit_bytes` reserved for in-flight query state,
-/// leaving the rest for the node cache. Mirrors `TRACKED_MEMORY_FRACTION`
-/// in `build::builder`.
+/// Fraction of `memory_limit_bytes` given to the query cache. The node
+/// cache gets the rest.
 const QUERY_CACHE_MEMORY_FRACTION: f64 = 0.05;
 
 type NodeCache = Cache<(usize, u32), Arc<Node>>;
 type QueryCache = Cache<usize, Arc<Mutex<QueryState>>>;
 
-/// A loaded eCP index. Holds the root and each level's nodes lazily, in a
-/// concurrent cache capping how many stay resident, and tracks open
-/// queries by id for `new_search`/`get_next_k_items`.
-///
-/// `nodes` is keyed by `(level, node_id)` and populated on first visit, not
-/// upfront at load. A node that received zero assigned children during
-/// build never gets a directory written, so ids at any given level are
-/// generally sparse, not a dense `0..count` range, and a
-/// legitimately-referenced id can still turn out to be one of the missing
-/// ones (`Node::embeddings`/`children` already handle that by returning
-/// `None`).
-///
-/// `queries` is lazy the same way: `load` only discovers persisted ids,
-/// not their content (`get_or_load_query` reads on first use).
-///
-/// `leaf_locks`, `next_item_id` and `total_items` back `insert`'s
-/// fine-grained concurrency: a leaf's lock is only taken around that leaf's
-/// own on-disk write or cold read, so two operations on different leaves
-/// never block each other.
-///
-/// `next_item_id` allocates ids and only ever increases; `total_items`
-/// counts what is actually stored. They match until a crash mid-insert
-/// leaves a reserved range unwritten, which is why they are separate
-/// fields rather than one counter serving both roles.
-///
-/// `leaf_locks` is not protecting against concurrent reads/writes of a
-/// node's own chunks; zarrs already parallelizes that internally. It
-/// guards a different hazard zarrs explicitly leaves to its callers.
-/// Two separate calls can still race on the same array, such as a
-/// search reading a leaf while an insert appends to it.
+/// A loaded eCP index. Nodes and query state load on first use into
+/// memory-capped caches. Safe to share across threads; a search and an
+/// insert only wait on each other when they touch the same leaf.
 pub struct Index {
     store: ReadableWritableListableStorage,
     metric: Metric,
     is_normalized: bool,
     levels: u32,
     root: Array2<f32>,
+    /// Keyed by `(level, node_id)`, with `level` 0-based.
     nodes: NodeCache,
+    /// Open queries by id. A persisted query loads from disk on first use.
     queries: QueryCache,
     next_query_id: AtomicUsize,
     memory_limit_bytes: Option<usize>,
+    /// Cleared by `shutdown`. Searches return nothing once it is false.
     accepting: AtomicBool,
+    /// One lock per leaf, held only around that leaf's on-disk append or
+    /// cold read. It stops a search reading a leaf while an insert appends
+    /// to it, a race zarrs leaves to its callers.
     leaf_locks: DashMap<u32, Arc<RwLock<()>>>,
+    /// The next id `insert` hands out. Only ever increases, and runs ahead
+    /// of `total_items` when a crash leaves a reserved range unwritten.
     next_item_id: Mutex<u32>,
+    /// How many items are stored on disk.
     total_items: Mutex<u32>,
 }
 
 impl Index {
-    /// Loads an index from `index_path`, deriving `metric`, `levels` and
-    /// `root` from the store itself (`info/levels`, `info/metric`,
-    /// `index_root/embeddings`). `memory_limit_bytes` caps how many bytes of
-    /// node and query data stay resident.
+    /// Opens the index at `index_path`, reading its `info/*` fields and
+    /// root. Other nodes load on first visit. `memory_limit_bytes` caps the
+    /// node and query data kept in memory; `None` means no cap.
     pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Self {
         let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
         Self::load_from_store(store, memory_limit_bytes)
     }
 
+    /// `load` for an already-open store.
     fn load_from_store(
         store: ReadableWritableListableStorage,
         memory_limit_bytes: Option<usize>,
@@ -106,6 +87,7 @@ impl Index {
 
         let (nodes, queries) = Self::build_caches(memory_limit_bytes, store.clone());
 
+        // New query ids continue past every persisted one.
         let next_query_id = persistence::query_ids_on_disk(&store)
             .into_iter()
             .max()
@@ -132,22 +114,17 @@ impl Index {
         }
     }
 
-    /// Builds the node and query caches for `memory_limit_bytes`: no limit
-    /// when `None`, otherwise split via `QUERY_CACHE_MEMORY_FRACTION`. One
-    /// cache spans every level (not one per level) so a single
-    /// `max_capacity` caps the whole tree; separate per-level caches would
-    /// each get their own capacity instead, multiplying the effective
-    /// limit by the level count.
-    ///
-    /// `queries`'s eviction listener persists (or erases) whatever moka
-    /// evicts under memory pressure.
+    /// Builds the node and query caches, uncapped when `memory_limit_bytes`
+    /// is `None`. Evicted queries are persisted to `store`.
     fn build_caches(
         memory_limit_bytes: Option<usize>,
         store: ReadableWritableListableStorage,
     ) -> (NodeCache, QueryCache) {
+        // One node cache for every level, so one capacity caps the whole tree.
         let mut nodes_builder = Cache::builder();
         let mut queries_builder = Cache::builder();
 
+        // Split the limit between the two caches, each weighing entries in bytes
         if let Some(limit) = memory_limit_bytes {
             let query_capacity = (limit as f64 * QUERY_CACHE_MEMORY_FRACTION) as u64;
             let node_capacity = limit as u64 - query_capacity;
@@ -175,6 +152,7 @@ impl Index {
                 );
             })
             .build();
+        // An evicted query goes to disk, so it can still be resumed.
         let queries = queries_builder
             .eviction_listener(move |query_id, state_arc: Arc<Mutex<QueryState>>, cause| {
                 log::debug!("evicting query_id={query_id} cause={cause:?}");
@@ -186,24 +164,22 @@ impl Index {
         (nodes, queries)
     }
 
-    /// Changes the memory limit on an already-loaded index, so a caller can
-    /// raise or lower it without reloading. Rebuilds both the node and
-    /// query caches from scratch and transfers their existing entries into
-    /// the new capacities, which evicts immediately if the new limit is
-    /// already exceeded rather than waiting for the next touch.
-    ///
-    /// This is an administrative/config operation, not a hot-path one: it
-    /// rebuilds both caches on every call, so calling it frequently (e.g.
-    /// once per query) would defeat the caching it's meant to control.
+    /// Changes the memory limit without reloading; `None` removes the cap.
+    /// It rebuilds both caches, so it suits occasional reconfiguration, not
+    /// a call per query.
     pub fn set_memory_limit_bytes(&mut self, memory_limit_bytes: Option<usize>) {
         self.memory_limit_bytes = memory_limit_bytes;
         let (new_nodes, new_queries) = Self::build_caches(memory_limit_bytes, self.store.clone());
+
+        // Carry every resident entry over
         for (key, value) in self.nodes.iter() {
             new_nodes.insert(*key, value);
         }
         for (key, value) in self.queries.iter() {
             new_queries.insert(*key, value);
         }
+
+        // Evict now if the new limit is already exceeded
         new_nodes.run_pending_tasks();
         new_queries.run_pending_tasks();
         self.nodes = new_nodes;
@@ -214,7 +190,7 @@ impl Index {
         );
     }
 
-    /// The node at `(lvl, node_id)`, reading it from disk on a cache miss.
+    /// Node `node_id` at 0-based level `lvl`, read from disk on a cache miss.
     /// `node_id` may not exist on disk (only nodes that received a child
     /// during build do); `embeddings`/`children` return `None` for those.
     fn node_at(&self, lvl: usize, node_id: u32) -> Arc<Node> {
@@ -262,8 +238,7 @@ impl Index {
         node
     }
 
-    /// Bytes currently resident across every cached node, for eviction
-    /// accounting.
+    /// Bytes the node cache currently holds.
     fn resident_bytes(&self) -> usize {
         self.nodes.weighted_size() as usize
     }
@@ -285,25 +260,16 @@ impl Index {
         persistence::cleanup_older_than(&self.store, cutoff_unix_secs)
     }
 
-    /// Assigns each embedding row the next available id (`next_item_id..
-    /// next_item_id+embeddings.nrows()`, row order), routes it to its
-    /// nearest leaf, and appends it there. No rebalancing. Concurrent
-    /// inserts and searches are safe; two operations only serialize when
-    /// they land on the same leaf. Returns the assigned id range.
-    ///
-    /// Not atomic: a panic or crash partway through can leave `next_item_id`
-    /// ahead of what actually landed on disk, permanently skipping the
-    /// unwritten ids (never reusing or colliding with one already written).
-    /// `total_items` is written only once the vectors are stored, so it
-    /// keeps counting what exists rather than what was reserved.
+    /// Appends each row of `embeddings` to its nearest leaf, stored in the
+    /// index's dtype, and returns the ids given to the rows in order. No
+    /// rebalancing; safe alongside searches and other inserts.
     pub fn insert(&self, embeddings: Array2<f32>) -> std::ops::Range<u32> {
         if embeddings.nrows() == 0 {
             let next = *self.next_item_id.lock().unwrap();
             return next..next;
         }
 
-        // Not cached on Index. Read from index_root/embeddings's own
-        // on-disk metadata, which every node in the tree shares.
+        // Dtype and chunk shape, shared by every node in the tree
         let root_array = Array::open(self.store.clone(), "/index_root/embeddings")
             .expect("Failed to open index_root/embeddings");
         let embedding_dtype = dtype_of_array(&root_array, "index_root/embeddings");
@@ -314,9 +280,7 @@ impl Index {
             .map(|v| v as u64)
             .collect();
 
-        // A throwaway cache for this call's own internal-node reads;
-        // small since a naive insert only ever touches its own descent
-        // path, not the whole tree.
+        // This call's own node cache. It only holds descent paths, so it stays small.
         let cache_capacity_bytes = self.memory_limit_bytes.unwrap_or(usize::MAX) as u64 / 20;
         let node_cache = BuildNodeCache::new(cache_capacity_bytes);
         let config = BuildConfig {
@@ -331,11 +295,9 @@ impl Index {
             leaf_locks: Some(&self.leaf_locks),
         };
 
-        // Reserving the range and persisting it happen under the same lock
-        // so two concurrent inserts can never write next_item_id out of
-        // order (whichever finishes its disk write last would otherwise
-        // overwrite the other's larger value). Reserved before the write, so
-        // a crash skips ids rather than risking a collision.
+        // Reserve the id range and persist it under one lock, so concurrent
+        // inserts can't write next_item_id out of order. Done before the
+        // append, so a crash skips ids instead of reusing them.
         let start = {
             let mut next = self.next_item_id.lock().unwrap();
             let start = *next;
@@ -346,14 +308,14 @@ impl Index {
         let end = start + embeddings.nrows() as u32;
         let ids = Array1::from_iter(start..end);
 
+        // Append, then drop the stale cached copy of every leaf appended to
         let touched = add_data(&config, &self.root, &embeddings, &ids);
         for (level, node_id) in touched {
             // node_at's cache key is 0-based; on-disk level is 1-based.
             self.nodes.invalidate(&(level as usize - 1, node_id));
         }
 
-        // Counted only now the vectors are on disk. Relative, so two
-        // concurrent inserts both land whichever order they finish in.
+        // Counted only once the vectors are on disk
         {
             let mut total = self.total_items.lock().unwrap();
             *total += embeddings.nrows() as u32;

@@ -10,13 +10,17 @@ use crate::dtype::read_subset_as_f32;
 /// cached on first access.
 pub struct Node {
     store: ReadableListableStorage,
+    /// The node's group in the store, such as `/lvl_2/node_7`.
     pub group_path: String,
+    /// `node_ids` for an internal node, `item_ids` for a leaf.
     pub child_key: String,
     embeddings: OnceLock<Option<Array2<f32>>>,
     children: OnceLock<Option<Array1<u32>>>,
 }
 
 impl Node {
+    /// A handle on the node at `group_path`. Nothing is read until
+    /// `embeddings` or `children` is called.
     pub fn new(store: ReadableListableStorage, group_path: String, child_key: String) -> Self {
         Node {
             store,

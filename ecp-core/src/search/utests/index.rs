@@ -127,9 +127,8 @@ fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
     );
 }
 
-/// Excluding every item forces `items` to stay empty even once `tree_pq` is
-/// genuinely drained (not just not-yet-populated), the only way to reach a
-/// "nothing left to explore, nothing left to hand back" state.
+/// Excluding every item leaves both `tree_pq` and `items` empty once the
+/// search ends, so `shutdown` must erase the query.
 #[test]
 fn exhausted_query_is_erased_not_persisted() {
     let store = write_ivf_style_fixture();
@@ -159,14 +158,12 @@ fn evicted_query_resumes_correctly_within_the_same_process() {
     let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
     assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
 
-    // Capacity this tiny is below any real QueryState's weight, so
-    // set_memory_limit_bytes's synchronous eviction pass evicts the query
-    // just created.
+    // Below any QueryState's weight, so the query is evicted right away.
     index.set_memory_limit_bytes(Some(20));
     assert_eq!(
         index.queries.entry_count(),
         0,
-        "sanity check: the query must have actually been evicted"
+        "sanity check: the query must be evicted"
     );
 
     let second = index.get_next_k_items(query_id, 1, 1, -1, &HashSet::new());
@@ -177,10 +174,9 @@ fn evicted_query_resumes_correctly_within_the_same_process() {
     );
 }
 
-/// Races `new_search` threads against a concurrent `shutdown()`. A query
-/// still mid-publish when `shutdown` runs may be missing, that's expected;
-/// only checks for no panic/deadlock and that whatever did persist is
-/// internally coherent, no torn write.
+/// Races `new_search` threads against `shutdown`. A query that starts
+/// mid-shutdown may go unpersisted, but nothing may panic, deadlock or
+/// persist a torn state.
 #[test]
 fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
     let index = Arc::new(build_test_index());
@@ -274,8 +270,8 @@ fn insert_invalidates_exactly_the_touched_cache_entry() {
     }
 }
 
-/// Inserts into 4 disjoint leaves from 4 threads at once (behind a
-/// `Barrier`, so they actually overlap) and checks every insert is found.
+/// Inserts into 4 different leaves from 4 threads released together by a
+/// `Barrier`, and checks every insert is found.
 #[test]
 fn concurrent_inserts_to_different_leaves_all_land() {
     for _ in 0..20 {
@@ -284,9 +280,8 @@ fn concurrent_inserts_to_different_leaves_all_land() {
         let new_points: [[f32; 2]; 4] =
             [[0.01, 0.01], [1.01, 1.01], [10.01, 10.01], [11.01, 11.01]];
 
-        // Each thread's assigned id depends on reservation order, which is
-        // non-deterministic, so capture what insert actually returns rather
-        // than assuming a fixed id per point.
+        // Ids depend on which thread reserves first, so record what insert
+        // returns.
         let assigned: Vec<(u32, [f32; 2])> = thread::scope(|scope| {
             let handles: Vec<_> = new_points
                 .into_iter()
@@ -317,10 +312,8 @@ fn concurrent_inserts_to_different_leaves_all_land() {
     }
 }
 
-/// One thread repeatedly searches leaf (1, 0) while another concurrently
-/// inserts several new points into that same leaf. Proves the leaf's read
-/// lock (search) and write lock (insert) actually serialize correctly
-/// instead of racing on the same on-disk arrays.
+/// One thread searches leaf (1, 0) while another inserts 10 points into it.
+/// Every inserted item must be found afterwards, none lost or doubled.
 #[test]
 fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
     for _ in 0..20 {

@@ -22,12 +22,9 @@ fn l2_search_returns_nearest_items_in_order() {
     );
 }
 
-/// Regression test: `incremental_search` used to only sort `items` inside
-/// the `leaf_cnt == search_exp` branch, so a search that instead ends by
-/// running `tree_pq` dry (leaf_cnt never reaches search_exp because the
-/// whole tree has fewer leaves than that) returned items in leaf-visit
-/// order, not sorted by score. `search_exp=100` against a 4-leaf tree
-/// forces exactly that exit path on every call.
+/// A search that ends by running `tree_pq` dry, before `search_exp` leaves
+/// are explored, must still return sorted items. `search_exp=100` against a
+/// 4-leaf tree forces that exit.
 #[test]
 fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reached() {
     let index = build_test_index();
@@ -69,12 +66,9 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
     );
 }
 
-/// With search_exp=1, the first pass only explores 1 leaf cluster (2 items:
-/// ids 0,1), not enough for k=4. With max_increments=-1 (unlimited), the
-/// retry path at query.rs's `leaf_cnt == search_exp` check must double
-/// search_exp (1 -> 2) and keep going, exploring a 2nd cluster (ids 2,3) to
-/// reach k. Never exercised before: every existing fixture used a search_exp
-/// large enough to satisfy k on the first pass.
+/// search_exp=1 explores 1 leaf (ids 0, 1), not enough for k=4. With
+/// max_increments=-1, search_exp doubles to 2 and a 2nd leaf (ids 2, 3)
+/// reaches k.
 #[test]
 fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
     let index = build_test_index();
@@ -90,12 +84,9 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
     );
 }
 
-/// Same setup as the unlimited-retry test above, but with a *finite*
-/// max_increments=1 (i.e. "at most 1 retry"), which should be just enough
-/// to go from search_exp=1 to 2 and reach k=4, identically to the unlimited
-/// case. This isolates the finite-counter comparison (`increments <
-/// max_increments`) from the `max_increments == -1` special case, which is
-/// the only branch the test above exercises.
+/// As above, but max_increments=1: the one doubling it allows is exactly
+/// enough for k=4. Covers the `increments < max_increments` check that -1
+/// skips.
 #[test]
 fn finite_max_increments_still_allows_configured_number_of_retries() {
     let index = build_test_index();
@@ -111,12 +102,8 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
     );
 }
 
-/// Same fixture, but k=8 (all items) needs 2 doublings (search_exp 1 -> 2 -> 4)
-/// to satisfy, while max_increments=1 permits only 1. new_search gets exactly
-/// one incremental_search call with the caller's budget, then drains whatever
-/// that found; it never gets a second, independent attempt. So it returns
-/// fewer than k items (the 2 clusters/4 items reachable after the single
-/// permitted retry), not all 8.
+/// k=8 needs two doublings (search_exp 1 -> 2 -> 4) but max_increments=1
+/// allows one, so new_search returns the 4 items from 2 leaves.
 #[test]
 fn new_search_stops_once_max_increments_is_exhausted() {
     let index = build_test_index();
@@ -132,13 +119,9 @@ fn new_search_stops_once_max_increments_is_exhausted() {
     );
 }
 
-/// `Index.queries` holds every in-flight query, keyed by the `query_id`
-/// `new_search` returns, so one query's `tree_pq`/`items` must never bleed
-/// into another's. This test opens two queries against the *same* `Index` from opposite corners of the
-/// fixture: query A from the origin (nearest-to-farthest: 0,1,2,3,4,5,6,7),
-/// and query B from (11,11), exactly item 6's position (nearest-to-farthest:
-/// 6,7,5,4,3,2,1,0). It interleaves `get_next_k_items` calls on both
-/// `query_id`s, asserting each stream stays independent throughout.
+/// Two queries on one `Index`, resumed in turn, must not share state.
+/// A from the origin ranks items 0, 1, 2, 3, 4, 5, 6, 7; B from (11, 11),
+/// item 6's position, ranks 6, 7, 5, 4, 3, 2, 1, 0.
 #[test]
 fn interleaved_queries_on_the_same_index_stay_independent() {
     let index = build_test_index();
@@ -207,22 +190,14 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
     let index = build_ivf_style_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    // In a levels=1 tree every popped node is a leaf, so leaf_cnt (what
-    // search_exp actually counts) advances once per cluster regardless of
-    // how many total node lookups that involves. search_exp=4 here means
-    // "don't stop before all 4 clusters have been scanned", not "check 4
-    // nodes" in general (those only coincide because there's nothing but
-    // leaves in this particular tree).
+    // Every node here is a leaf, so search_exp=4 scans all 4 clusters.
     let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
 }
 
-/// A `query_id` that was never created (or one that got evicted under
-/// memory pressure) must yield an empty result, not a panic: a purely
-/// memory-pressure-driven eviction shouldn't crash a caller that did
-/// nothing wrong.
+/// An unknown `query_id` yields no items, and searching it is a no-op.
 #[test]
 fn missing_query_id_returns_empty_instead_of_panicking() {
     let index = build_test_index();
@@ -234,11 +209,8 @@ fn missing_query_id_returns_empty_instead_of_panicking() {
     index.incremental_search(999, 4, 4, -1, &HashSet::new());
 }
 
-/// Proves `Index` is actually thread-safe under `&self`, not just
-/// API-compatible with concurrent callers: many threads run full searches
-/// against one shared, warm `Index` at once and each must see the same
-/// correct results a sequential caller would, with no panics, deadlocks,
-/// or cross-query contamination.
+/// Many threads searching one shared `Index` each get the results a
+/// sequential caller would.
 #[test]
 fn concurrent_searches_from_multiple_threads_return_correct_results() {
     let index = Arc::new(build_test_index());
@@ -292,8 +264,7 @@ fn heap_entry_orders_by_score_only() {
         node_id: 7,
     });
 
-    // BinaryHeap is a max-heap: highest score pops first, regardless of the
-    // other fields (level/node_id/is_leaf take no part in ordering).
+    // Highest score pops first, regardless of the other fields.
     assert_eq!(heap.pop().unwrap().node_id, 1);
     assert_eq!(heap.pop().unwrap().node_id, 7);
     assert_eq!(heap.pop().unwrap().node_id, 99);

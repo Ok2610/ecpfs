@@ -168,8 +168,7 @@ fn cleanup_older_than_erases_only_entries_older_than_the_cutoff() {
     persist_query(&store, 1, &sample_state());
     persist_query(&store, 2, &sample_state());
 
-    // Backdate id=1's persisted_at directly, rather than depending on real
-    // elapsed wall-clock time between the two persist_query calls above.
+    // Backdate id=1 instead of waiting for wall-clock time to pass.
     write_persisted_at(&store, "/queries/1/persisted_at", 1_000);
     let cutoff = 1_600_000_000; // long after id=1's backdated stamp, long before "now"
 

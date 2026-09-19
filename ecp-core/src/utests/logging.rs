@@ -33,7 +33,7 @@ fn random_suffix_is_six_hex_chars() {
 /// marker rather than asserting exact file content, since other tests'
 /// own log calls may land in the same file if they run concurrently.
 #[test]
-fn init_writes_real_log_lines_to_a_real_file() {
+fn init_writes_log_lines_to_its_file() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let path = init(Some(tmp.path()), LevelFilter::Debug);
 

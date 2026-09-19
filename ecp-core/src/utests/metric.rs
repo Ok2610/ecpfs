@@ -12,10 +12,7 @@ fn metric_as_str_and_from_str_round_trip() {
 
 #[test]
 fn metric_from_str_rejects_unknown_values() {
-    assert!(
-        Metric::from_str("l2").is_err(),
-        "case must match exactly, like the PyO3 layer's existing parse_metric"
-    );
+    assert!(Metric::from_str("l2").is_err(), "case must match exactly");
     assert!(Metric::from_str("euclidean").is_err());
 }
 

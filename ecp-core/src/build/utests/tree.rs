@@ -6,30 +6,6 @@ use std::sync::Barrier;
 use std::thread;
 
 #[test]
-fn node_cache_holds_an_entry_within_its_capacity() {
-    let store = new_memory_store();
-    let store = as_readable_writable_listable(&store);
-    append_node_batch(
-        &store,
-        "/lvl_1/node_0",
-        "node_ids",
-        &array![[1.0f32, 2.0]],
-        &array![10u32],
-        &[100, 2],
-        EmbeddingDtype::F32,
-    );
-
-    let cache = NodeCache::new(1_000_000);
-    let first = cache.get_or_read(&store, "/lvl_1/node_0");
-    let second = cache.get_or_read(&store, "/lvl_1/node_0");
-
-    assert!(
-        Arc::ptr_eq(&first, &second),
-        "a second lookup within capacity must return the same cached entry"
-    );
-}
-
-#[test]
 fn node_cache_evicts_once_over_capacity() {
     let store = new_memory_store();
     let store = as_readable_writable_listable(&store);

@@ -13,18 +13,15 @@ use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableSt
 use crate::dtype::EmbeddingDtype;
 use crate::metric::Metric;
 
-/// Without a compressor, a chunk is padded to its full declared size on
-/// disk regardless of how much of it is actually written. Since a chunk is
-/// sized by I/O throughput rather than expected data size (the whole point,
-/// given eCP doesn't enforce cluster sizes), that padding can be the
-/// difference between a few KB and tens of MB per mostly-empty node. zstd
-/// compresses the fill-value padding away.
+/// Compresses every written array with zstd at level 3. Chunks are sized for
+/// I/O rather than a node's data, so most are largely empty padding, which
+/// zstd shrinks to almost nothing on disk.
 pub(super) fn compressor() -> Vec<Arc<dyn BytesToBytesCodecTraits>> {
     vec![Arc::new(ZstdCodec::new(3, false))]
 }
 
-/// Builds `path`'s embeddings array with `dtype`'s zarr type and a zero fill
-/// value, zstd-compressed, and stores its metadata.
+/// Creates the embeddings array at `path` with `shape`, stored as `dtype`,
+/// zero-filled and zstd-compressed, and returns it for writing.
 pub(crate) fn build_embeddings_array(
     store: &ReadableWritableListableStorage,
     path: &str,
@@ -49,9 +46,9 @@ pub(crate) fn build_embeddings_array(
     array
 }
 
-/// Stores `embeddings` into `subset`, narrowing f32 down to `dtype` as
-/// stored. Float-to-int casts saturate rather than wrap, so a value outside
-/// the target's range clamps to its nearest end.
+/// Writes `embeddings` into the `subset` region of `array`, converted to
+/// `dtype`. Integer dtypes truncate fractions and clamp out-of-range values.
+/// `context` names the array in panic messages.
 pub(crate) fn store_embeddings_subset(
     array: &Array<dyn ReadableWritableListableStorageTraits>,
     subset: &ArraySubset,
@@ -76,16 +73,10 @@ pub(crate) fn store_embeddings_subset(
     }
 }
 
-/// Creates (on the first call for a given path) or grows and appends to a
-/// paired embeddings+ids array. `dtype` sets the embeddings array's stored
-/// width; the ids array is always uint32. `chunk_shape` only applies on
-/// creation; a later call's value is ignored once the array exists. Used for
-/// a node's `embeddings`/`child_key`, or the representative set's
-/// `rep_embeddings`/`rep_item_ids`.
-// clippy's single_range_in_vec_init fix would replace the ids array's
-// single-element range array with `.collect::<Vec<u64>>()`. That allocates
-// on the heap on every call. The array literal here does not, and matches
-// the multi-dimensional embeddings ranges elsewhere in this function.
+/// Appends `embeddings` (stored as `dtype`) to the array at `embeddings_path`
+/// and `ids` to the one at `ids_path`, creating both on the first call.
+/// `chunk_shape` only applies on creation.
+// The ids arrays' `&[a..b]` is intended, one range for their single dimension.
 #[allow(clippy::single_range_in_vec_init)]
 pub fn zarrs_append(
     store: &ReadableWritableListableStorage,
@@ -97,6 +88,7 @@ pub fn zarrs_append(
     dtype: EmbeddingDtype,
 ) {
     match Array::open(store.clone(), embeddings_path) {
+        // Grow both arrays, then write into the new rows
         Ok(mut array) => {
             let existing_vecs = array.shape()[0];
             let dim = array.shape()[1];
@@ -124,6 +116,7 @@ pub fn zarrs_append(
                 .store_array_subset(&ArraySubset::new_with_ranges(&[existing_ids..new_ids]), ids)
                 .expect("Failed to append ids");
         }
+        // On the first call, create both arrays
         Err(_) => {
             let dim = embeddings.ncols() as u64;
             let emb_shape = vec![embeddings.nrows() as u64, dim];
@@ -197,11 +190,7 @@ pub fn write_index_info(
         .expect("Failed to store info/is_normalized chunk");
 }
 
-/// Writes `info/{name}` as a rank-0 (scalar) `uint32` array, overwriting it
-/// if it already exists. Split out from `write_index_info` since these
-/// fields change after construction: `total_items` and `next_item_id` are
-/// only known once `build`'s `dataset` is available, and `insert` rewrites
-/// both.
+/// Writes `info/{name}` as a `u32` scalar, replacing any existing value.
 pub fn write_info_u32(store: &ReadableWritableListableStorage, name: &str, value: u32) {
     let scalar_shape: Vec<u64> = vec![];
     let path = format!("/info/{name}");
@@ -217,8 +206,8 @@ pub fn write_info_u32(store: &ReadableWritableListableStorage, name: &str, value
         .unwrap_or_else(|e| panic!("Failed to store {path} chunk: {e}"));
 }
 
-/// Writes `index_root/embeddings`, the top-level cluster leaders. Small by
-/// construction, written once, no appending needed.
+/// Writes `root_embeddings`, the root node's representatives, to
+/// `index_root/embeddings` as `dtype`.
 pub fn write_index_root(
     store: &ReadableWritableListableStorage,
     root_embeddings: &Array2<f32>,
@@ -235,11 +224,9 @@ pub fn write_index_root(
     store_embeddings_subset(&array, &subset, root_embeddings, dtype, path);
 }
 
-/// Appends a batch to `group_path` (a `lvl_N/node_M` group).
-/// Creates its `embeddings`/`child_key`/`border` arrays on the first call
-/// for that path, appends to them on every later call.
-///
-/// `border` is left at its fill value here, never populated.
+/// Appends `embeddings` and their `children` ids to the node at `group_path`,
+/// creating its arrays on the first call; the ids go in `child_key`
+/// (`node_ids` or `item_ids`). `border` is left at its fill value, never populated.
 pub fn append_node_batch(
     store: &ReadableWritableListableStorage,
     group_path: &str,

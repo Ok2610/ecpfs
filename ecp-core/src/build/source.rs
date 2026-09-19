@@ -9,21 +9,20 @@ use zarrs::storage::ReadableListableStorage;
 
 use crate::dtype::{EmbeddingDtype, dtype_of_array, read_subset_as_f32};
 
-/// A lazily-read source of 2D embeddings: a `.h5`/`.zarr` file (stored as
-/// f32, f16, uint8 or int8, `read_vecs` always returns f32) or an
-/// already-resident `Array2<f32>`. Reading a range from a disk-backed source
-/// doesn't load the rest of the dataset.
+/// The embeddings a build reads, from an `.h5` or `.zarr` file or an
+/// `Array2<f32>` already in memory. Files may store f32, f16, uint8 or int8,
+/// but `read_vecs` always returns f32 and only reads the rows asked for.
 pub enum EmbeddingsSource {
     Hdf5(H5Dataset),
     Zarr {
         store: ReadableListableStorage,
         path: String,
     },
-    /// Already resident; `read_vecs` is a plain slice, no I/O.
+    /// Already in memory; `read_vecs` just copies a slice.
     Memory(Array2<f32>),
 }
 
-/// An HDF5 dataset's dtype, as the `EmbeddingDtype` it maps to.
+/// Maps an HDF5 dataset's dtype to its `EmbeddingDtype`. Panics on any other.
 fn hdf5_dtype(dataset: &H5Dataset) -> EmbeddingDtype {
     match dataset
         .datatype()
@@ -48,7 +47,8 @@ fn hdf5_dtype(dataset: &H5Dataset) -> EmbeddingDtype {
 }
 
 impl EmbeddingsSource {
-    /// Opens `path`'s `.h5` or `.zarr` dataset/array named `name`.
+    /// Opens the dataset (`.h5`) or array (`.zarr`) called `name` in the file
+    /// at `path`, picking the format from `path`'s extension.
     pub fn open(path: &Path, name: &str) -> Self {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("h5") => {
@@ -70,12 +70,12 @@ impl EmbeddingsSource {
         }
     }
 
-    /// Wraps an array at `path` in an already-open store.
+    /// Creates an embeddings source from the zarr array at `path` in `store`.
     pub fn from_zarr(store: ReadableListableStorage, path: String) -> Self {
         EmbeddingsSource::Zarr { store, path }
     }
 
-    /// `(total_items, dim)`.
+    /// Returns the source's size as `(total_items, dim)`.
     pub fn shape(&self) -> (usize, usize) {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
@@ -91,8 +91,8 @@ impl EmbeddingsSource {
         }
     }
 
-    /// The vector count of one on-disk chunk, or `fallback` if the source has
-    /// no chunking to align to.
+    /// Returns how many vectors one on-disk chunk holds, or `fallback` if the
+    /// source isn't chunked.
     pub fn natural_chunk_vecs(&self, fallback: usize) -> usize {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {
@@ -108,17 +108,15 @@ impl EmbeddingsSource {
         }
     }
 
-    /// `memory_floor_vecs` rounded up to a whole number of
-    /// `natural_chunk_vecs`-sized chunks, so a batch built from the result
-    /// never straddles (and double-decodes) a chunk boundary.
+    /// Picks a read batch size that covers whole chunks. Rounds `memory_floor_vecs`,
+    /// the batch size the memory budget allows, up to whole chunks, so no chunk is
+    /// split and decoded twice. `fallback` works as in `natural_chunk_vecs`.
     pub fn chunk_aligned_batch_vecs(&self, memory_floor_vecs: usize, fallback: usize) -> usize {
         let chunk_vecs = self.natural_chunk_vecs(fallback).max(1);
         memory_floor_vecs.max(1).div_ceil(chunk_vecs) * chunk_vecs
     }
 
-    /// The dtype embeddings are actually stored as. `Memory` always
-    /// reports `F32` since it only ever holds already-upcast `Array2<f32>`
-    /// data.
+    /// Returns the dtype the embeddings are stored as, always `F32` for `Memory`.
     pub fn native_dtype(&self) -> EmbeddingDtype {
         match self {
             EmbeddingsSource::Hdf5(dataset) => hdf5_dtype(dataset),
@@ -130,7 +128,7 @@ impl EmbeddingsSource {
         }
     }
 
-    /// Reads vecs `start..end` (all columns) as `f32`.
+    /// Reads vectors `start..end` as f32.
     pub fn read_vecs(&self, start: usize, end: usize) -> Array2<f32> {
         match self {
             EmbeddingsSource::Hdf5(dataset) => {

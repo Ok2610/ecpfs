@@ -13,13 +13,14 @@ pub(super) struct QueryState {
     pub(super) query: Array1<f32>,
     /// Nodes still to explore, best score first.
     pub(super) tree_pq: BinaryHeap<HeapEntry>,
-    /// Items found but not yet returned, sorted best first.
+    /// Items found but not yet returned, as `(score, item_id)`, best first.
     pub(super) items: Vec<(NotNan<f32>, u32)>,
 }
 
-/// A candidate node in a search's priority queue, ordered by `score`.
+/// A node waiting in a search's priority queue, ordered by `score`.
 #[derive(Debug, Clone)]
 pub(super) struct HeapEntry {
+    /// Higher means closer to the query.
     pub(super) score: NotNan<f32>,
     /// 1 for a leaf, 0 otherwise.
     pub(super) is_leaf: i32,
@@ -48,16 +49,16 @@ impl Ord for HeapEntry {
 }
 
 impl Index {
-    /// `query_id`'s state from the cache, or from disk on a miss. `None` if
-    /// it is in neither.
+    /// Gets the state of query `query_id` from the cache, or from disk on a
+    /// miss. `None` if it is in neither.
     fn get_or_load_query(&self, query_id: usize) -> Option<Arc<Mutex<QueryState>>> {
         self.queries.optionally_get_with(query_id, || {
             persistence::load_query(&self.store, query_id).map(|state| Arc::new(Mutex::new(state)))
         })
     }
 
-    /// Removes and returns up to `k` of `query_id`'s best items. Empty for an
-    /// unknown `query_id`.
+    /// Removes and returns up to `k` of the best items buffered for query
+    /// `query_id`. Empty for an unknown `query_id`.
     fn drain_items(&self, query_id: usize, k: usize) -> Vec<(NotNan<f32>, u32)> {
         match self.get_or_load_query(query_id) {
             Some(state_arc) => {
@@ -69,9 +70,9 @@ impl Index {
         }
     }
 
-    /// Starts a query and returns its first `k` items plus its id for
-    /// `get_next_k_items`. Lower scores are better (IP negates similarity).
-    /// Other arguments work as in [`Self::incremental_search`].
+    /// Searches for `query` and returns the `k` best items as `(score, item_id)` pairs,
+    /// lowest score first (L2 distance, or negated inner product for IP), plus the
+    /// query id for `get_next_k_items`. Other arguments: [`Self::incremental_search`].
     pub fn new_search(
         &self,
         query: Array1<f32>,
@@ -96,9 +97,9 @@ impl Index {
         (self.drain_items(query_id, k), query_id)
     }
 
-    /// Explores `query_id`'s tree until `search_exp` leaves are scored,
-    /// skipping item ids in `exclude`. Below `k` items by then, it doubles
-    /// `search_exp` and goes on, at most `max_increments` times (`-1`: no cap).
+    /// Scores `search_exp` more leaves for query `query_id`, buffering their items
+    /// except those in `exclude`. If fewer than `k` items are buffered by then, it doubles
+    /// `search_exp` and goes on, at most `max_increments` times (`-1` for no limit).
     pub fn incremental_search(
         &self,
         query_id: usize,
@@ -133,7 +134,7 @@ impl Index {
             let mut leaf_cnt = 0;
             let mut increments = 0;
 
-            // First call: seed tree_pq from root
+            // On the first call, queue every root entry
             if tree_pq.is_empty() {
                 let root_distances: Array1<f32> =
                     calculate_distances(&self.root, query, &self.metric, self.is_normalized);
@@ -169,7 +170,7 @@ impl Index {
                     calculate_distances(embeddings_f32, query, &self.metric, self.is_normalized);
                 let children = node.children().as_ref().unwrap();
                 if is_leaf == 1 {
-                    // Leaf: collect its items. items sorts ascending, so flip
+                    // For a leaf, collect its items. items sorts ascending, so flip
                     // the heap's score back to lower-is-better.
                     for i in 0..distances.len() {
                         if !exclude.contains(&children[i]) {
@@ -178,7 +179,7 @@ impl Index {
                     }
                     leaf_cnt += 1;
                 } else {
-                    // Internal: queue its children
+                    // For an internal node, queue its children
                     let children_are_leaves = level + 1 == self.levels - 1;
                     for i in 0..distances.len() {
                         tree_pq.push(HeapEntry {
@@ -190,13 +191,12 @@ impl Index {
                     }
                 }
 
-                // node_at caches an internal node before its arrays load, at
-                // weight 0. Re-insert so moka weighs it again.
+                // Read the node's arrays into cache
                 if self.memory_limit_bytes.is_some() {
                     self.nodes.insert((lvl, node_id), node.clone());
                 }
 
-                // After search_exp leaves: stop, or double search_exp
+                // After search_exp leaves, stop or double search_exp
                 if leaf_cnt == search_exp {
                     if items.len() >= k {
                         break;
@@ -214,15 +214,15 @@ impl Index {
             items.sort_unstable_by_key(|&(first, _)| first);
         }
 
-        // Re-insert so moka weighs the state's new size
+        // Read the query's updated state into cache
         if self.memory_limit_bytes.is_some() {
             self.queries.insert(query_id, state_arc);
         }
     }
 
-    /// Returns `query_id`'s next `k` items, searching further first if fewer
-    /// are ready; empty for an unknown `query_id` or after `shutdown`. Other
-    /// arguments work as in [`Self::incremental_search`].
+    /// Returns the next `k` items of query `query_id`, searching further first
+    /// if fewer are buffered; empty for an unknown `query_id` or after
+    /// `shutdown`. Other arguments: [`Self::incremental_search`].
     pub fn get_next_k_items(
         &self,
         query_id: usize,

@@ -59,7 +59,7 @@ fn zarrs_append_ignores_chunk_shape_on_a_later_call() {
         &[100, 2],
         EmbeddingDtype::F32,
     );
-    // A different chunk_shape here must have no effect: the array already exists.
+    // A different chunk_shape here must have no effect, since the array already exists.
     zarrs_append(
         &store,
         "/node/embeddings",
@@ -125,7 +125,7 @@ fn zarrs_append_writes_f16_when_requested() {
 }
 
 /// Unlike the f16 case above, integer-valued data survives a uint8 round
-/// trip exactly, which is the whole point of offering the dtype.
+/// trip exactly.
 #[test]
 fn zarrs_append_round_trips_integer_values_through_uint8_exactly() {
     let store = new_memory_store();
@@ -175,10 +175,9 @@ fn zarrs_append_round_trips_integer_values_through_int8_exactly() {
     );
 }
 
-/// Rust's float-to-int `as` saturates rather than wrapping, so an
-/// out-of-range value clamps to the nearest end and NaN becomes 0. Pinned
-/// as a contract: the write path relies on it instead of range-checking,
-/// and `resolve_dtype` only warns about it.
+/// Out-of-range values clamp to the nearest end and NaN becomes 0, since
+/// Rust's float-to-int `as` saturates. The write path relies on this
+/// instead of range-checking.
 #[test]
 fn storing_out_of_range_values_as_uint8_saturates_rather_than_wrapping() {
     let store = new_memory_store();

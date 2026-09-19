@@ -83,7 +83,7 @@ fn builder_produces_a_structure_that_searches_correctly() {
 
 /// `ns = node_size`, `total_levels = 3`, chosen so `R = ns^3` exactly (no
 /// rounding): 81 items, target_cluster_items=3 -> R=27 representatives,
-/// ns=3. Dense ascending 1D values, so every level's leaders partition a
+/// ns=3. Dense ascending 1D values, so every level's representatives partition a
 /// contiguous, fully-covered range: no node at any level ends up with zero
 /// children. Expected node counts per level: lvl_1 = ns = 3, lvl_2 = ns^2 =
 /// 9, lvl_3 (leaf) = ns^3 = R = 27.
@@ -205,7 +205,7 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
     let (lvl_1_nodes, lvl_1_children) = level_node_count_and_children(&read_store, 1);
     assert_eq!(
         lvl_1_nodes, 1,
-        "the tied root leader gets zero items, so only 1 of ns=2 lvl_1 nodes exists"
+        "the tied root representative gets zero items, so only 1 of ns=2 lvl_1 nodes exists"
     );
     assert_eq!(
         lvl_1_children, r,

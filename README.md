@@ -9,11 +9,11 @@ CLI.
 Extended Cluster Pruning (eCP) is a hierarchical, cluster-based approximate
 nearest neighbor index built for collections too large to search, or even
 fit, in memory. A set of vectors is randomly selected from the collection as
-"leaders," and every other vector is assigned to its nearest leader, forming
-clusters. Because the leaders are used as-is, rather than a centroid
-computed after the fact, the index tree is known before any vector is
-assigned to a cluster, letting construction use that tree to route each
-vector to its cluster instead of comparing it against every leader.
+"leaders" (representatives), and every other vector is assigned to its
+nearest leader, forming clusters. Because the leaders are used as-is, rather
+than a centroid computed after the fact, the index tree is known before any
+vector is assigned to a cluster, letting construction use that tree to route
+each vector to its cluster instead of comparing it against every leader.
 
 For large collections, the leaders themselves are recursively clustered
 into an `L`-level tree, so a query descends the tree rather than scanning
@@ -73,7 +73,7 @@ info/next_item_id       : uint32, the id the next insert hands out
 rep_embeddings          : shape=(num_representatives, dim)
 rep_item_ids            : shape=(num_representatives,), uint32
 
-index_root/embeddings   : shape=(node_size, dim), the top-level leaders
+index_root/embeddings   : shape=(node_size, dim), the top-level representatives
 
 lvl_1/node_M/embeddings : shape=(n, dim), for each node M at level 1
 lvl_1/node_M/node_ids   : shape=(n,), uint32, children at level 2

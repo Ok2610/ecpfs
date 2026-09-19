@@ -52,11 +52,13 @@ pub struct IndexInfo {
     pub metric: Metric,
     /// Whether every stored embedding is unit-length.
     pub is_normalized: bool,
+    /// Items stored in the index.
     pub total_items: u32,
-    /// The next id `insert` will hand out. Ahead of `total_items` when a
-    /// crash left a reserved range unwritten, level with it otherwise.
+    /// The id `insert` gives the next item. Equal to `total_items` unless a
+    /// crash stopped an insert between taking ids and writing the items.
     pub next_item_id: u32,
-    /// Length of `/rep_item_ids`; not stored under `info/`.
+    /// How many representatives the build picked, one per leaf node. Read
+    /// from `/rep_item_ids`'s length.
     pub total_representatives: u32,
 }
 
@@ -68,6 +70,8 @@ impl IndexInfo {
         Self::load_from_store(store)
     }
 
+    /// Reads the info fields from `store` instead of a path. Otherwise the same as `load`.
+    /// Note: This function is only split out from `load` for unit tests.
     fn load_from_store(store: ReadableListableStorage) -> Self {
         let (levels, metric, is_normalized) = read_info_fields(&store);
         let total_items = read_info_u32(&store, "total_items");

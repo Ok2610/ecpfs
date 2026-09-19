@@ -28,7 +28,7 @@ fn node_cache_evicts_once_over_capacity() {
         EmbeddingDtype::F32,
     );
 
-    // 1 embedding row (2 f32s) + 1 child id (1 u32) = 12 bytes: room for
+    // 1 embedding row (2 f32s) + 1 child id (1 u32) = 12 bytes, room for
     // exactly one entry, so caching both forces an eviction.
     let cache = NodeCache::new(12);
     cache.get_or_read(&store, "/lvl_1/node_0");
@@ -46,9 +46,8 @@ fn node_cache_evicts_once_over_capacity() {
     );
 }
 
-/// A barrier forces every thread to call `get_or_read` at once, so moka's
-/// own single-flight get-or-insert (`get_with`) actually gets exercised
-/// under concurrent contention on the same key.
+/// Threads released together by a barrier all ask for the same node, and
+/// must all get the one cached entry.
 #[test]
 fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
     let store = new_memory_store();

@@ -130,7 +130,7 @@ fn insert_a_batch_routes_each_point_to_its_own_leaf() {
     assert!(near_far_cluster.iter().any(|(_, id)| *id == 9));
 }
 
-/// Uses `Builder::select_representatives_custom` to place a leader far
+/// Uses `Builder::select_representatives_custom` to place a representative far
 /// from every real dataset point, so its leaf is never written during the
 /// initial build. Then inserts into exactly that leaf, exercising
 /// `zarrs_append`'s "array doesn't exist yet" branch through `insert`.
@@ -163,7 +163,7 @@ fn insert_into_a_previously_empty_leaf_creates_it_on_disk() {
         Arc::new(FilesystemStore::new(&index_path).expect("failed to reopen store"));
     assert!(
         Array::open(read_store.clone(), "/lvl_1/node_2/embeddings").is_err(),
-        "leader 2 (1000.0) must never have received a dataset point during the initial build"
+        "representative 2 (1000.0) must never have received a dataset point during the initial build"
     );
 
     let index = Index::load(index_path, None);

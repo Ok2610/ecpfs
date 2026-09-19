@@ -2,6 +2,7 @@ use super::*;
 use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
 use ndarray::array;
 
+/// Returns the heap's entries as sorted tuples, so two heaps can be compared.
 fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)> {
     let mut entries: Vec<_> = heap
         .iter()
@@ -11,6 +12,7 @@ fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)
     entries
 }
 
+/// Builds a query state with two queued nodes and two buffered items.
 fn sample_state() -> QueryState {
     QueryState {
         query: array![1.0f32, 2.0, 3.0],

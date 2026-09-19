@@ -14,23 +14,23 @@ use crate::dtype::EmbeddingDtype;
 use crate::metric::Metric;
 use crate::search::Node;
 
-/// A cached node's `(centroids, children)`.
+/// A cached node's `(representatives, children)`.
 type CachedNode = Arc<(Array2<f32>, Array1<u32>)>;
 
-/// Caches a node's `(centroids, children)` across every batch and pass of
-/// one `build_tree` (or `Index::insert`) call, so a shallow node isn't
-/// re-read from disk every time a deeper pass routes through it. Capacity
-/// is fixed at construction; moka evicts by weight (bytes) once it's full.
+/// Caches internal nodes' `(representatives, children)` during one build or insert,
+/// so routing each batch down the tree doesn't re-read them from disk.
 pub(crate) struct NodeCache {
-    // Key: node group_path (e.g. "/lvl_1/node_3"). Value: (centroids, children).
+    /// Keyed by group path, such as `/lvl_1/node_3`.
     cache: Cache<String, CachedNode>,
 }
 
 impl NodeCache {
+    /// Returns the bytes an entry takes, which the cache counts against its capacity.
     fn entry_bytes(entry: &(Array2<f32>, Array1<u32>)) -> u32 {
         (entry.0.len() * size_of::<f32>() + entry.1.len() * size_of::<u32>()) as u32
     }
 
+    /// Creates an empty cache holding at most `max_capacity_bytes`.
     pub(crate) fn new(max_capacity_bytes: u64) -> Self {
         NodeCache {
             cache: Cache::builder()
@@ -40,12 +40,12 @@ impl NodeCache {
         }
     }
 
-    /// `group_path`'s `(centroids, children)`, from cache or disk.
+    /// Gets a node's representatives and children, reading from disk only on a cache miss.
     fn get_or_read(&self, store: &ReadableWritableListableStorage, group_path: &str) -> CachedNode {
         self.cache.get_with(group_path.to_string(), || {
             let read_store: ReadableListableStorage = store.clone().readable_listable();
             let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
-            let centroids = node
+            let representatives = node
                 .embeddings()
                 .as_ref()
                 .expect(
@@ -61,16 +61,16 @@ impl NodeCache {
                      branch with zero descendants from the original build",
                 )
                 .clone();
-            Arc::new((centroids, child_ids))
+            Arc::new((representatives, child_ids))
         })
     }
 }
 
-/// Parameters that stay constant across one recursive descent, bundled to
-/// keep `add_data`/`route_batch_to_node`'s signatures manageable.
+/// The settings `add_data` passes unchanged down the tree.
 pub(crate) struct BuildConfig<'a> {
     pub(crate) store: &'a ReadableWritableListableStorage,
     pub(crate) node_cache: &'a NodeCache,
+    /// The 1-based level written to; levels above it are only routed through.
     pub(crate) target_level: u32,
     pub(crate) total_levels: u32,
     pub(crate) metric: Metric,
@@ -78,18 +78,14 @@ pub(crate) struct BuildConfig<'a> {
     pub(crate) chunk_shape: &'a [u64],
     pub(crate) embedding_dtype: EmbeddingDtype,
 
-    /// Locks a leaf during a write. Only set when inserting into an
-    /// already-built index; build_tree passes None.
+    /// Per-leaf locks, taken around each write. `None` when nothing else can
+    /// read the index yet, as during a build.
     pub(crate) leaf_locks: Option<&'a DashMap<u32, Arc<RwLock<()>>>>,
 }
 
-/// Calls `process(i)` for each `i` in `0..count` and collects the results.
-/// Runs on rayon's thread pool, unless `on_caller_thread` is true, in
-/// which case every call runs on the thread that called `fan_out`
-/// instead.
-///
-/// Set `on_caller_thread` whenever `process` might wait on a leaf's
-/// write lock, to avoid deadlocking rayon's thread pool.
+/// Calls `process(i)` for each `i` in `0..count` in parallel and collects the results.
+/// Set `on_caller_thread` to run them one at a time on this thread instead. Do so
+/// when `process` may wait on a leaf lock, since that can deadlock rayon's pool.
 fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Vec<(u32, u32)>
 where
     F: Fn(usize) -> Vec<(u32, u32)> + Sync + Send,
@@ -101,15 +97,9 @@ where
     }
 }
 
-/// Routes a batch of data points (already known to belong under `node_idx`
-/// at `level`) toward `config.target_level`: writes them if this is that
-/// level, otherwise reads `node_idx`'s own centroids/children (written by
-/// an earlier `target_level` pass), splits the batch by nearest centroid,
-/// and recurses into each non-empty child.
-///
-/// Returns the on-disk `(level, node_idx)` of every leaf actually written
-/// to, so a caller mutating an already-loaded `Index` can invalidate
-/// exactly those cached nodes.
+/// Routes a batch of vectors that belong under node `node_idx` at `level` down
+/// to `config.target_level`, and appends each to its nearest node there.
+/// Returns the on-disk `(level, node_idx)` of every node written to.
 fn route_batch_to_node(
     config: &BuildConfig,
     level: u32,
@@ -119,6 +109,7 @@ fn route_batch_to_node(
 ) -> Vec<(u32, u32)> {
     let group_path = format!("/lvl_{level}/node_{node_idx}");
 
+    // At the target level, append the batch (under the leaf's lock, if any)
     if level == config.target_level {
         let child_key = if level == config.total_levels {
             "item_ids"
@@ -150,49 +141,47 @@ fn route_batch_to_node(
         return vec![(level, node_idx)];
     }
 
-    // Cached across every batch/pass of this build_tree (or insert) call,
-    // not re-read from disk on every visit.
+    // Above the target level, split the batch by nearest child and recurse into each
     let entry = config.node_cache.get_or_read(config.store, &group_path);
-    let (centroids, child_ids) = (&entry.0, &entry.1);
+    let (representatives, child_ids) = (&entry.0, &entry.1);
 
     let (offsets, assignment) = determine_node_assignments(
-        centroids,
+        representatives,
         data_embeddings,
         config.metric,
         config.is_normalized,
     );
 
-    fan_out(centroids.nrows(), config.leaf_locks.is_some(), |child| {
-        let start = offsets[child] as usize;
-        let end = offsets[child + 1] as usize;
-        if start == end {
-            return Vec::new();
-        }
-        let vec_indices: Vec<usize> = assignment
-            .slice(s![start..end])
-            .iter()
-            .map(|&i| i as usize)
-            .collect();
-        let child_embeddings = data_embeddings.select(Axis(0), &vec_indices);
-        let child_ids_batch = Array1::from_iter(vec_indices.iter().map(|&i| data_ids[i]));
-        route_batch_to_node(
-            config,
-            level + 1,
-            child_ids[child],
-            &child_embeddings,
-            &child_ids_batch,
-        )
-    })
+    fan_out(
+        representatives.nrows(),
+        config.leaf_locks.is_some(),
+        |child| {
+            let start = offsets[child] as usize;
+            let end = offsets[child + 1] as usize;
+            if start == end {
+                return Vec::new();
+            }
+            let vec_indices: Vec<usize> = assignment
+                .slice(s![start..end])
+                .iter()
+                .map(|&i| i as usize)
+                .collect();
+            let child_embeddings = data_embeddings.select(Axis(0), &vec_indices);
+            let child_ids_batch = Array1::from_iter(vec_indices.iter().map(|&i| data_ids[i]));
+            route_batch_to_node(
+                config,
+                level + 1,
+                child_ids[child],
+                &child_embeddings,
+                &child_ids_batch,
+            )
+        },
+    )
 }
 
-/// Routes a batch of new data toward `config.target_level`: assigns each
-/// point to its nearest root centroid, then routes/writes each non-empty
-/// group via `route_batch_to_node` starting at level 1. Shared by
-/// `build_tree` (one call per pass, `target_level` = that pass's level)
-/// and `Index::insert` (one call, `target_level` = `total_levels`).
-///
-/// Returns the on-disk `(level, node_idx)` of every leaf actually written
-/// to.
+/// Adds vectors to the tree at `config.target_level`. Each row of `data_embeddings`
+/// goes down from the root to its nearest node there, along with its id from
+/// `data_ids`. Returns the on-disk `(level, node_idx)` of every node written to.
 pub(crate) fn add_data(
     config: &BuildConfig,
     root_embeddings: &Array2<f32>,
@@ -232,22 +221,25 @@ pub(crate) fn add_data(
 pub struct BuildTreeArgs<'a> {
     pub store: &'a ReadableWritableListableStorage,
     pub root_embeddings: &'a Array2<f32>,
+    /// Every representative, starting with the root's. The non-leaf levels are
+    /// built from these.
     pub representatives: &'a EmbeddingsSource,
+    /// The items the leaves hold.
     pub dataset: &'a EmbeddingsSource,
     pub total_levels: u32,
     pub metric: Metric,
     pub is_normalized: bool,
+    /// The chunk size assumed for a source that isn't chunked.
     pub fallback_batch_vecs: usize,
     pub chunk_shape: &'a [u64],
     pub embedding_dtype: EmbeddingDtype,
     pub memory_limit_bytes: usize,
 }
 
-/// Builds every level of the tree under `args.root_embeddings`, one
-/// on-disk pass per level. Each non-leaf pass reads only as many
-/// representatives as that level needs to end up with `ns` children per
-/// node; the last pass reads the full dataset, streamed in batches like
-/// every other pass.
+/// Builds the tree one level at a time from the top, appending each input
+/// vector to its nearest node on that level. Level `l` reads the first
+/// `ns^(l+1)` representatives, where `ns` is the number of root entries; the
+/// leaf level reads `dataset`.
 ///
 /// Example, `root_embeddings.nrows() = ns = 100`, `total_levels = 3`,
 /// `representatives.shape().0 = R = 1_000_000`:
@@ -276,9 +268,8 @@ pub fn build_tree(args: &BuildTreeArgs) {
     let tracked_budget = (memory_limit_bytes as f64 * TRACKED_MEMORY_FRACTION) as usize;
     let bytes_per_vec = (root_embeddings.ncols() * size_of::<f32>()).max(1);
 
-    // node_cache gets up to 75% of the tracked budget, sized once for the
-    // whole build (not ratcheted per pass): the total bytes every non-leaf
-    // level will need once fully on disk.
+    // The node cache gets what every non-leaf level needs, up to 3/4 of the
+    // budget; batches get the rest.
     let total_cacheable_bytes: usize = (1..total_levels)
         .map(|l| node_size.pow(l + 1) as usize * bytes_per_vec)
         .sum();
@@ -288,6 +279,7 @@ pub fn build_tree(args: &BuildTreeArgs) {
     let node_cache = NodeCache::new(cache_capacity as u64);
 
     for target_level in 1..=total_levels {
+        // Non-leaf levels are built from representatives, the leaf level from the dataset
         let source = if target_level == total_levels {
             dataset
         } else {
@@ -312,6 +304,9 @@ pub fn build_tree(args: &BuildTreeArgs) {
             embedding_dtype,
             leaf_locks: None,
         };
+
+        // Row indices are item ids on the leaf level, and representative ids
+        // (the next level's node ids) above it
 
         let mut start = 0;
         while start < vec_count {

@@ -15,12 +15,14 @@ use crate::build::writer::{write_index_info, write_index_root, write_info_u32, z
 use crate::dtype::EmbeddingDtype;
 use crate::metric::Metric;
 
-/// `requested` if set, else `native`. Warns when the requested dtype can't
-/// represent everything the source's can, since the write then narrows the
-/// data: a float target loses precision, while an integer target also
-/// truncates fractions and clamps anything outside its range.
-fn resolve_dtype(requested: Option<EmbeddingDtype>, native: EmbeddingDtype) -> EmbeddingDtype {
-    let resolved = requested.unwrap_or(native);
+/// Picks the dtype the index stores embeddings as, which is `embedding_dtype`
+/// if the caller set one, else `native`, the source file's own dtype. Warns
+/// when `embedding_dtype` can't hold every value `native` can.
+fn resolve_dtype(
+    embedding_dtype: Option<EmbeddingDtype>,
+    native: EmbeddingDtype,
+) -> EmbeddingDtype {
+    let resolved = embedding_dtype.unwrap_or(native);
     if resolved.narrows(native) {
         log::warn!(
             "writing embeddings as {resolved:?} narrows the source's {native:?} values and loses information; \
@@ -30,16 +32,17 @@ fn resolve_dtype(requested: Option<EmbeddingDtype>, native: EmbeddingDtype) -> E
     resolved
 }
 
-/// Zarr chunks default to this many bytes, matched against `dim` to pick a
-/// vec count
+/// Default upper limit on one on-disk chunk, in bytes. `calculate_chunk_size`
+/// turns it into vectors per chunk.
 pub const DEFAULT_MAX_CHUNK_BYTES: usize = 50 * 1024 * 1024;
 
-/// Fraction of `memory_limit_bytes` actually budgeted for a build pass's
-/// batch buffer (plus, in `build_tree`, its node cache); the rest is
-/// headroom for everything else the process holds, untracked here.
+/// Share of the memory limit a build spends on each batch of vectors and on
+/// its node cache. The rest is left for memory this crate doesn't track.
 pub(crate) const TRACKED_MEMORY_FRACTION: f64 = 0.8;
 
-/// Max vecs that keep one chunk under `max_chunk_bytes`, given `dim` f32 columns.
+/// Picks the chunk size for the index's arrays. Returns how many f32 vectors
+/// of length `dim` fit in a chunk of at most `max_chunk_bytes`. Panics if not
+/// even one does.
 pub fn calculate_chunk_size(dim: usize, max_chunk_bytes: usize) -> u64 {
     let bytes_per_vec = dim * size_of::<f32>();
     assert!(
@@ -49,14 +52,15 @@ pub fn calculate_chunk_size(dim: usize, max_chunk_bytes: usize) -> u64 {
     (max_chunk_bytes / bytes_per_vec) as u64
 }
 
-/// The per-node fan-out `ns`: root holds `ns` leaders, and each level's
-/// nodes hold `ns` children (see `build_tree`'s docs for how this composes).
+/// Picks the tree's fan-out, the number of children each node (the root
+/// included) gets, so the bottom level has room for every cluster.
+/// Fan-out = `total_clusters^(1/levels)`, rounded up.
 fn node_size_for(total_clusters: usize, levels: u32) -> usize {
     (total_clusters as f64).powf(1.0 / levels as f64).ceil() as usize
 }
 
-/// Orchestrates one index build: pick representatives, then descend the
-/// full tree from them. Owns the store it writes to.
+/// Builds one index in three steps: `create`, then `select_representatives`
+/// or `select_representatives_custom`, then `build`. One build per `Builder`.
 pub struct Builder {
     store: ReadableWritableListableStorage,
     levels: u32,
@@ -65,16 +69,16 @@ pub struct Builder {
     memory_limit_bytes: usize,
     embedding_dtype: Option<EmbeddingDtype>,
     max_chunk_bytes: usize,
+
+    // Set by either select_representatives method
     chunk_shape: Vec<u64>,
     representatives: Option<Representatives>,
     node_size: usize,
-    /// Set once by `select_representatives`/`select_representatives_custom`.
     resolved_dtype: EmbeddingDtype,
 }
 
 impl Builder {
-    /// Writes `info/*` immediately, before any representatives exist.
-    /// `embedding_dtype` of `None` matches each source's own dtype.
+    /// Starts a build in `store` instead of a path. Otherwise the same as [`Self::create`].
     pub fn new(
         store: ReadableWritableListableStorage,
         levels: u32,
@@ -100,7 +104,9 @@ impl Builder {
         }
     }
 
-    /// Creates a fresh `FilesystemStore` at `index_path` and builds into it.
+    /// Creates an index at `index_path`. `levels` is the number of node levels
+    /// below the root. Set `is_normalized` only if every embedding is unit-length,
+    /// and leave `embedding_dtype` as `None` to keep each source's own dtype.
     pub fn create(
         index_path: &Path,
         levels: u32,
@@ -124,9 +130,9 @@ impl Builder {
         )
     }
 
-    /// Picks leaders out of `source` via `strategy` and persists them to
-    /// `/rep_embeddings`/`/rep_item_ids`. Must be called (or
-    /// `select_representatives_custom`) before `build`.
+    /// Picks the representatives the tree is built from, chosen by
+    /// `strategy`. `target_cluster_items` is the average cluster size it aims for, and
+    /// `fallback_batch_vecs` is the chunk size assumed when `source` isn't chunked.
     pub fn select_representatives(
         &mut self,
         source: &EmbeddingsSource,
@@ -156,9 +162,8 @@ impl Builder {
         self.representatives = Some(Representatives::PersistedOnly);
     }
 
-    /// Uses caller-supplied leaders directly instead of running a
-    /// selection strategy, for representatives chosen by an external
-    /// clustering step.
+    /// Uses caller-chosen representatives instead of picking them, such as ones
+    /// from an external clustering step. `ids[i]` is the id of row `i` of `embeddings`.
     pub fn select_representatives_custom(&mut self, ids: Array1<u32>, embeddings: Array2<f32>) {
         assert_eq!(
             ids.len(),
@@ -188,15 +193,15 @@ impl Builder {
         });
     }
 
-    /// Writes `index_root` and descends the full tree over `dataset`.
+    /// Builds the tree from `dataset`, whose rows get item ids 0, 1, 2, ...
+    /// in order. `fallback_batch_vecs` works as in `select_representatives`.
     pub fn build(&mut self, dataset: &EmbeddingsSource, fallback_batch_vecs: usize) {
         log::info!(
             "building tree: {} levels, metric={:?}",
             self.levels,
             self.metric
         );
-        // A fresh build hands out ids 0..total_items, so the count and the
-        // allocator start level; only a later insert can move them apart.
+        // Ids 0..total_items, so both counters start at total_items
         let (total_items, _) = dataset.shape();
         write_info_u32(&self.store, "total_items", total_items as u32);
         write_info_u32(&self.store, "next_item_id", total_items as u32);
@@ -206,6 +211,7 @@ impl Builder {
             .take()
             .expect("call select_representatives before build");
 
+        // Root holds the first node_size representatives
         let (root_embeddings, representatives_source) = match representatives {
             Representatives::InMemory { embeddings, .. } => {
                 let root = embeddings.slice(s![..self.node_size, ..]).to_owned();
@@ -221,6 +227,7 @@ impl Builder {
             }
         };
 
+        // Write root, then every level below it
         write_index_root(
             &self.store,
             &root_embeddings,

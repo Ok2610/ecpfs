@@ -5,6 +5,7 @@ use ndarray::array;
 use zarrs::array::ArrayBuilder;
 use zarrs::array::data_type::float32;
 
+/// Writes `embeddings` to `/embeddings` as a single f32 chunk.
 fn write_embeddings(
     store: &std::sync::Arc<zarrs::storage::store::MemoryStore>,
     embeddings: &Array2<f32>,
@@ -13,6 +14,8 @@ fn write_embeddings(
     write_embeddings_with_chunk_shape(store, embeddings, &shape);
 }
 
+/// Writes `embeddings` to `/embeddings` as f32, split into chunks of
+/// `chunk_shape`.
 fn write_embeddings_with_chunk_shape(
     store: &std::sync::Arc<zarrs::storage::store::MemoryStore>,
     embeddings: &Array2<f32>,
@@ -141,7 +144,7 @@ fn zarr_f16_source_reports_its_native_dtype() {
     assert_eq!(source.native_dtype(), EmbeddingDtype::F16);
 }
 
-/// SIFT-style descriptors: stored as uint8, read back as f32 with no
+/// SIFT-style descriptors, stored as uint8, read back as f32 with no
 /// rounding, since f32 represents every integer up to 2^24 exactly.
 #[test]
 fn zarr_uint8_source_reports_its_dtype_and_reads_back_exactly() {
@@ -170,6 +173,7 @@ fn memory_source_native_dtype_is_always_f32() {
     assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::F32);
 }
 
+/// Makes a source over an empty int32 array, a dtype ecpfs doesn't support.
 fn int32_source() -> (
     std::sync::Arc<zarrs::storage::store::MemoryStore>,
     EmbeddingsSource,

@@ -134,7 +134,7 @@ pub fn write_rep_item_ids(store: &Arc<MemoryStore>, ids: &Array1<u32>) {
         .expect("failed to store rep_item_ids chunk");
 }
 
-/// Writes `index_root/embeddings`, the top-level cluster leaders.
+/// Writes `index_root/embeddings`, the root node's representatives.
 pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
     let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
     let root_array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)

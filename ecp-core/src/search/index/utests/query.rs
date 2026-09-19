@@ -48,9 +48,8 @@ fn l2_search_respects_exclude_set() {
     assert_eq!(ids, vec![1, 2, 3, 4], "excluded item 0 must not appear");
 }
 
-/// k=1, search_exp=1 explores only the nearest leaf (items 0 and 1, both
-/// pushed since a leaf is never partially processed) and drains 1, leaving
-/// item 1 buffered.
+/// k=1, search_exp=1 scores only the nearest leaf, buffering both its items
+/// (0 and 1), and returns 1, leaving item 1 buffered.
 #[test]
 fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
     let index = build_test_index();
@@ -141,7 +140,7 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
     );
     assert_ne!(query_id_a, query_id_b);
 
-    // Interleaved: resume A, then B, then A again.
+    // Resume A, then B, then A again.
     let second_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
     assert_eq!(
         second_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),

@@ -2,10 +2,9 @@ use ndarray::{Array1, Array2, Axis};
 
 use crate::metric::{Metric, negative_squared_distances};
 
-/// For each vec of `data_embeddings`, finds the nearest vec of `node_embeddings`,
-/// then groups the data vecs by which `node_embeddings` vec they landed on.
-/// Returns `(offsets, data)`: node `n`'s assigned data vec indices are
-/// `data[offsets[n]..offsets[n+1]]`.
+/// Decides which node each data vector belongs to. Finds the nearest row of
+/// `node_embeddings` for each row of `data_embeddings`, then groups the rows by
+/// node into `(offsets, data)`. Node `n`'s rows are `data[offsets[n]..offsets[n+1]]`.
 pub fn determine_node_assignments(
     node_embeddings: &Array2<f32>,
     data_embeddings: &Array2<f32>,
@@ -16,7 +15,8 @@ pub fn determine_node_assignments(
     group_by_assignments(node_embeddings.nrows(), &best_ids)
 }
 
-/// Picks the nearest representative for each data point under `metric`.
+/// Picks the nearest node for each data vector under `metric`. Returns one
+/// `node_embeddings` row index for each row of `data_embeddings`.
 fn assign_to_nearest(
     node_embeddings: &Array2<f32>,
     data_embeddings: &Array2<f32>,
@@ -32,7 +32,7 @@ fn assign_to_nearest(
     argmax_axis0(&scores)
 }
 
-/// Argmax of `matrix` along axis 0.
+/// Argmax along axis 0: returns the highest-scoring row id for each column.
 fn argmax_axis0(matrix: &Array2<f32>) -> Array1<u32> {
     matrix.map_axis(Axis(0), |scores| {
         scores
@@ -44,9 +44,9 @@ fn argmax_axis0(matrix: &Array2<f32>) -> Array1<u32> {
     })
 }
 
-/// The equivalent of grouping data point indices into one list per
-/// representative, just stored as two flat arrays instead of a list of
-/// lists. Example: `best_ids = [1, 0, 1, 2]`, `num_reps = 3`.
+/// Groups data point indices by the representative they were assigned to,
+/// stored as two flat arrays instead of a list of lists. Example:
+/// `best_ids = [1, 0, 1, 2]`, `num_reps = 3`.
 ///
 /// ```text
 /// groups (the intuitive shape): [[1], [0, 2], [3]]

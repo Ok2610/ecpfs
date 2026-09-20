@@ -32,24 +32,39 @@ fn resolve_dtype(
     resolved
 }
 
-/// Default upper limit on one on-disk chunk, in bytes. `calculate_chunk_size`
-/// turns it into vectors per chunk.
-pub const DEFAULT_MAX_CHUNK_BYTES: usize = 50 * 1024 * 1024;
+/// Default chunk size for the representative arrays, in bytes.
+pub const DEFAULT_REP_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Default chunk size for the tree nodes, in bytes.
+pub const DEFAULT_NODE_CHUNK_BYTES: usize = 512 * 1024;
 
 /// Share of the memory limit a build spends on each batch of vectors and on
 /// its node cache. The rest is left for memory this crate doesn't track.
 pub(crate) const TRACKED_MEMORY_FRACTION: f64 = 0.8;
 
-/// Picks the chunk size for the index's arrays. Returns how many f32 vectors
-/// of length `dim` fit in a chunk of at most `max_chunk_bytes`. Panics if not
-/// even one does.
-pub fn calculate_chunk_size(dim: usize, max_chunk_bytes: usize) -> u64 {
-    let bytes_per_vec = dim * size_of::<f32>();
-    assert!(
-        bytes_per_vec <= max_chunk_bytes,
-        "dim {dim} doesn't fit a single vec in {max_chunk_bytes} bytes"
-    );
-    (max_chunk_bytes / bytes_per_vec) as u64
+/// The chunk sizes a build writes, in bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct ChunkSizes {
+    /// Chunk size for `/rep_embeddings` and `/rep_item_ids`.
+    pub rep_chunk_bytes: usize,
+    /// Chunk size for the root and every tree node.
+    pub node_chunk_bytes: usize,
+}
+
+impl Default for ChunkSizes {
+    fn default() -> Self {
+        ChunkSizes {
+            rep_chunk_bytes: DEFAULT_REP_CHUNK_BYTES,
+            node_chunk_bytes: DEFAULT_NODE_CHUNK_BYTES,
+        }
+    }
+}
+
+/// Returns how many vectors of length `dim` fit in `chunk_bytes` when stored
+/// as `dtype`, and never fewer than one.
+pub fn chunk_rows(dim: usize, dtype: EmbeddingDtype, chunk_bytes: usize) -> u64 {
+    let bytes_per_vec = (dim * dtype.bytes()).max(1);
+    (chunk_bytes / bytes_per_vec).max(1) as u64
 }
 
 /// Picks the tree's fan-out, the number of children each node (the root
@@ -68,10 +83,10 @@ pub struct Builder {
     is_normalized: bool,
     memory_limit_bytes: usize,
     embedding_dtype: Option<EmbeddingDtype>,
-    max_chunk_bytes: usize,
+    chunks: ChunkSizes,
 
     // Set by either select_representatives method
-    chunk_shape: Vec<u64>,
+    rep_chunk_shape: Vec<u64>,
     representatives: Option<Representatives>,
     node_size: usize,
     resolved_dtype: EmbeddingDtype,
@@ -86,7 +101,7 @@ impl Builder {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
-        max_chunk_bytes: usize,
+        chunks: ChunkSizes,
     ) -> Self {
         write_index_info(&store, levels, metric, is_normalized);
         Builder {
@@ -96,8 +111,8 @@ impl Builder {
             is_normalized,
             memory_limit_bytes,
             embedding_dtype,
-            max_chunk_bytes,
-            chunk_shape: Vec::new(),
+            chunks,
+            rep_chunk_shape: Vec::new(),
             representatives: None,
             node_size: 0,
             resolved_dtype: EmbeddingDtype::F32,
@@ -114,7 +129,7 @@ impl Builder {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
-        max_chunk_bytes: usize,
+        chunks: ChunkSizes,
     ) -> Self {
         log::info!("creating index at {}", index_path.display());
         let store: ReadableWritableListableStorage =
@@ -126,7 +141,7 @@ impl Builder {
             is_normalized,
             memory_limit_bytes,
             embedding_dtype,
-            max_chunk_bytes,
+            chunks,
         )
     }
 
@@ -141,8 +156,11 @@ impl Builder {
         fallback_batch_vecs: usize,
     ) {
         let (total_items, dim) = source.shape();
-        self.chunk_shape = vec![calculate_chunk_size(dim, self.max_chunk_bytes), dim as u64];
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype());
+        self.rep_chunk_shape = vec![
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            dim as u64,
+        ];
 
         let selected_ids = select_representative_ids(total_items, target_cluster_items, strategy);
         log::info!(
@@ -156,7 +174,7 @@ impl Builder {
             &selected_ids,
             fallback_batch_vecs,
             self.memory_limit_bytes,
-            &self.chunk_shape,
+            &self.rep_chunk_shape,
             self.resolved_dtype,
         );
         self.representatives = Some(Representatives::PersistedOnly);
@@ -173,15 +191,18 @@ impl Builder {
             embeddings.nrows()
         );
         let dim = embeddings.ncols();
-        self.chunk_shape = vec![calculate_chunk_size(dim, self.max_chunk_bytes), dim as u64];
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);
+        self.rep_chunk_shape = vec![
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            dim as u64,
+        ];
         zarrs_append(
             &self.store,
             "/rep_embeddings",
             "/rep_item_ids",
             &embeddings,
             &ids,
-            &self.chunk_shape,
+            &self.rep_chunk_shape,
             self.resolved_dtype,
         );
 
@@ -202,9 +223,19 @@ impl Builder {
             self.metric
         );
         // Ids 0..total_items, so both counters start at total_items
-        let (total_items, _) = dataset.shape();
+        let (total_items, dim) = dataset.shape();
         write_info_u32(&self.store, "total_items", total_items as u32);
         write_info_u32(&self.store, "next_item_id", total_items as u32);
+
+        let node_chunk_shape = vec![
+            chunk_rows(dim, self.resolved_dtype, self.chunks.node_chunk_bytes),
+            dim as u64,
+        ];
+        log::info!(
+            "node arrays chunk by {} vecs of {:?}",
+            node_chunk_shape[0],
+            self.resolved_dtype
+        );
 
         let representatives = self
             .representatives
@@ -231,7 +262,7 @@ impl Builder {
         write_index_root(
             &self.store,
             &root_embeddings,
-            &self.chunk_shape,
+            &node_chunk_shape,
             self.resolved_dtype,
         );
         build_tree(&BuildTreeArgs {
@@ -243,7 +274,7 @@ impl Builder {
             metric: self.metric,
             is_normalized: self.is_normalized,
             fallback_batch_vecs,
-            chunk_shape: &self.chunk_shape,
+            chunk_shape: &node_chunk_shape,
             embedding_dtype: self.resolved_dtype,
             memory_limit_bytes: self.memory_limit_bytes,
         });

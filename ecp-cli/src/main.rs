@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use ecp_core::build::builder::Builder;
-use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
+use ecp_core::build::builder::{
+    Builder, ChunkSizes, DEFAULT_NODE_CHUNK_BYTES, DEFAULT_REP_CHUNK_BYTES,
+};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
@@ -199,9 +200,15 @@ struct BuildIndexArgs {
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
 
-    /// Max size for one on-disk chunk, in MB.
-    #[arg(long, default_value_t = DEFAULT_MAX_CHUNK_BYTES / (1024 * 1024))]
-    max_chunk_mb: usize,
+    /// Chunk size for the representative arrays, in MB. Measure zarr read
+    /// speed at a few chunk sizes on your own data before changing it.
+    #[arg(long, default_value_t = DEFAULT_REP_CHUNK_BYTES / (1024 * 1024))]
+    rep_chunk_mb: usize,
+
+    /// Chunk size for the tree nodes, in KB. Measure zarr read speed at a few
+    /// chunk sizes on your own data before changing it.
+    #[arg(long, default_value_t = DEFAULT_NODE_CHUNK_BYTES / 1024)]
+    node_chunk_kb: usize,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -219,7 +226,10 @@ fn build_index(args: BuildIndexArgs) {
         args.is_normalized,
         memory_limit_bytes,
         args.embedding_dtype.into(),
-        args.max_chunk_mb * 1024 * 1024,
+        ChunkSizes {
+            rep_chunk_bytes: args.rep_chunk_mb * 1024 * 1024,
+            node_chunk_bytes: args.node_chunk_kb * 1024,
+        },
     );
     builder.select_representatives(
         &source,

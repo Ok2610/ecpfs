@@ -3,7 +3,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::path::PathBuf;
 
-use ecp_core::build::builder::Builder;
+use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 
@@ -19,7 +19,9 @@ use crate::pymetric::PyMetric;
 /// embedding is unit-length. ``memory_limit_bytes`` is a target for the build's
 /// memory use rather than a hard cap, and defaults to 80% of system RAM. Leave
 /// ``embedding_dtype`` as None to store each file's own dtype; a narrower one
-/// logs a warning. ``max_chunk_bytes`` caps the size of one on-disk chunk.
+/// logs a warning. ``rep_chunk_bytes`` is the chunk size for the representative
+/// arrays and ``node_chunk_bytes`` the chunk size for the tree nodes. Measure
+/// zarr read speed at a few chunk sizes on your own data before changing them.
 #[pyclass(module = "ecp.builder")]
 pub struct BuilderWrapper {
     inner: Builder,
@@ -48,7 +50,8 @@ impl BuilderWrapper {
         is_normalized=false,
         memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes(),
         embedding_dtype=None,
-        max_chunk_bytes=ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES,
+        rep_chunk_bytes=ecp_core::build::builder::DEFAULT_REP_CHUNK_BYTES,
+        node_chunk_bytes=ecp_core::build::builder::DEFAULT_NODE_CHUNK_BYTES,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -59,7 +62,8 @@ impl BuilderWrapper {
         is_normalized: bool,
         memory_limit_bytes: usize,
         embedding_dtype: Option<PyEmbeddingDtype>,
-        max_chunk_bytes: usize,
+        rep_chunk_bytes: usize,
+        node_chunk_bytes: usize,
     ) -> Self {
         let metric = metric.into();
         let embedding_dtype = embedding_dtype.map(Into::into);
@@ -71,7 +75,10 @@ impl BuilderWrapper {
                 is_normalized,
                 memory_limit_bytes,
                 embedding_dtype,
-                max_chunk_bytes,
+                ChunkSizes {
+                    rep_chunk_bytes,
+                    node_chunk_bytes,
+                },
             )
         });
         BuilderWrapper { inner }

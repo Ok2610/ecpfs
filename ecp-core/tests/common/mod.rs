@@ -11,7 +11,7 @@ use zarrs::array::ArrayBuilder;
 use zarrs::array::data_type::float32;
 use zarrs::filesystem::FilesystemStore;
 
-use ecp_core::build::builder::{Builder, DEFAULT_MAX_CHUNK_BYTES};
+use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::utils::{EmbeddingDtype, Metric};
@@ -69,7 +69,7 @@ pub fn build_index(vectors: &Array2<f32>, dtype: Option<EmbeddingDtype>) -> (Tem
         false,
         1_000_000_000,
         dtype,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);

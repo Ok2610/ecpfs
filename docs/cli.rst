@@ -57,8 +57,10 @@ build-index
              Target for the build's memory use in GB, not a hard cap. Defaults to 80% of RAM
          --fallback-batch-rows <FALLBACK_BATCH_ROWS>
              Chunk size assumed when the file isn't chunked, in rows [default: 100000]
-         --max-chunk-mb <MAX_CHUNK_MB>
-             Max size for one on-disk chunk, in MB [default: 50]
+         --rep-chunk-mb <REP_CHUNK_MB>
+             Chunk size for the representative arrays, in MB. Measure zarr read speed at a few chunk sizes on your own data before changing it [default: 8]
+         --node-chunk-kb <NODE_CHUNK_KB>
+             Chunk size for the tree nodes, in KB. Measure zarr read speed at a few chunk sizes on your own data before changing it [default: 512]
          --with-logging
              Log this run to a JSONL file
          --log-dir <LOG_DIR>

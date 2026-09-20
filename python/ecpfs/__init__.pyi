@@ -59,7 +59,8 @@ class Builder:
         is_normalized: bool = ...,
         memory_limit_bytes: int = ...,
         embedding_dtype: EmbeddingDtype | None = ...,
-        max_chunk_bytes: int = ...,
+        rep_chunk_bytes: int = ...,
+        node_chunk_bytes: int = ...,
     ) -> None: ...
 
     def select_representatives(

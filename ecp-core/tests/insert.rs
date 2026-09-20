@@ -10,7 +10,7 @@ use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
 
 use common::{build_index, two_clusters, write_embeddings};
-use ecp_core::build::builder::{Builder, DEFAULT_MAX_CHUNK_BYTES};
+use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::search::{Index, IndexInfo};
 use ecp_core::utils::Metric;
@@ -147,7 +147,7 @@ fn insert_into_a_previously_empty_leaf_creates_it_on_disk() {
         false,
         1_000_000_000,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives_custom(
         array![100u32, 101, 102],

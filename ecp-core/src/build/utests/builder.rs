@@ -56,12 +56,12 @@ fn new_builder(
         false,
         memory_limit_bytes,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     )
 }
 
 #[test]
-fn select_representatives_uses_the_builders_max_chunk_bytes() {
+fn select_representatives_uses_the_builders_rep_chunk_bytes() {
     let store = new_memory_store();
     let source = write_source(
         &store,
@@ -76,7 +76,10 @@ fn select_representatives_uses_the_builders_max_chunk_bytes() {
         false,
         1_000_000,
         None,
-        16,
+        ChunkSizes {
+            rep_chunk_bytes: 16,
+            ..Default::default()
+        },
     );
 
     builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
@@ -88,6 +91,72 @@ fn select_representatives_uses_the_builders_max_chunk_bytes() {
             .chunk_shape_usize(&[0, 0])
             .expect("failed to read chunk shape"),
         vec![2, 2]
+    );
+}
+
+#[test]
+fn chunk_rows_fills_the_asked_for_bytes_at_any_dim_or_dtype() {
+    let asked = DEFAULT_NODE_CHUNK_BYTES;
+
+    for (dim, dtype) in [
+        (128, EmbeddingDtype::F32),
+        (1536, EmbeddingDtype::F32),
+        (1536, EmbeddingDtype::Int8),
+        (1536, EmbeddingDtype::F16),
+    ] {
+        let bytes_per_vec = dim * dtype.bytes();
+        let bytes = chunk_rows(dim, dtype, asked) as usize * bytes_per_vec;
+        assert!(
+            bytes <= asked && bytes + bytes_per_vec > asked,
+            "dim {dim} as {dtype:?} chunked {bytes} bytes"
+        );
+    }
+}
+
+#[test]
+fn chunk_rows_honours_a_large_request_and_never_returns_zero() {
+    // dim=1152 f32 is 4608 bytes a vector, so 100 MiB holds 22755 of them.
+    assert_eq!(
+        chunk_rows(1152, EmbeddingDtype::F32, 100 * 1024 * 1024),
+        22755,
+        "a large chunk must be given as asked, not capped"
+    );
+    // A vector wider than the whole chunk still gets a one-row chunk.
+    assert_eq!(chunk_rows(64, EmbeddingDtype::F32, 16), 1);
+}
+
+/// The tree nodes and the representative arrays each take their own setting.
+#[test]
+fn build_chunks_nodes_and_representatives_from_their_own_settings() {
+    let store = new_memory_store();
+    let dataset = write_source(
+        &store,
+        "/dataset",
+        &array![[0.0f32, 0.0], [0.0, 1.0], [10.0, 0.0], [10.0, 1.0]],
+    );
+    let mut builder = new_builder(&store, 1, 1_000_000);
+
+    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
+    builder.build(&dataset, 10);
+
+    let expected_rows = chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES) as usize;
+    for path in ["/index_root/embeddings", "/lvl_1/node_0/embeddings"] {
+        let array = Array::open(as_readable_writable_listable(&store), path).unwrap();
+        assert_eq!(
+            array
+                .chunk_shape_usize(&[0, 0])
+                .expect("failed to read chunk shape"),
+            vec![expected_rows, 2],
+            "{path}"
+        );
+    }
+
+    let reps = Array::open(as_readable_writable_listable(&store), "/rep_embeddings").unwrap();
+    assert_eq!(
+        reps.chunk_shape_usize(&[0, 0])
+            .expect("failed to read chunk shape")[0],
+        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_REP_CHUNK_BYTES) as usize,
+        "the representative arrays take rep_chunk_bytes"
     );
 }
 

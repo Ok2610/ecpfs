@@ -48,7 +48,7 @@ def test_each_embedding_dtype_reaches_the_on_disk_arrays(tmp_path, embedding_dty
     assert read_index_root_dtype(index_path) == on_disk
 
 
-def test_max_chunk_bytes_is_threaded_through_to_the_on_disk_chunk_shape(tmp_path):
+def test_node_chunk_bytes_is_threaded_through_to_the_on_disk_chunk_shape(tmp_path):
     h5_path = tmp_path / "embeddings.h5"
     write_h5_embeddings(h5_path, TWO_CLUSTERS)
 
@@ -58,9 +58,9 @@ def test_max_chunk_bytes_is_threaded_through_to_the_on_disk_chunk_shape(tmp_path
     default_builder.build(h5_path, fallback_batch_rows=100)
 
     small_index_path = tmp_path / "small.zarr"
-    # 2 floats/vec * 4 bytes = 8 bytes/vec, so max_chunk_bytes=64 caps a
-    # chunk at 8 vecs, far below the default 50 MiB chunk's row count.
-    small_builder = ecpfs.Builder(small_index_path, levels=2, metric=ecpfs.Metric.L2, max_chunk_bytes=64)
+    # 2 floats/vec * 4 bytes = 8 bytes/vec, so node_chunk_bytes=64 gives a
+    # chunk of 8 vecs, far below the default chunk's row count.
+    small_builder = ecpfs.Builder(small_index_path, levels=2, metric=ecpfs.Metric.L2, node_chunk_bytes=64)
     small_builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
     small_builder.build(h5_path, fallback_batch_rows=100)
 

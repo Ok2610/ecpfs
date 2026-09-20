@@ -1,11 +1,5 @@
-//! Without a compressor, a zarr chunk is padded to its full declared size
-//! on disk regardless of how much is actually written. Since chunk_shape
-//! here is sized for I/O throughput (tens of MB), not expected cluster
-//! size (eCP doesn't enforce target_cluster_items - a single cluster can
-//! absorb a wildly disproportionate share of the dataset), most nodes are
-//! mostly-empty relative to their chunk. This proves compression actually
-//! keeps that cheap, on a real filesystem where padding would otherwise
-//! show up as real disk usage.
+//! A node's chunk is sized for I/O, so it is usually far larger than the
+//! node's data. Compression must keep the empty padding from taking up disk.
 
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
@@ -15,6 +9,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use ecp_core::build::writer::zarrs_append;
 use ecp_core::utils::EmbeddingDtype;
 
+/// Adds up the size of every file under `path`, in bytes.
 fn dir_size(path: &std::path::Path) -> u64 {
     let mut total = 0u64;
     for entry in std::fs::read_dir(path).expect("failed to read dir") {
@@ -35,9 +30,7 @@ fn a_mostly_empty_node_stays_small_on_disk_despite_a_large_chunk_shape() {
     let store: ReadableWritableListableStorage =
         Arc::new(FilesystemStore::new(tmp.path()).expect("failed to create filesystem store"));
 
-    // A chunk sized for ~50MB at dim=768 (~17,000 vecs), but this node
-    // only ever gets 3 real vecs - the common case, not the pathological
-    // millions-of-items one, but the same mostly-empty-chunk shape.
+    // A chunk sized for about 50 MB at dim=768 (17,000 vecs), holding only 3 vecs
     let dim = 768;
     let chunk_shape = [17_000u64, dim as u64];
     let embeddings = Array2::from_elem((3, dim), 1.0f32);

@@ -3,7 +3,7 @@ Multithreading internals
 
 This page is for anyone modifying ``ecp-core``'s build or insert code, not
 for users of the Python API. It explains how ``build_tree`` and
-``Index::insert`` use threads, why they use them differently, and a real
+``Index::insert`` use threads, why they use them differently, and a
 deadlock this design has to avoid.
 
 Two pools, not one
@@ -42,8 +42,8 @@ decides, at every level of that walk, whether to dispatch via
 
    fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Vec<(u32, u32)>
 
-``build_tree`` always passes ``on_caller_thread = false``: its fan-out is
-genuinely parallel, at every level. This is safe because a fresh build has
+``build_tree`` always passes ``on_caller_thread = false``, so its fan-out is
+parallel at every level. This is safe because a fresh build has
 no concurrent readers and no other writer; nothing else is touching the
 tree while it's being built.
 
@@ -64,7 +64,7 @@ problem. A worker thread that blocks on a lock stops being available for
 anything else, including work a concurrent reader is waiting on to finish.
 
 With a single rayon worker, running insert's routing on that worker
-reproduces a real deadlock. The worker gets stuck on the lock the search
+reproduces a deadlock. The worker gets stuck on the lock the search
 thread holds, so it never returns to run the chunk-read job the search
 thread is waiting on. This only happens because insert's own routing task
 is what occupies the worker. A search running by itself, with no insert

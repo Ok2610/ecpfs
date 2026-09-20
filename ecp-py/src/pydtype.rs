@@ -2,10 +2,9 @@ use pyo3::prelude::*;
 
 use ecp_core::utils::EmbeddingDtype;
 
-/// On-disk embedding width: half (F16) or full (F32) width float, or 8-bit
-/// integer, unsigned (UInt8, `0..=255`) or signed (Int8, `-128..=127`).
-/// Every read widens to f32 regardless, so a narrower dtype saves disk and
-/// read bandwidth, not memory.
+/// The type an index stores its embeddings as on disk: ``F32``, ``F16``,
+/// ``UInt8`` (0 to 255) or ``Int8`` (-128 to 127). Every read widens to f32,
+/// so a narrower type saves disk, not memory.
 #[pyclass(
     name = "EmbeddingDtype",
     module = "ecp.dtype",

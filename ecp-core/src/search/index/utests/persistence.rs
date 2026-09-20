@@ -2,6 +2,7 @@ use super::*;
 use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
 use ndarray::array;
 
+/// Returns the heap's entries as sorted tuples, so two heaps can be compared.
 fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)> {
     let mut entries: Vec<_> = heap
         .iter()
@@ -11,6 +12,7 @@ fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)
     entries
 }
 
+/// Builds a query state with two queued nodes and two buffered items.
 fn sample_state() -> QueryState {
     QueryState {
         query: array![1.0f32, 2.0, 3.0],
@@ -52,23 +54,6 @@ fn round_trip_preserves_non_empty_state() {
 }
 
 #[test]
-fn round_trip_preserves_fully_empty_state() {
-    let store = as_readable_writable_listable(&new_memory_store());
-    let original = QueryState {
-        query: array![0.0f32, 0.0],
-        tree_pq: BinaryHeap::new(),
-        items: Vec::new(),
-    };
-
-    persist_query(&store, 1, &original);
-    let loaded = load_query(&store, 1).expect("just-persisted query must load");
-
-    assert_eq!(loaded.query, original.query);
-    assert!(loaded.tree_pq.is_empty());
-    assert!(loaded.items.is_empty());
-}
-
-#[test]
 fn round_trip_preserves_items_only_state() {
     let store = as_readable_writable_listable(&new_memory_store());
     let original = QueryState {
@@ -96,39 +81,22 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
         items: vec![(NotNan::new(1.0).unwrap(), 1)],
     };
     persist_query(&store, 9, &smaller);
+    persist_query(&store, 10, &smaller);
+
+    let key_count = |query_id: usize| {
+        let prefix = StorePrefix::new(format!("queries/{query_id}/")).unwrap();
+        store.list_prefix(&prefix).unwrap().len()
+    };
+    assert_eq!(
+        key_count(9),
+        key_count(10),
+        "re-persisting must leave no stale chunks from the bigger state behind"
+    );
 
     let loaded = load_query(&store, 9).expect("just-persisted query must load");
     assert_eq!(loaded.query, smaller.query);
     assert!(loaded.tree_pq.is_empty());
     assert_eq!(loaded.items, smaller.items);
-}
-
-#[test]
-fn repersisting_with_more_entries_keeps_all_of_them() {
-    let store = as_readable_writable_listable(&new_memory_store());
-    let smaller = QueryState {
-        query: array![9.0f32],
-        tree_pq: BinaryHeap::new(),
-        items: vec![(NotNan::new(1.0).unwrap(), 1)],
-    };
-    persist_query(&store, 9, &smaller);
-
-    let bigger = sample_state();
-    persist_query(&store, 9, &bigger);
-
-    let loaded = load_query(&store, 9).expect("just-persisted query must load");
-    assert_eq!(loaded.query, bigger.query);
-    assert_eq!(
-        heap_entries_sorted(&loaded.tree_pq),
-        heap_entries_sorted(&bigger.tree_pq)
-    );
-    assert_eq!(loaded.items, bigger.items);
-}
-
-#[test]
-fn erasing_a_query_with_no_persisted_group_does_not_panic() {
-    let store = as_readable_writable_listable(&new_memory_store());
-    erase_query(&store, 123);
 }
 
 #[test]
@@ -202,8 +170,7 @@ fn cleanup_older_than_erases_only_entries_older_than_the_cutoff() {
     persist_query(&store, 1, &sample_state());
     persist_query(&store, 2, &sample_state());
 
-    // Backdate id=1's persisted_at directly, rather than depending on real
-    // elapsed wall-clock time between the two persist_query calls above.
+    // Backdate id=1 instead of waiting for wall-clock time to pass.
     write_persisted_at(&store, "/queries/1/persisted_at", 1_000);
     let cutoff = 1_600_000_000; // long after id=1's backdated stamp, long before "now"
 

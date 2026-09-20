@@ -1,9 +1,10 @@
 use super::*;
-use crate::utils::EmbeddingDtype;
+use crate::dtype::EmbeddingDtype;
 use std::collections::HashSet;
 use zarrs::array::Array;
 use zarrs::storage::store::MemoryStore;
 
+/// Checks that `ids` is in ascending order.
 fn is_sorted(ids: &Array1<u32>) -> bool {
     ids.iter().is_sorted()
 }
@@ -30,10 +31,10 @@ fn random_returns_distinct_sorted_ids_within_range_and_matching_count() {
 }
 
 /// Uneven division (100/30 doesn't divide evenly) exercises the ceiling in
-/// `total_clusters`, matching how many leaders `Offset` produces for the
+/// `total_clusters`, matching how many representatives `Offset` picks for the
 /// same inputs.
 #[test]
-fn random_and_offset_agree_on_leader_count_for_uneven_division() {
+fn random_and_offset_agree_on_representative_count_for_uneven_division() {
     let offset_ids = select_representative_ids(100, 30, RepresentativeStrategy::Offset);
     let random_ids = select_representative_ids(100, 30, RepresentativeStrategy::Random);
 
@@ -61,8 +62,8 @@ fn fits_in_memory_saturates_instead_of_overflow_panicking() {
     );
 }
 
-/// 3 chunks of 2 vecs each (vecs 0-1, 2-3, 4-5); ids 1 and 5 fall in the
-/// first and last chunks, leaving the middle chunk (vecs 2-3) unmatched.
+/// Makes a source of 3 chunks of 2 vecs each (vecs 0-1, 2-3, 4-5). Ids 1 and
+/// 5 fall in the first and last chunks, leaving the middle chunk unmatched.
 fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, EmbeddingsSource) {
     let store = crate::test_fixtures::new_memory_store();
     let embeddings = ndarray::array![
@@ -101,7 +102,7 @@ fn source_with_skippable_middle_chunk() -> (std::sync::Arc<MemoryStore>, Embeddi
 
 /// `memory_limit_bytes = 1_000_000` makes `batch_vecs` far exceed the
 /// fixture's 6 total items, also proving `end`'s `.min(total_items)` clamp
-/// holds; without it, `read_vecs` would panic on an out-of-bounds range.
+/// holds; without it, `read_vecs` would panic reading past the end.
 #[test]
 fn collect_representatives_persists_matched_vecs_and_ids() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
@@ -138,10 +139,9 @@ fn collect_representatives_persists_matched_vecs_and_ids() {
     );
 }
 
-#[test]
 /// `memory_limit_bytes = 0` collapses `batch_vecs` to the natural chunk
-/// size (2), so this is the test that actually walks all 3 chunks and
-/// exercises the middle one's skip branch.
+/// size (2), so the loop walks all 3 chunks and skips the middle one.
+#[test]
 fn collect_representatives_persists_the_same_result_when_batching_skips_a_chunk() {
     let (_source_store, source) = source_with_skippable_middle_chunk();
     let dest_store = crate::test_fixtures::new_memory_store();

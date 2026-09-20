@@ -7,7 +7,13 @@ use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// A loaded eCP index, ready to search.
+/// An eCP index opened from disk, for searching and inserting.
+///
+/// ``memory_limit_bytes`` caps the index data kept in memory, nodes and open
+/// queries together, and defaults to 80% of system RAM. Every method except
+/// ``set_memory_limit_bytes`` releases the GIL while it works, so other Python
+/// threads keep running. Use the index as a context manager, or call ``close``,
+/// so unfinished queries are saved for later.
 #[pyclass(module = "ecp.index")]
 pub struct IndexWrapper {
     inner: Index,
@@ -15,6 +21,7 @@ pub struct IndexWrapper {
 }
 
 impl IndexWrapper {
+    /// Raises ValueError if the index was closed.
     fn check_not_closed(&self) -> PyResult<()> {
         if self.closed {
             Err(PyValueError::new_err("I/O operation on closed Index"))
@@ -26,11 +33,8 @@ impl IndexWrapper {
 
 #[pymethods]
 impl IndexWrapper {
-    /// __new__(index_path: PathBuf, memory_limit_bytes: int = <80% of system RAM>)
-    ///
-    /// Loads an index from disk, deriving its metric/levels/nodes from the
-    /// store itself. memory_limit_bytes caps how many touched nodes stay
-    /// cached (LRU-evicted). Releases the GIL for the actual load.
+    /// Opens the index at `index_path`, keeping at most `memory_limit_bytes` of
+    /// its data in memory. PyO3 drops this doc, so the class doc carries it.
     #[new]
     #[pyo3(signature = (index_path, memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes()))]
     fn new(py: Python<'_>, index_path: PathBuf, memory_limit_bytes: usize) -> PyResult<Self> {
@@ -41,28 +45,22 @@ impl IndexWrapper {
         })
     }
 
-    /// set_memory_limit_bytes(self, memory_limit_bytes: int)
+    /// set_memory_limit_bytes(memory_limit_bytes)
     ///
-    /// Raises or lowers the memory limit on an already-loaded index, no
-    /// reload needed. Lowering below what's currently resident evicts
-    /// immediately. Holds the GIL for the whole call: unlike search/insert,
-    /// this isn't on the concurrent hot path, so it isn't worth the extra
-    /// cache-rebuild complexity to change that.
+    /// Changes the memory limit without reopening the index. Lowering it below
+    /// what is cached evicts right away. Meant for occasional use, not per query.
     fn set_memory_limit_bytes(&mut self, memory_limit_bytes: usize) -> PyResult<()> {
         self.check_not_closed()?;
         self.inner.set_memory_limit_bytes(Some(memory_limit_bytes));
         Ok(())
     }
 
-    /// new_search(self, query: np.ndarray[f32, 1], k: int,
-    ///            search_exp: u32, max_increments: i32, exclude_vec: list[int])
+    /// new_search(query, k, search_exp, max_increments, exclude_vec)
     ///
-    /// Returns `(items, query_id)`, where `items: List[(score: float, item_id: int)]`.
-    /// score ranks ascending (lower is better) rather than measuring a
-    /// literal distance, since IP's score is a negated similarity where a
-    /// strong match can be negative. Releases the GIL for the actual
-    /// search, so other Python threads (including ones calling insert) run
-    /// concurrently.
+    /// Searches for ``query`` and returns ``(items, query_id)``, where ``items`` are
+    /// the ``k`` best ``(score, item_id)`` pairs, lowest score first. Pass
+    /// ``query_id`` to ``get_next_k_items`` for more. See :doc:`search-parameters`
+    /// for the arguments and what a score means.
     fn new_search(
         &self,
         py: Python<'_>,
@@ -89,10 +87,12 @@ impl IndexWrapper {
         Ok((items, query_id))
     }
 
-    /// get_next_k_items(self, query_id, k, search_exp, max_increments, exclude_vec)
+    /// get_next_k_items(query_id, k, search_exp, max_increments, exclude_vec)
     ///
-    /// Returns the next batch of `(score, item_id)` pairs. Same score
-    /// convention as new_search. Also releases the GIL for the search.
+    /// Returns the next ``k`` ``(score, item_id)`` pairs of a query started with
+    /// ``new_search``, searching further if needed. Empty for an unknown
+    /// ``query_id`` or after ``close``. See :doc:`search-parameters` for the other
+    /// arguments.
     fn get_next_k_items(
         &self,
         py: Python<'_>,
@@ -115,26 +115,12 @@ impl IndexWrapper {
             .collect())
     }
 
-    /// insert(self, embeddings: np.ndarray[f32, 2]) -> tuple[int, int]
+    /// insert(embeddings)
     ///
-    /// Assigns each embedding row the next available id, routes it to its
-    /// nearest leaf, and appends it there. No rebalancing: a leaf that
-    /// already has plenty of children just keeps growing. Safe to call
-    /// concurrently with search or with another insert; two operations
-    /// only serialize when they land on the same leaf. The caller is
-    /// responsible for embeddings already matching this index's
-    /// metric/is_normalized/dtype convention. Releases the GIL for the
-    /// actual write.
-    ///
-    /// Returns `(start_id, end_id)`, the assigned ids as a half-open
-    /// range (`end_id` excluded, so `range(start_id, end_id)` in Python
-    /// gives every assigned id in row order). This is the caller's own
-    /// mapping back to whatever external ids it uses.
-    ///
-    /// Not atomic: a crash partway through can leave the index's item
-    /// count ahead of what actually landed on disk, permanently skipping
-    /// the unwritten ids rather than reusing or colliding with one
-    /// already written.
+    /// Adds each row of ``embeddings`` to its nearest leaf and returns the new ids
+    /// as ``(start_id, end_id)``, so ``range(start_id, end_id)`` lists them in row
+    /// order. Rows must match the index's dimension, and be unit-length if it was
+    /// built with ``is_normalized``. Leaves only grow; the tree is never rebalanced.
     fn insert(&self, py: Python<'_>, embeddings: PyReadonlyArray2<f32>) -> PyResult<(u32, u32)> {
         self.check_not_closed()?;
         let embeddings: Array2<f32> = embeddings.to_owned_array();
@@ -142,11 +128,10 @@ impl IndexWrapper {
         Ok((range.start, range.end))
     }
 
-    /// cleanup_persisted_queries_older_than(self, cutoff_unix_secs: float) -> int
+    /// cleanup_persisted_queries_older_than(cutoff_unix_secs)
     ///
-    /// Erases every persisted query older than cutoff_unix_secs (a Unix
-    /// timestamp, e.g. datetime.datetime(...).timestamp()). Returns how
-    /// many were erased. Releases the GIL for the actual scan.
+    /// Erases every query saved to disk before ``cutoff_unix_secs``, a Unix
+    /// timestamp such as ``datetime(...).timestamp()``. Returns how many were erased.
     fn cleanup_persisted_queries_older_than(
         &self,
         py: Python<'_>,
@@ -159,11 +144,11 @@ impl IndexWrapper {
         }))
     }
 
-    /// close(self)
+    /// close()
     ///
-    /// Persists every in-flight query to disk and marks this index closed;
-    /// every other method raises ValueError afterward. Safe to call more
-    /// than once. Releases the GIL for the actual persisting.
+    /// Saves every open query to disk so a later ``Index`` can resume it, then
+    /// closes this one. Any other method raises ValueError afterwards. Safe to
+    /// call more than once.
     fn close(&mut self, py: Python<'_>) {
         if self.closed {
             return;

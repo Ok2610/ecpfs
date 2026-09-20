@@ -1,3 +1,5 @@
+//! Optional logging to a JSONL file, one JSON object per line.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,8 +11,10 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 
+/// The log file's path, set by the first `init` call.
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// Writes each log record as one JSON line to `file`.
 struct JsonlLogger {
     file: Mutex<File>,
 }
@@ -34,6 +38,8 @@ impl Log for JsonlLogger {
     }
 }
 
+/// Formats `record` as one JSON object with its timestamp, level, target and
+/// message.
 fn format_entry(record: &Record) -> String {
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -47,14 +53,15 @@ fn format_entry(record: &Record) -> String {
     .to_string()
 }
 
+/// Returns 6 random hex digits, so two processes started in the same second
+/// get different log files.
 fn random_suffix() -> String {
     format!("{:06x}", rand::rng().random::<u32>() & 0xff_ffff)
 }
 
-/// Starts file-based JSONL logging for this process into `log_dir`
-/// (default `ecp_logs/`), one file per process at `{timestamp}-{random}.jsonl`.
-/// Idempotent: only the first call actually sets up logging (`log`'s global
-/// logger can only be set once); later calls just return the same path.
+/// Starts logging this process to a new JSONL file in `log_dir` (default
+/// `ecp_logs/`), keeping records at `level` and above, and returns its path.
+/// Only the first call sets logging up; later calls return the same path.
 pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> PathBuf {
     LOG_PATH
         .get_or_init(|| {
@@ -63,6 +70,7 @@ pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("ecp_logs"));
             fs::create_dir_all(&dir).expect("Failed to create log directory");
 
+            // One file per process, named by its start time plus a random suffix
             const TIMESTAMP_FORMAT: &[time::format_description::FormatItem] =
                 format_description!("[year][month][day]T[hour][minute][second]Z");
             let timestamp = OffsetDateTime::now_utc()
@@ -75,6 +83,7 @@ pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> PathBuf {
                 .append(true)
                 .open(&path)
                 .expect("Failed to open log file");
+            // Leave the level alone if another logger was set first
             if log::set_boxed_logger(Box::new(JsonlLogger {
                 file: Mutex::new(file),
             }))

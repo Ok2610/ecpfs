@@ -28,8 +28,8 @@ fn l2_assigns_each_data_point_to_the_nearest_representative_by_distance() {
     assert_eq!(data.to_vec(), vec![0, 1, 2, 3]);
 }
 
-/// On actual unit vectors, the `is_normalized` fast path must land on the
-/// same assignment as the general path, not just avoid crashing.
+/// On unit vectors, the `is_normalized` shortcut must give the same
+/// assignment as the general path.
 #[test]
 fn l2_with_is_normalized_true_matches_general_path_on_unit_vectors() {
     // Counts are unequal so no index can coincidentally align between the two arrays.

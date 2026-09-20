@@ -20,12 +20,9 @@ Building an index
        levels=3,
        metric=Metric.L2,
        is_normalized=False,
-       # Omit embedding_dtype to match the source's own dtype (the
-       # default). Pass EmbeddingDtype.F32/.F16/.UInt8/.Int8 to force one;
-       # forcing a narrower dtype than the source logs a warning, since it
-       # loses precision and, for the integer dtypes, truncates fractions
-       # and clamps out-of-range values. Every read widens back to f32, so
-       # a narrow dtype saves disk and read bandwidth, not memory.
+       # None stores each file's own dtype. A narrower EmbeddingDtype
+       # (F16, UInt8, Int8) saves disk but loses precision, and logs a
+       # warning. Every read widens back to f32, so it saves disk, not memory.
        embedding_dtype=None,
    )
    builder.select_representatives(
@@ -56,7 +53,8 @@ Searching an index
            max_increments=-1,
            exclude_vec=[],
        )
-       # items: list[(distance, item_id)]
+       # items: list[(score, item_id)], lower score is a better match.
+       # See the search parameters page for k, search_exp and max_increments.
 
        # Pull further results for the same query without re-searching from the root:
        more_items = index.get_next_k_items(
@@ -72,9 +70,10 @@ Adding data to an existing index
 ---------------------------------
 
 ``insert`` routes each new point to its nearest leaf and appends it there,
-the same descent search already does. Ids are assigned automatically,
-starting at the index's current item count, the same convention the
-initial build already uses for its own dataset. ``insert`` returns the
+the same descent search already does. Ids are assigned automatically in
+row order, starting at the index's ``next_item_id``. A fresh build sets
+that to the number of items it stored, so inserted ids continue straight
+on from the build's own. ``insert`` returns the
 assigned ``(start_id, end_id)`` range (``end_id`` excluded) so the caller
 can map its own external ids to them.
 
@@ -85,28 +84,27 @@ can map its own external ids to them.
 
    with Index("my_index.zarr") as index:
        # 2 new rows, matching the index's own dimensionality
-       new_embeddings = np.random.rand(2, 128).astype(np.float32) 
+       new_embeddings = np.random.rand(2, 128).astype(np.float32)
        start_id, end_id = index.insert(embeddings=new_embeddings)
        # start_id, end_id = 1000, 1002; the two rows got ids 1000 and 1001.
 
 There's no rebalancing. A leaf that keeps growing just keeps growing, so
 search quality degrades gradually as an index accumulates far more
-inserts than its original build accounted for. A real rebuild is the only
-fix for that currently.
+inserts than its original build accounted for. A rebuild is the only fix
+for that currently.
 
-``insert`` is not atomic. A crash partway through can leave the index's
-item count ahead of what actually landed on disk, permanently skipping
-the unwritten ids rather than reusing or colliding with one already
-written. All-or-nothing insert semantics are planned for after 1.0; until
-then, do not assume an index survives a crash mid-insert without a gap.
+``insert`` is not atomic. A crash partway through can leave ``next_item_id``
+ahead of what landed on disk, skipping the unwritten ids for good rather than
+reusing them or colliding with one already written. ``total_items`` still
+counts only what was stored, so do not assume an index survives a crash
+mid-insert without a gap in its ids.
 
 Concurrent inserts and searches on one loaded ``Index`` are safe and
 fine-grained. Two operations only serialize when they land on the same
 leaf, and a search may briefly see pre-insert (stale) data for a leaf an
 insert is concurrently touching rather than wait for it. This holds
-across Python threads too. ecpfs releases the GIL during search and
-insert, so they run with true multithreading rather than just the
-appearance of it. It does not extend across separate processes. Two
+across Python threads too, because ecpfs releases the GIL during search and
+insert. It does not extend across separate processes. Two
 independent processes (or two separate ``Index(...)`` handles anywhere)
 writing to the same index path can race and corrupt data, so the caller
 must ensure only one writer touches a given path at a time.
@@ -131,9 +129,9 @@ in flight to disk before releasing the index, and every method raises
 calls ``close()`` for you, including when the block raises; call it
 directly if you're not using ``with``.
 
-A query a caller never finishes draining survives this way across a
-process restart, resume it from a completely new ``Index`` pointed at the
-same path, using the ``query_id`` returned by the original ``new_search``:
+A query a caller never finishes draining survives this way across a process
+restart. Resume it from a new ``Index`` pointed at the same path, using the
+``query_id`` the original ``new_search`` returned:
 
 .. code-block:: python
 

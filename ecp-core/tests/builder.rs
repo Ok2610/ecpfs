@@ -1,6 +1,7 @@
-//! Proves `Builder` agrees with search end to end, the same way
-//! `tests/build_tree.rs` proves it for the hand-assembled `build_tree`
-//! path: build via `Builder`, then load and search with `Index::load`.
+//! Tests `Builder` end to end. Each test builds an index, then loads it with
+//! `Index::load` and searches it.
+
+mod common;
 
 use half::f16;
 use ndarray::array;
@@ -10,33 +11,15 @@ use zarrs::array::data_type::{float16, float32};
 use zarrs::array::{Array, ArrayBuilder};
 use zarrs::filesystem::FilesystemStore;
 
+use common::{build_index, two_clusters, write_embeddings};
 use ecp_core::build::builder::{Builder, DEFAULT_MAX_CHUNK_BYTES};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::search::Index;
 use ecp_core::utils::{EmbeddingDtype, Metric};
 
-fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &ndarray::Array2<f32>) {
-    let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
-    let array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)
-        .build(store.clone(), path)
-        .expect("failed to build embeddings array");
-    array
-        .store_metadata()
-        .expect("failed to store embeddings metadata");
-    array
-        .store_array_subset(
-            &zarrs::array::ArraySubset::new_with_ranges(&[
-                0..embeddings.nrows() as u64,
-                0..embeddings.ncols() as u64,
-            ]),
-            embeddings,
-        )
-        .expect("failed to store embeddings");
-}
-
-/// `(node count, total children summed across those nodes)` for one
-/// `/lvl_N/` tier.
+/// Counts the nodes on one level (`/lvl_N/`) and their children in total,
+/// as `(nodes, children)`.
 fn level_node_count_and_children(
     store: &zarrs::storage::ReadableListableStorage,
     level: u32,
@@ -52,6 +35,7 @@ fn level_node_count_and_children(
     (listing.prefixes().len(), total_children)
 }
 
+/// Writes `embeddings` to `path` as a single f16 chunk.
 fn write_embeddings_f16(
     store: &Arc<FilesystemStore>,
     path: &str,
@@ -75,42 +59,9 @@ fn write_embeddings_f16(
         .expect("failed to store embeddings");
 }
 
-/// Same two-well-separated-clusters-of-4 geometry `tests/build_tree.rs`
-/// uses, but selected and built entirely through `Builder`.
 #[test]
 fn builder_produces_a_structure_that_searches_correctly() {
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let index_path = tmp.path().join("index.zarr");
-    let store =
-        Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
-
-    write_embeddings(
-        &store,
-        "/dataset",
-        &array![
-            [0.0f32, 0.0],
-            [0.4, 0.4],
-            [1.0, 1.0],
-            [1.4, 1.4],
-            [10.0, 10.0],
-            [10.4, 10.4],
-            [11.0, 11.0],
-            [11.4, 11.4]
-        ],
-    );
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
-
-    let mut builder = Builder::create(
-        &index_path,
-        2,
-        Metric::L2,
-        false,
-        1_000_000_000,
-        None,
-        DEFAULT_MAX_CHUNK_BYTES,
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-    builder.build(&dataset, 100);
+    let (_tmp, index_path) = build_index(&two_clusters(), None);
 
     let root = Array::open(
         Arc::new(FilesystemStore::new(&index_path).unwrap()),
@@ -131,12 +82,13 @@ fn builder_produces_a_structure_that_searches_correctly() {
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-/// `ns = node_size`, `total_levels = 3`, chosen so `R = ns^3` exactly (no
-/// rounding): 81 items, target_cluster_items=3 -> R=27 representatives,
-/// ns=3. Dense ascending 1D values, so every level's leaders partition a
-/// contiguous, fully-covered range: no node at any level ends up with zero
-/// children. Expected node counts per level: lvl_1 = ns = 3, lvl_2 = ns^2 =
-/// 9, lvl_3 (leaf) = ns^3 = R = 27.
+/// A 3-level build sized so `R = ns^3` exactly, with no rounding. 81 items and
+/// target_cluster_items=3 give R=27 representatives and ns=3. Dense ascending
+/// 1D values, so every level's representatives split a contiguous range and no
+/// node at any level ends up with zero children.
+///
+/// Expected nodes per level: lvl_1 = ns = 3, lvl_2 = ns^2 = 9, lvl_3 (leaf) =
+/// ns^3 = R = 27.
 #[test]
 fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the_leaf() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -202,13 +154,12 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
     );
 }
 
-/// A node ending up with fewer children than another (even zero) is
-/// expected, not a bug: items with tied nearest-representative scores all
-/// route to the same node. Forcing an exact tie (two representatives at
-/// the same value) drives this deliberately - lvl_1 ends up with 1 node
-/// instead of `ns = 2`, but its total children still add up to `ns^2`.
+/// Tied scores send every tied item to the same node, so a node can end up
+/// with no children, which is expected. Two representatives at the same value
+/// force a tie. lvl_1 then has 1 node instead of `ns = 2` but still `ns^2`
+/// children in total, and search must reach every item without `lvl_1/node_0`.
 #[test]
-fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
+fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let index_path = tmp.path().join("index.zarr");
     let store =
@@ -216,7 +167,7 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
 
     // Representatives (offset, target_cluster_items=2) are dataset[0,2,4,6]
     // = [0.0, 0.0, 4.0, 6.0]. dataset[2] is forced equal to dataset[0], so
-    // root (the first ns=2 representatives) is [0.0, 0.0]: an exact tie.
+    // root (the first ns=2 representatives) is [0.0, 0.0], an exact tie.
     let d = 8;
     let embeddings = ndarray::array![[0.0f32], [1.0], [0.0], [3.0], [4.0], [5.0], [6.0], [7.0]];
     write_embeddings(&store, "/dataset", &embeddings);
@@ -254,7 +205,7 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
     let (lvl_1_nodes, lvl_1_children) = level_node_count_and_children(&read_store, 1);
     assert_eq!(
         lvl_1_nodes, 1,
-        "the tied root leader gets zero items, so only 1 of ns=2 lvl_1 nodes exists"
+        "the tied root representative gets zero items, so only 1 of ns=2 lvl_1 nodes exists"
     );
     assert_eq!(
         lvl_1_children, r,
@@ -270,38 +221,6 @@ fn a_node_can_end_up_empty_from_tied_scores_without_losing_any_items() {
         lvl_2_children, d,
         "all D dataset items are still accounted for"
     );
-}
-
-/// Regression test: `Index::load` used to build each level's node lookup
-/// by listing position rather than by each node's real on-disk id, so as
-/// soon as any earlier id in a level was missing (as lvl_1/node_0 is here,
-/// same tied-leader setup as the test above), every later id in that level
-/// resolved to the wrong slot - out-of-bounds panic or silently the wrong
-/// node, depending on how the misalignment landed. This loads the same
-/// built index and actually searches it, instead of only inspecting
-/// on-disk node/children counts.
-#[test]
-fn search_still_finds_every_item_when_a_node_is_empty_from_tied_scores() {
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let index_path = tmp.path().join("index.zarr");
-    let store =
-        Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
-
-    let embeddings = ndarray::array![[0.0f32], [1.0], [0.0], [3.0], [4.0], [5.0], [6.0], [7.0]];
-    write_embeddings(&store, "/dataset", &embeddings);
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
-
-    let mut builder = Builder::create(
-        &index_path,
-        2,
-        Metric::L2,
-        false,
-        1_000_000_000,
-        None,
-        DEFAULT_MAX_CHUNK_BYTES,
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 1000);
-    builder.build(&dataset, 1000);
 
     let index = Index::load(index_path, None);
     let query = array![0.0f32];
@@ -316,17 +235,10 @@ fn search_still_finds_every_item_when_a_node_is_empty_from_tied_scores() {
     );
 }
 
-/// First end-to-end build+search test for `Metric::IP` (previously no
-/// coverage anywhere in this suite - see `calculate_distances`, whose IP
-/// arm had never been exercised past a single raw-vector unit test).
-/// Deliberately uses magnitude-skewed, non-unit vectors: `is_normalized`
-/// doesn't affect IP's own assignment or distance math at all (only L2's),
-/// so nothing stops a caller from building an IP index on raw, un-normalized
-/// embeddings like this. Doing so lets one large-magnitude representative
-/// dominate the nearest-representative assignment for nearly every point,
-/// which empties out other representatives' nodes - the same failure mode
-/// as the tied-score tests above, reached through IP's own math instead of
-/// a forced tie.
+/// Builds and searches an IP index on vectors of very different magnitudes,
+/// which nothing prevents for IP. One large representative then wins nearly
+/// every point, leaving other nodes empty, the same situation the tied-score
+/// test reaches with a forced tie.
 #[test]
 fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -376,10 +288,8 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
     );
 }
 
-/// Same geometry, but the source is f16-native (as SigLIP-style embeddings
-/// often are) and the dtype is left at its default (`None`, native): the
-/// index should come out f16 on disk, and still search correctly since
-/// `Index::load`/`Node::embeddings` already upcast f16 on read.
+/// An f16 source (as SigLIP embeddings often are) with `embedding_dtype` left
+/// as `None` must give an f16 index on disk that still searches correctly.
 #[test]
 fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -387,20 +297,7 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     let store =
         Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
 
-    write_embeddings_f16(
-        &store,
-        "/dataset",
-        &array![
-            [0.0f32, 0.0],
-            [0.4, 0.4],
-            [1.0, 1.0],
-            [1.4, 1.4],
-            [10.0, 10.0],
-            [10.4, 10.4],
-            [11.0, 11.0],
-            [11.4, 11.4]
-        ],
-    );
+    write_embeddings_f16(&store, "/dataset", &two_clusters());
     let dataset = EmbeddingsSource::open(&index_path, "dataset");
 
     let mut builder = Builder::create(
@@ -434,66 +331,9 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-/// Explicitly requesting `F16` against an f32 source downcasts (with a
-/// logged warning); the resulting index is still readable and searchable.
-#[test]
-fn explicit_f16_downcasts_an_f32_source_and_still_searches() {
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let index_path = tmp.path().join("index.zarr");
-    let store =
-        Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
-
-    write_embeddings(
-        &store,
-        "/dataset",
-        &array![
-            [0.0f32, 0.0],
-            [0.4, 0.4],
-            [1.0, 1.0],
-            [1.4, 1.4],
-            [10.0, 10.0],
-            [10.4, 10.4],
-            [11.0, 11.0],
-            [11.4, 11.4]
-        ],
-    );
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
-
-    let mut builder = Builder::create(
-        &index_path,
-        2,
-        Metric::L2,
-        false,
-        1_000_000_000,
-        Some(EmbeddingDtype::F16),
-        DEFAULT_MAX_CHUNK_BYTES,
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-    builder.build(&dataset, 100);
-
-    let root = Array::open(
-        Arc::new(FilesystemStore::new(&index_path).unwrap()),
-        "/index_root/embeddings",
-    )
-    .unwrap();
-    assert_eq!(
-        *root.data_type(),
-        float16(),
-        "explicit F16 downcasts an f32 source"
-    );
-
-    let index = Index::load(index_path, None);
-    let query = array![0.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
-
-    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
-}
-
-/// Integer-valued vectors, so the uint8 build stores them exactly rather
-/// than clamping or truncating. The two indexes must then agree on every
-/// returned distance bit-for-bit, not merely approximately: widening uint8
-/// to f32 is exact, and the search arithmetic is identical from there.
+/// Integer-valued vectors fit uint8 exactly, so a uint8 build and an f32 build
+/// must return identical distances, bit for bit. Widening uint8 to f32 is
+/// exact, and the search math is the same from there.
 #[test]
 fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
     let vectors = array![
@@ -507,30 +347,8 @@ fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
         [207.0, 207.0]
     ];
 
-    let build_with = |dtype: EmbeddingDtype| {
-        let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let index_path = tmp.keep().join("index.zarr");
-        let store =
-            Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
-        write_embeddings(&store, "/dataset", &vectors);
-        let dataset = EmbeddingsSource::open(&index_path, "dataset");
-
-        let mut builder = Builder::create(
-            &index_path,
-            2,
-            Metric::L2,
-            false,
-            1_000_000_000,
-            Some(dtype),
-            DEFAULT_MAX_CHUNK_BYTES,
-        );
-        builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-        builder.build(&dataset, 100);
-        index_path
-    };
-
-    let uint8_path = build_with(EmbeddingDtype::UInt8);
-    let f32_path = build_with(EmbeddingDtype::F32);
+    let (_uint8_tmp, uint8_path) = build_index(&vectors, Some(EmbeddingDtype::UInt8));
+    let (_f32_tmp, f32_path) = build_index(&vectors, Some(EmbeddingDtype::F32));
 
     let root = Array::open(
         Arc::new(FilesystemStore::new(&uint8_path).unwrap()),

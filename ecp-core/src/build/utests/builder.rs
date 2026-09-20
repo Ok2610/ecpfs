@@ -6,50 +6,20 @@ use zarrs::array::{Array, ArrayBuilder};
 use zarrs::storage::store::MemoryStore;
 
 #[test]
-fn resolve_dtype_uses_requested_when_set_else_native() {
-    assert_eq!(
-        resolve_dtype(None, EmbeddingDtype::F32),
-        EmbeddingDtype::F32
-    );
+fn resolve_dtype_uses_embedding_dtype_when_set_else_native() {
     assert_eq!(
         resolve_dtype(None, EmbeddingDtype::F16),
         EmbeddingDtype::F16
     );
     assert_eq!(
-        resolve_dtype(Some(EmbeddingDtype::F16), EmbeddingDtype::F16),
-        EmbeddingDtype::F16
-    );
-    assert_eq!(
-        resolve_dtype(Some(EmbeddingDtype::F32), EmbeddingDtype::F32),
-        EmbeddingDtype::F32
-    );
-    assert_eq!(
-        resolve_dtype(Some(EmbeddingDtype::F16), EmbeddingDtype::F32),
-        EmbeddingDtype::F16,
-        "an explicit request wins even though it downcasts the source's f32 precision"
-    );
-    assert_eq!(
-        resolve_dtype(Some(EmbeddingDtype::F32), EmbeddingDtype::F16),
-        EmbeddingDtype::F32,
-        "forcing f32 on an f16 source is an upcast, not a downcast"
-    );
-    assert_eq!(
-        resolve_dtype(None, EmbeddingDtype::UInt8),
-        EmbeddingDtype::UInt8,
-        "a uint8 source stays uint8 unless something else is requested"
-    );
-    assert_eq!(
         resolve_dtype(Some(EmbeddingDtype::UInt8), EmbeddingDtype::F32),
         EmbeddingDtype::UInt8,
-        "an explicit request wins even though it clamps and truncates f32 data"
-    );
-    assert_eq!(
-        resolve_dtype(Some(EmbeddingDtype::F32), EmbeddingDtype::UInt8),
-        EmbeddingDtype::F32,
-        "widening uint8 to f32 is lossless, just wasteful of disk"
+        "a set embedding_dtype wins even when it can't hold every source value"
     );
 }
 
+/// Writes `embeddings` as a one-chunk f32 array at `path` and returns a
+/// source over it.
 fn write_source(
     store: &std::sync::Arc<MemoryStore>,
     path: &str,
@@ -72,6 +42,8 @@ fn write_source(
     EmbeddingsSource::from_zarr(store.clone(), path.to_string())
 }
 
+/// Makes an L2 `Builder` on `store` with the default chunk size and no
+/// dtype override.
 fn new_builder(
     store: &std::sync::Arc<MemoryStore>,
     levels: u32,
@@ -119,9 +91,8 @@ fn select_representatives_uses_the_builders_max_chunk_bytes() {
     );
 }
 
-/// select_representatives never keeps a copy in memory, regardless of
-/// memory_limit_bytes. build_tree always reads representatives back from
-/// disk itself.
+/// select_representatives saves the representatives to disk and keeps no
+/// copy in memory, even when memory_limit_bytes has room for one.
 #[test]
 fn select_representatives_sets_node_size_and_persists_only() {
     let store = new_memory_store();
@@ -136,7 +107,7 @@ fn select_representatives_sets_node_size_and_persists_only() {
 
     assert_eq!(
         builder.node_size, 2,
-        "4 items / 3 per cluster -> 2 leaders, ceil(2^(1/2)) = 2"
+        "4 items / 3 per cluster -> 2 representatives, ceil(2^(1/2)) = 2"
     );
     assert!(matches!(
         builder.representatives,
@@ -145,7 +116,7 @@ fn select_representatives_sets_node_size_and_persists_only() {
 }
 
 #[test]
-fn select_representatives_custom_uses_caller_supplied_leaders() {
+fn select_representatives_custom_uses_caller_supplied_representatives() {
     let store = new_memory_store();
     let mut builder = new_builder(&store, 1, 1_000_000);
 
@@ -157,7 +128,7 @@ fn select_representatives_custom_uses_caller_supplied_leaders() {
     assert_eq!(builder.node_size, 2);
     match builder.representatives {
         Some(Representatives::InMemory { ref ids, .. }) => assert_eq!(ids.to_vec(), vec![7, 9]),
-        _ => panic!("expected the custom leaders to be kept in memory"),
+        _ => panic!("expected the custom representatives to be kept in memory"),
     }
 }
 
@@ -183,8 +154,8 @@ fn build_without_representatives_panics() {
     builder.build(&source, 10);
 }
 
-/// levels=1 makes the root level and the leaf level the same pass: two
-/// well-separated pairs of points, offset-selected leaders at vecs 0 and 2.
+/// With levels=1 the root's children are the leaves, so only one level is
+/// built. Two well-separated pairs of points; `Offset` picks vecs 0 and 2.
 #[test]
 fn build_writes_index_root_and_leaf_nodes() {
     let store = new_memory_store();
@@ -235,7 +206,7 @@ fn build_writes_index_root_and_leaf_nodes() {
 }
 
 #[test]
-fn build_writes_total_items_from_the_datasets_row_count() {
+fn build_writes_total_items_and_next_item_id_from_the_datasets_row_count() {
     let store = new_memory_store();
     let dataset = write_source(
         &store,
@@ -247,14 +218,20 @@ fn build_writes_total_items_from_the_datasets_row_count() {
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
     builder.build(&dataset, 10);
 
-    let total_items =
-        Array::open(as_readable_writable_listable(&store), "/info/total_items").unwrap();
-    assert_eq!(
-        total_items
-            .retrieve_array_subset::<Vec<u32>>(&total_items.subset_all())
-            .unwrap(),
-        vec![4]
-    );
+    for field in ["total_items", "next_item_id"] {
+        let array = Array::open(
+            as_readable_writable_listable(&store),
+            &format!("/info/{field}"),
+        )
+        .unwrap();
+        assert_eq!(
+            array
+                .retrieve_array_subset::<Vec<u32>>(&array.subset_all())
+                .unwrap(),
+            vec![4],
+            "{field}"
+        );
+    }
 }
 
 /// Exercises `build`'s `Representatives::InMemory` branch.

@@ -5,18 +5,20 @@ use zarrs::storage::ReadableWritableListableStorage;
 use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
-use crate::utils::EmbeddingDtype;
+use crate::dtype::EmbeddingDtype;
 
-/// How to pick which items become cluster leaders.
+/// How `select_representatives` picks representatives, the items that every
+/// other item is clustered around.
 #[derive(Debug, Clone, Copy)]
 pub enum RepresentativeStrategy {
+    /// Items spaced `target_cluster_items` apart, starting at item 0.
     Offset,
+    /// A uniform random sample, as many as `Offset` picks.
     Random,
 }
 
-/// Picks leader ids out of `0..total_items`, sorted ascending (needed by
-/// `collect_representatives`'s per-chunk membership check). Returns
-/// `total_items` divided by `target_cluster_items`, rounded up.
+/// Picks which items become representatives and returns their ids, sorted ascending.
+/// Number of representatives = `total_items / target_cluster_items`, rounded up.
 pub fn select_representative_ids(
     total_items: usize,
     target_cluster_items: usize,
@@ -38,14 +40,13 @@ pub fn select_representative_ids(
     }
 }
 
-/// Whether `count` embeddings of `dim` floats each fit within
-/// `memory_limit_bytes`.
+/// Checks whether `count` f32 embeddings of length `dim` fit under the memory limit.
 pub fn fits_in_memory(count: usize, dim: usize, memory_limit_bytes: usize) -> bool {
     count.saturating_mul(dim).saturating_mul(size_of::<f32>()) <= memory_limit_bytes
 }
 
-/// Whether the representative set stayed in memory (small enough to skip
-/// re-reading from disk during tree-building) or was persisted only.
+/// Whether `build` reads the representatives from memory, when they were
+/// small enough to keep, or from disk.
 pub enum Representatives {
     InMemory {
         embeddings: Array2<f32>,
@@ -54,13 +55,9 @@ pub enum Representatives {
     PersistedOnly,
 }
 
-/// Streams `source` in memory-budgeted batches (each at least one full
-/// on-disk chunk), skipping any batch that contains no `selected_ids`,
-/// and persists whichever vecs match to `rep_embeddings`/`rep_item_ids`.
-/// `build_tree` reads them back from disk itself, once per non-leaf pass;
-/// this never keeps a copy in memory.
-///
-/// `selected_ids` must already be sorted ascending.
+/// Saves the chosen representatives into the index. Copies the rows of
+/// `source` listed in `selected_ids`, which must be sorted ascending. Reads
+/// whole chunks and skips any chunk with no selected row.
 pub fn collect_representatives(
     store: &ReadableWritableListableStorage,
     source: &EmbeddingsSource,
@@ -81,6 +78,7 @@ pub fn collect_representatives(
     while start < total_items {
         let end = (start + batch_vecs).min(total_items);
 
+        // Selected ids in this batch
         let first = selected.partition_point(|&id| (id as usize) < start);
         let in_range = &selected[first..];
         let matched_ids: Vec<u32> = in_range
@@ -97,6 +95,7 @@ pub fn collect_representatives(
             matched_ids.len()
         );
 
+        // Read the batch and append the selected rows
         let batch = source.read_vecs(start, end);
         let matched_vec_indices: Vec<usize> =
             matched_ids.iter().map(|&id| id as usize - start).collect();

@@ -166,3 +166,5 @@ cython_debug/
 # VS Code
 .vscode/
 .vscode-test/
+# macOS Finder metadata
+.DS_Store

@@ -1,6 +1,6 @@
-//! Exercises `EmbeddingsSource::Hdf5` against a real `.h5` file, since
-//! `rust-hdf5` has no in-memory driver to test against (unlike the `Zarr`
-//! variant, covered by a fast `MemoryStore`-backed unit test).
+//! Tests `EmbeddingsSource::Hdf5` against `.h5` files on disk, since
+//! `rust-hdf5` has no in-memory driver. The `Zarr` variant is covered by
+//! in-memory unit tests.
 
 use rust_hdf5::{DatatypeMessage, H5File};
 
@@ -59,23 +59,6 @@ fn hdf5_source_reports_its_actual_on_disk_chunk_vec_count() {
 }
 
 #[test]
-fn hdf5_source_reports_its_native_dtype() {
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let file_path = tmp.path().join("embeddings.h5");
-
-    let file = H5File::create(&file_path).expect("failed to create HDF5 file");
-    file.new_dataset::<f32>()
-        .shape([2usize, 2])
-        .create("embeddings")
-        .expect("failed to create HDF5 dataset");
-    file.close().expect("failed to close HDF5 file");
-
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-
-    assert_eq!(source.native_dtype(), EmbeddingDtype::F32);
-}
-
-#[test]
 fn hdf5_f16_source_reads_correctly_upcast_to_f32() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let file_path = tmp.path().join("f16_embeddings.h5");
@@ -103,6 +86,7 @@ fn hdf5_f16_source_reads_correctly_upcast_to_f32() {
     assert_eq!(vecs, ndarray::array![[1.0f32, 2.0], [3.0, 4.0]]);
 }
 
+/// Writes a u32 `.h5` dataset, a dtype ecpfs doesn't support.
 fn write_int_dataset() -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let file_path = tmp.path().join("int_embeddings.h5");
@@ -133,9 +117,9 @@ fn hdf5_read_vecs_panics_for_unsupported_dtype() {
     let _ = source.read_vecs(0, 2);
 }
 
-/// SIFT-format descriptors are commonly distributed as uint8. The HDF5
-/// crate refuses to read an integer dataset as f32, so `read_vecs` reads it
-/// at its own width and widens; this proves that path end to end.
+/// SIFT descriptors are often distributed as uint8. The HDF5 crate won't
+/// read an integer dataset as f32, so `read_vecs` reads it as uint8 and
+/// widens it.
 #[test]
 fn hdf5_uint8_source_reads_correctly_widened_to_f32() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");

@@ -1,6 +1,8 @@
+import importlib.metadata
+
 project = "ecpfs"
 author = "Omar Shahbaz Khan"
-release = "0.9.95"
+release = importlib.metadata.version("ecpfs")
 
 extensions = [
     "sphinx.ext.autodoc",

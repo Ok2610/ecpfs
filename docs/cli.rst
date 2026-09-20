@@ -1,8 +1,9 @@
 CLI (``ecp``)
 =============
 
-Installed alongside the Rust workspace as the ``ecp-cli`` crate (binary name
-``ecp``). Build it with ``cargo build -p ecp-cli --release``.
+``ecp`` is the command line tool, built from the ``ecp-cli`` crate with
+``cargo build -p ecp-cli --release``. The option lists below are its ``-h``
+output; ``--help`` adds a longer description of each choice.
 
 .. code-block:: text
 
@@ -11,68 +12,71 @@ Installed alongside the Rust workspace as the ``ecp-cli`` crate (binary name
    Usage: ecp <COMMAND>
 
    Commands:
-     build-index      Selects cluster representatives from `embeddings_file`, then builds the full tree over it into `save_file`
-     add-data         Bulk-appends new vectors from `embeddings_file` into an already-built index
-     search           Runs a single query, pulled from row `query_row` of `query_file`, against an existing index, or continues a previously-persisted one with `--resume`
-     info             Prints an index's `info/*` metadata without loading its tree
-     cleanup-queries  Erases persisted queries nobody has resumed, so `/queries/` doesn't grow forever on an index `search` keeps being run against
+     build-index      Builds a new index from EMBEDDINGS_FILE, saved at --save-file
+     add-data         Adds every vector in EMBEDDINGS_FILE to an existing index
+     search           Searches an index for one query vector, or continues a saved query
+     info             Prints an index's settings and item counts without loading its tree
+     cleanup-queries  Erases saved queries older than --older-than-hours
      help             Print this message or the help of the given subcommand(s)
+
+   Options:
+     -h, --help  Print help
 
 build-index
 -----------
+
+.. code-block:: bash
+
+   ecp build-index embeddings.h5 --save-file my_index.zarr --levels 3
 
 .. code-block:: text
 
    Usage: ecp build-index [OPTIONS] <EMBEDDINGS_FILE>
 
    Arguments:
-     <EMBEDDINGS_FILE>  Embeddings file with data vectors. Zarr or HDF5 file
+     <EMBEDDINGS_FILE>  The embeddings to index, as a .zarr or .h5 file
 
    Options:
          --save-file <SAVE_FILE>
-             Output index path [default: ecpfs_index.zarr]
+             Where to save the index [default: ecpfs_index.zarr]
          --levels <LEVELS>
-             Levels in the index [default: 3]
+             Number of node levels below the root [default: 3]
          --target-cluster-items <TARGET_CLUSTER_ITEMS>
-             Preferred items for each cluster (no guarantees) [default: 100]
+             Average number of items per cluster to aim for [default: 100]
          --metric <METRIC>
-             Metric to use for distance calculations [default: l2] [possible values: l2, ip]
+             How the distance between vectors is measured [default: l2] [possible values: l2, ip]
          --is-normalized
-             Set if every embedding is already unit-length, to skip norm computation
+             Set only if every embedding is unit-length. L2 then skips computing norms
          --embedding-dtype <EMBEDDING_DTYPE>
-             Width to write embeddings as. `native` matches the source; anything narrower than the source warns, since it loses precision and, for the integer dtypes, truncates fractions and clamps out-of-range values. Every read widens back to f32, so this saves disk, not memory [default: native] [possible values: native, uint8, int8, f16, f32]
+             Type to store embeddings as on disk. A type narrower than the file's warns, since it loses precision, and integer types also drop fractions and clamp out-of-range values. Reads always widen to f32, so this saves disk, not memory [default: native] [possible values: native, uint8, int8, f16, f32]
          --emb-grp-name <EMB_GRP_NAME>
-             Group name for the embeddings dataset [default: embeddings]
+             Name of the embeddings dataset inside the file [default: embeddings]
          --rep-selection <REP_SELECTION>
-             How representatives are selected [default: offset] [possible values: offset, random]
+             How to pick the representatives the tree is built from [default: offset] [possible values: offset, random]
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Memory budget for the build process, in GB (not strictly enforced). Defaults to 80% of total system RAM
+             Target for the build's memory use in GB, not a hard cap. Defaults to 80% of RAM
          --fallback-batch-rows <FALLBACK_BATCH_ROWS>
-             Row batch size used when a source has no natural on-disk chunk to align to [default: 100000]
+             Chunk size assumed when the file isn't chunked, in rows [default: 100000]
          --max-chunk-mb <MAX_CHUNK_MB>
              Max size for one on-disk chunk, in MB [default: 50]
          --with-logging
-             Turn on file-based logging for this run
+             Log this run to a JSONL file
          --log-dir <LOG_DIR>
-             Directory to write the log file into
+             Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
      -h, --help
-             Print help
+             Print help (see more with '--help')
 
-   Thread count is controlled by the RAYON_NUM_THREADS environment variable
-   (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag - it applies
-   process-wide, for the lifetime of the run.
+   Thread count is controlled by the RAYON_NUM_THREADS environment variable (e.g. RAYON_NUM_THREADS=4 ecp build-index ...), not a flag. It applies process-wide, for the lifetime of the run.
 
 add-data
 --------
 
-Offline counterpart to calling ``Index.insert`` from a live session. Loads
-the index, bulk-appends every vector in ``embeddings_file``, exits.
-New ids are assigned automatically from the index's ``next_item_id``, not
-from ``total_items``, so ids left reserved by an interrupted earlier insert
-are skipped rather than reused. The command prints the range it actually
-assigned.
+Adds every vector in a file to an existing index, the command line version of
+``Index.insert``. New ids start at the index's ``next_item_id``, so ids left
+unused by a crashed earlier insert are skipped, never reused. The command
+prints the ids it assigned.
 
 .. code-block:: bash
 
@@ -83,32 +87,32 @@ assigned.
    Usage: ecp add-data [OPTIONS] <INDEX_PATH> <EMBEDDINGS_FILE>
 
    Arguments:
-     <INDEX_PATH>       Path to the index to insert into
-     <EMBEDDINGS_FILE>  Zarr or HDF5 file with the new data vectors to append
+     <INDEX_PATH>       The index to add to
+     <EMBEDDINGS_FILE>  The vectors to add, as a .zarr or .h5 file
 
    Options:
          --emb-grp-name <EMB_GRP_NAME>
-             Group name for the embeddings dataset [default: embeddings]
+             Name of the embeddings dataset inside the file [default: embeddings]
          --fallback-batch-rows <FALLBACK_BATCH_ROWS>
-             Row batch size used when the source has no natural on-disk chunk to align to (same meaning as build-index's flag of the same name) [default: 100000]
+             Rows added per batch, rounded up to whole chunks of the file [default: 100000]
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Caps how many touched nodes stay cached, in GB. Defaults to 80% of total system RAM
+             Cap on the index data kept in memory, in GB. Defaults to 80% of RAM
          --with-logging
-             Turn on file-based logging for this run
+             Log this run to a JSONL file
          --log-dir <LOG_DIR>
-             Directory to write the log file into
+             Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
      -h, --help
-             Print help
+             Print help (see more with '--help')
 
 search
 ------
 
-Every call to ``search`` persists the query before it exits (a no-op if
-nothing's left to resume once it finishes), printing ``query_id`` as its
-first output line. Pass that id back via ``--resume`` in a later call to
-continue the same query, without re-searching from the root:
+Every ``search`` saves its query before exiting, unless nothing is left to
+return, and prints the query id first. Pass that id to ``--resume`` later to
+continue the same query without starting over. :doc:`search-parameters` explains ``--k``,
+``--search-exp``, ``--max-increments`` and ``--exclude``.
 
 .. code-block:: bash
 
@@ -128,34 +132,34 @@ continue the same query, without re-searching from the root:
    Usage: ecp search [OPTIONS] <INDEX_PATH> [QUERY_FILE]
 
    Arguments:
-     <INDEX_PATH>  Path to the index to search
-     [QUERY_FILE]  Zarr or HDF5 file to read the query vector from. Required unless --resume is given
+     <INDEX_PATH>  The index to search
+     [QUERY_FILE]  The .zarr or .h5 file holding the query vector. Required unless --resume is given
 
    Options:
          --query-row <QUERY_ROW>
-             Row within `query_file` to use as the query [default: 0]
+             Which row of QUERY_FILE is the query [default: 0]
          --query-grp-name <QUERY_GRP_NAME>
-             Group name for the query dataset [default: embeddings]
+             Name of the query dataset inside the file [default: embeddings]
          --k <K>
              Number of items to return [default: 10]
          --search-exp <SEARCH_EXP>
-             Search expansion factor [default: 4]
+             How many leaves to scan. More gives better results but a slower search [default: 4]
          --max-increments <MAX_INCREMENTS>
-             Max retries when fewer than `k` items are found (-1 = unlimited) [default: -1]
+             How many times to double --search-exp while fewer than --k items are found. -1 for no limit [default: -1]
          --exclude <EXCLUDE>
-             Item ids to exclude, comma-separated
+             Item ids to leave out, comma-separated
          --memory-limit-gb <MEMORY_LIMIT_GB>
-             Caps how many touched nodes stay cached (LRU-evicted), in GB. Defaults to 80% of total system RAM
+             Cap on the index data kept in memory, in GB. Defaults to 80% of RAM
          --resume <RESUME>
-             Resume a previously-persisted query (its id is printed as this tool's first output line) instead of starting a new one. Ignores query_file/query_row/query_grp_name when given
+             Continue the saved query with this id, printed first by an earlier search, instead of starting a new one
          --with-logging
-             Turn on file-based logging for this run
+             Log this run to a JSONL file
          --log-dir <LOG_DIR>
-             Directory to write the log file into
+             Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
      -h, --help
-             Print help
+             Print help (see more with '--help')
 
 info
 ----
@@ -165,26 +169,26 @@ info
    Usage: ecp info <INDEX_PATH>
 
    Arguments:
-     <INDEX_PATH>  Path to the index to inspect
+     <INDEX_PATH>  The index to describe
 
    Options:
      -h, --help  Print help
 
-``Total Items`` counts the items actually stored, while ``Next Item Id`` is
-the id the next insert will hand out. They match unless a crash mid-insert
-left a reserved id range unwritten, in which case the id is ahead of the
-count and ``info`` reports the size of the gap. Those ids are never reused.
+``Total Items`` counts the items stored, and ``Next Item Id`` is the id the next
+insert gives out. They are equal unless a crash stopped an insert between taking
+ids and writing the items. ``info`` then reports the gap, and those ids are
+never reused.
 
 cleanup-queries
-----------------
+---------------
 
-Erases persisted queries older than ``--older-than-hours``, so an index that
-``search`` keeps getting run against doesn't accumulate one ``/queries/{id}/``
-group per invocation forever:
+Unfinished queries saved by ``search`` stay in the index until someone resumes
+them. This erases the ones saved more than ``--older-than-hours`` ago, for
+example from a scheduled job:
 
 .. code-block:: bash
 
-   # Erase anything persisted more than a day ago.
+   # Erase anything saved more than a day ago.
    ecp cleanup-queries my_index.zarr --older-than-hours 24
 
 .. code-block:: text
@@ -192,16 +196,17 @@ group per invocation forever:
    Usage: ecp cleanup-queries [OPTIONS] --older-than-hours <OLDER_THAN_HOURS> <INDEX_PATH>
 
    Arguments:
-     <INDEX_PATH>  Path to the index to clean up
+     <INDEX_PATH>  The index to clean up
 
    Options:
          --older-than-hours <OLDER_THAN_HOURS>
-             Erase any persisted query older than this many hours
+             Erase queries saved more than this many hours ago
          --with-logging
-             Turn on file-based logging for this run
+             Log this run to a JSONL file
          --log-dir <LOG_DIR>
-             Directory to write the log file into
+             Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. `trace` also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
      -h, --help
-             Print help
+             Print help (see more with '--help')
+

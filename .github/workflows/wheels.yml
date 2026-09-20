@@ -1,6 +1,6 @@
 # Builds wheels across the supported platform matrix and uploads them as
-# build artifacts. Does not publish anywhere - that's a deliberately
-# separate step, added once a real release is ready to go out.
+# build artifacts. Does not publish anywhere. Publishing is a deliberately
+# separate step, added once a release is ready to go out.
 name: Wheels
 
 on:

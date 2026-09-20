@@ -2,10 +2,9 @@ API Reference
 =============
 
 .. note::
-   Documented against the compiled extension classes directly
-   (``ecpfs.ecp.*``), since these are re-exported as ``ecpfs.Index`` /
-   ``ecpfs.Builder`` and autodoc needs the real class path to resolve
-   members.
+   These are documented under their compiled-extension names
+   (``ecpfs.ecp.*``), which autodoc needs to find their members. Use them as
+   ``ecpfs.Index`` and ``ecpfs.Builder``, the names the package re-exports.
 
 Index
 -----

@@ -9,15 +9,15 @@ use zarrs::storage::{
     ReadableWritableListableStorage, StorePrefix, WritableStorageTraits, discover_children,
 };
 
-use super::QueryState;
-use crate::utils::HeapEntry;
+use super::query::{HeapEntry, QueryState};
 
+/// Returns the store path that query `query_id` is saved under.
 fn group_path(query_id: usize) -> String {
     format!("/queries/{query_id}")
 }
 
-/// Writes `/queries/{query_id}/*`, replacing anything already there for
-/// this id.
+/// Saves `state` under `/queries/{query_id}/`, replacing any earlier save of
+/// that query.
 pub(super) fn persist_query(
     store: &ReadableWritableListableStorage,
     query_id: usize,
@@ -28,6 +28,7 @@ pub(super) fn persist_query(
 
     write_f32_array(store, &format!("{base}/query"), state.query.to_vec());
 
+    // One array per HeapEntry field, and per items tuple field
     let mut tree_pq_score = Vec::with_capacity(state.tree_pq.len());
     let mut tree_pq_is_leaf = Vec::with_capacity(state.tree_pq.len());
     let mut tree_pq_level = Vec::with_capacity(state.tree_pq.len());
@@ -55,8 +56,7 @@ pub(super) fn persist_query(
     write_persisted_at(store, &format!("{base}/persisted_at"), now_unix_secs());
 }
 
-/// Removes `/queries/{query_id}/*`, if present. A no-op if it doesn't
-/// exist, `erase_prefix` on a nonexistent prefix is `Ok(())`.
+/// Removes `/queries/{query_id}/*`; a no-op if it doesn't exist.
 pub(super) fn erase_query(store: &ReadableWritableListableStorage, query_id: usize) {
     let prefix = StorePrefix::new(format!("queries/{query_id}/"))
         .expect("a query_id-derived prefix is always valid");
@@ -65,8 +65,8 @@ pub(super) fn erase_query(store: &ReadableWritableListableStorage, query_id: usi
         .expect("failed to erase query group");
 }
 
-/// `persist_query` if `state` has anything worth resuming, `erase_query`
-/// otherwise.
+/// Saves `state`, or erases the saved copy when `state` has nothing left to
+/// explore or return.
 pub(super) fn persist_or_erase(
     store: &ReadableWritableListableStorage,
     query_id: usize,
@@ -79,8 +79,8 @@ pub(super) fn persist_or_erase(
     }
 }
 
-/// Every `query_id` with a persisted group under `/queries/` (empty if the
-/// subtree doesn't exist). Listing only, no array reads.
+/// Lists the id of every query saved under `/queries/`, without reading any
+/// arrays.
 pub(super) fn query_ids_on_disk(store: &ReadableWritableListableStorage) -> Vec<usize> {
     let prefix = StorePrefix::new("queries/").expect("\"queries/\" is a valid prefix");
     discover_children(store, &prefix)
@@ -97,7 +97,7 @@ pub(super) fn query_ids_on_disk(store: &ReadableWritableListableStorage) -> Vec<
         .collect()
 }
 
-/// Erases every persisted query whose `persisted_at` is strictly before
+/// Erases every saved query whose save time (`persisted_at`) is before
 /// `cutoff_unix_secs`. Returns how many were erased.
 pub(super) fn cleanup_older_than(
     store: &ReadableWritableListableStorage,
@@ -115,8 +115,7 @@ pub(super) fn cleanup_older_than(
     erased
 }
 
-/// Loads one persisted query's full state, `None` if `/queries/{query_id}/`
-/// doesn't exist.
+/// Reads a saved query's state back; `None` if query `query_id` was never saved.
 pub(super) fn load_query(
     store: &ReadableWritableListableStorage,
     query_id: usize,
@@ -166,6 +165,7 @@ pub(super) fn load_query(
     })
 }
 
+/// Writes `data` as a one-chunk f32 array at `path`.
 fn write_f32_array(store: &ReadableWritableListableStorage, path: &str, data: Vec<f32>) {
     let len = (data.len() as u64).max(1);
     let array = ArrayBuilder::new(vec![data.len() as u64], vec![len], float32(), 0.0f32)
@@ -179,6 +179,7 @@ fn write_f32_array(store: &ReadableWritableListableStorage, path: &str, data: Ve
         .expect("failed to store array");
 }
 
+/// Writes `data` as a one-chunk i32 array at `path`.
 fn write_i32_array(store: &ReadableWritableListableStorage, path: &str, data: Vec<i32>) {
     let len = (data.len() as u64).max(1);
     let array = ArrayBuilder::new(vec![data.len() as u64], vec![len], int32(), 0i32)
@@ -192,6 +193,7 @@ fn write_i32_array(store: &ReadableWritableListableStorage, path: &str, data: Ve
         .expect("failed to store array");
 }
 
+/// Writes `data` as a one-chunk u32 array at `path`.
 fn write_u32_array(store: &ReadableWritableListableStorage, path: &str, data: Vec<u32>) {
     let len = (data.len() as u64).max(1);
     let array = ArrayBuilder::new(vec![data.len() as u64], vec![len], uint32(), 0u32)
@@ -205,6 +207,7 @@ fn write_u32_array(store: &ReadableWritableListableStorage, path: &str, data: Ve
         .expect("failed to store array");
 }
 
+/// Reads the whole f32 array at `path`.
 fn read_f32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<f32> {
     let array = Array::open(store.clone(), path).expect("failed to open array");
     array
@@ -212,6 +215,7 @@ fn read_f32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<f3
         .expect("failed to retrieve array")
 }
 
+/// Reads the whole i32 array at `path`.
 fn read_i32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<i32> {
     let array = Array::open(store.clone(), path).expect("failed to open array");
     array
@@ -219,6 +223,7 @@ fn read_i32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<i3
         .expect("failed to retrieve array")
 }
 
+/// Reads the whole u32 array at `path`.
 fn read_u32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<u32> {
     let array = Array::open(store.clone(), path).expect("failed to open array");
     array
@@ -226,6 +231,7 @@ fn read_u32_array(store: &ReadableWritableListableStorage, path: &str) -> Vec<u3
         .expect("failed to retrieve array")
 }
 
+/// Returns the current time in seconds since the Unix epoch.
 fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -233,6 +239,7 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
+/// Records a query's save time, `unix_secs`, as a scalar at `path`.
 fn write_persisted_at(store: &ReadableWritableListableStorage, path: &str, unix_secs: u64) {
     let shape: Vec<u64> = vec![];
     let array = ArrayBuilder::new(shape.clone(), shape, uint64(), 0u64)
@@ -246,6 +253,7 @@ fn write_persisted_at(store: &ReadableWritableListableStorage, path: &str, unix_
         .expect("failed to store array");
 }
 
+/// Reads back a save time written by `write_persisted_at`.
 fn read_persisted_at(store: &ReadableWritableListableStorage, path: &str) -> u64 {
     let array = Array::open(store.clone(), path).expect("failed to open array");
     array

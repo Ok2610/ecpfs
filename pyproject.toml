@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name        = "ecpfs"
 version     = "0.9.96"
-description = ""
+description = "Extended Cluster Pruning (eCP) approximate nearest neighbor index, with a Rust core"
 authors     = [
     { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
 ]
@@ -25,6 +25,11 @@ classifiers = [
 dependencies = [
   "numpy>=2.5.2"
 ]
+
+[project.urls]
+Documentation = "https://ok2610.github.io/ecpfs/"
+Repository = "https://github.com/Ok2610/ecpfs"
+Issues = "https://github.com/Ok2610/ecpfs/issues"
 
 [dependency-groups]
 dev = [

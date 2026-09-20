@@ -1,8 +1,10 @@
 # ecpfs
 
-An implementation of the extended Cluster Pruning (eCP) approximate
+An implementation of the Extended Cluster Pruning (eCP) approximate
 nearest neighbor index, with a Rust core, Python bindings, and a standalone
 CLI.
+
+Documentation: https://ok2610.github.io/ecpfs/
 
 ## What is eCP?
 
@@ -50,14 +52,19 @@ planned for cases that do not need that extensibility.
 
 ## Documentation
 
-- `docs/quickstart.rst`: installation and a build/search walkthrough
-- `docs/api.rst`: Python API reference
-- `docs/cli.rst`: `ecp` CLI reference
-- `docs/multithreading.rst`: how build and insert use threads, for
-  contributors to `ecp-core`
-- `docs/build.sh` builds the combined site (Python docs plus the Rust API
-  reference); `cargo doc --no-deps -p ecp-core -p ecp-cli` builds just the
-  Rust side
+The site is at https://ok2610.github.io/ecpfs/ and covers:
+
+- Quickstart: installation and a build/search walkthrough
+- Search parameters: how `k`, `search_exp`, `max_increments` and `exclude`
+  work together
+- Python API reference, with the Rust API reference under `/rust/`
+- CLI reference for `ecp`
+- Index format: the on-disk layout, including saved queries
+- Multithreading internals, for contributors to `ecp-core`
+
+`docs/build.sh` builds the same site locally, and `docs/gen_cli.py` refreshes
+the CLI page from `ecp --help`. `cargo doc --no-deps -p ecp-core -p ecp-cli`
+builds just the Rust side.
 
 ## Index format
 
@@ -87,7 +94,9 @@ queries/Q/...           : a persisted query's state, one group per query id Q
 
 `n` differs from node to node, since eCP does not enforce cluster sizes.
 Embeddings arrays are stored as `float32`, `float16`, `uint8` or `int8`,
-chosen at build time; every read widens them to `float32`.
+chosen at build time; every read widens them to `float32`. The
+[index format page](https://ok2610.github.io/ecpfs/format.html) describes
+every array in full, including a saved query's own.
 
 ## Background
 

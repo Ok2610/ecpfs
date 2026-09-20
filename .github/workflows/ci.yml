@@ -53,3 +53,30 @@ jobs:
 
       - name: pytest
         run: uv run pytest tests/
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      # Sphinx autodoc imports the compiled extension for the Python API page.
+      - name: Build extension
+        run: uv run maturin develop
+
+      # Both doc builds fail on warnings, so this catches a broken link or a
+      # page missing from the table of contents before it reaches main.
+      - name: Build site
+        run: docs/build.sh

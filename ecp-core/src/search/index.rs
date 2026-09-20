@@ -147,19 +147,26 @@ impl Index {
             );
         }
 
+        // moka also notifies when an entry is replaced or removed by hand, so
+        // both listeners ask whether the entry really left to free memory.
         let nodes = nodes_builder
             .eviction_listener(|key, node: Arc<Node>, cause| {
-                log::debug!(
-                    "evicted lvl={} node={} cause={cause:?} bytes={}",
-                    key.0,
-                    key.1,
-                    node.resident_bytes()
-                );
+                if cause.was_evicted() {
+                    log::debug!(
+                        "evicted lvl={} node={} cause={cause:?} bytes={}",
+                        key.0,
+                        key.1,
+                        node.resident_bytes()
+                    );
+                }
             })
             .build();
         // An evicted query goes to disk, so it can still be resumed.
         let queries = queries_builder
             .eviction_listener(move |query_id, state_arc: Arc<Mutex<QueryState>>, cause| {
+                if !cause.was_evicted() {
+                    return;
+                }
                 log::debug!("evicting query_id={query_id} cause={cause:?}");
                 let state = state_arc.lock().unwrap();
                 persistence::persist_or_erase(&store, *query_id, &state);
@@ -318,7 +325,9 @@ impl Index {
         let touched = add_data(&config, &self.root, &embeddings, &ids);
         for (level, node_id) in touched {
             // node_at's cache key is 0-based; on-disk level is 1-based.
-            self.nodes.invalidate(&(level as usize - 1, node_id));
+            let key = (level as usize - 1, node_id);
+            log::debug!("dropping the cached copy of lvl={} node={node_id}", key.0);
+            self.nodes.invalidate(&key);
         }
 
         // Counted only once the vectors are on disk

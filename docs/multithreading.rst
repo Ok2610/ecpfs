@@ -42,8 +42,8 @@ decides, at every level of that walk, whether to dispatch via
 
    fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Vec<(u32, u32)>
 
-``build_tree`` always passes ``on_caller_thread = false``: its fan-out is
-genuinely parallel, at every level. This is safe because a fresh build has
+``build_tree`` always passes ``on_caller_thread = false``, so its fan-out is
+parallel at every level. This is safe because a fresh build has
 no concurrent readers and no other writer; nothing else is touching the
 tree while it's being built.
 

@@ -7,9 +7,8 @@ from .conftest import build_two_clusters_index
 
 
 def test_memory_limit_bytes_requires_an_int_not_none(tmp_path):
-    # Regression for a fix (ecp-core audit, 2026-09-10): the old
-    # None-means-cache-forever option was deliberately removed from both
-    # Builder and Index's public entry points.
+    # The Python API has no way to ask for an unlimited cache, so None is a
+    # type error rather than a way in.
     index_path = build_two_clusters_index(tmp_path)
     with pytest.raises(TypeError):
         ecpfs.Index(index_path, memory_limit_bytes=None)

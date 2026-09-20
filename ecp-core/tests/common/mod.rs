@@ -36,8 +36,8 @@ pub fn write_embeddings(store: &Arc<FilesystemStore>, path: &str, embeddings: &A
         .expect("failed to store embeddings");
 }
 
-/// Two well-separated clusters of 4 items each: items 0-3 near the origin,
-/// items 4-7 near (10, 10).
+/// Returns two well-separated clusters of 4 items each, items 0-3 near the
+/// origin and items 4-7 near (10, 10).
 pub fn two_clusters() -> Array2<f32> {
     array![
         [0.0f32, 0.0],

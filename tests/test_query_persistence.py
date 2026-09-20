@@ -25,9 +25,8 @@ def test_calling_a_method_after_close_raises_value_error(tmp_path, call):
     index = ecpfs.Index(index_path)
     index.close()
 
-    # A catchable ValueError, unlike test_errors.py's Rust-panic
-    # exceptions (those need assert_is_panic_exception): this one is a
-    # plain PyO3-raised error, so a normal pytest.raises is enough.
+    # A plain ValueError raised by PyO3, so pytest.raises is enough. The Rust
+    # panics in test_errors.py need assert_is_panic_exception instead.
     with pytest.raises(ValueError, match="closed"):
         call(index)
 
@@ -59,9 +58,8 @@ def test_cleanup_persisted_queries_older_than_erases_stale_entries(tmp_path):
     reloaded = ecpfs.Index(index_path)
     assert reloaded.cleanup_persisted_queries_older_than(0.0) == 0, "nothing is older than the Unix epoch"
 
-    # A cutoff derived from a real datetime, not an hour count, is exactly
-    # the point: callers convert their own dates to a timestamp, not to
-    # "hours from now".
+    # A cutoff built from a datetime rather than an hour count, since callers
+    # convert their own dates to a timestamp.
     future_cutoff = (datetime.datetime.now() + datetime.timedelta(hours=1)).timestamp()
     erased = reloaded.cleanup_persisted_queries_older_than(future_cutoff)
     assert erased == 1

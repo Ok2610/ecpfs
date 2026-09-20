@@ -1,3 +1,5 @@
+//! Opening a built index to search it and insert into it.
+
 pub mod index;
 pub mod info;
 pub mod node;

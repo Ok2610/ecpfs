@@ -10,12 +10,22 @@ use ecp_core::build::source::EmbeddingsSource;
 use crate::pydtype::PyEmbeddingDtype;
 use crate::pymetric::PyMetric;
 
-/// Builds a new eCP index: select representatives, then build the tree.
+/// Builds a new eCP index in three steps: create the ``Builder``, call
+/// ``select_representatives`` or ``select_representatives_custom``, then call
+/// ``build``. Every method releases the GIL while it works.
+///
+/// The index is created at ``index_path``. ``levels`` is the number of node
+/// levels below the root, and ``is_normalized`` should be set only if every
+/// embedding is unit-length. ``memory_limit_bytes`` is a target for the build's
+/// memory use rather than a hard cap, and defaults to 80% of system RAM. Leave
+/// ``embedding_dtype`` as None to store each file's own dtype; a narrower one
+/// logs a warning. ``max_chunk_bytes`` caps the size of one on-disk chunk.
 #[pyclass(module = "ecp.builder")]
 pub struct BuilderWrapper {
     inner: Builder,
 }
 
+/// Parses "offset" or "random", raising ValueError for anything else.
 fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
     match strategy {
         "offset" => Ok(RepresentativeStrategy::Offset),
@@ -28,15 +38,8 @@ fn parse_strategy(strategy: &str) -> PyResult<RepresentativeStrategy> {
 
 #[pymethods]
 impl BuilderWrapper {
-    /// __new__(index_path, levels, metric, is_normalized=False, memory_limit_bytes=<80% of system RAM>, embedding_dtype=None, max_chunk_bytes=50 MiB)
-    ///
-    /// Creates a fresh index at `index_path` and returns a Builder ready to
-    /// build into it. memory_limit_bytes is the memory budget for the build
-    /// process (not strictly enforced). embedding_dtype of None matches
-    /// each source's own dtype; forcing F16 against an f32 source loses
-    /// precision and logs a warning. max_chunk_bytes is the
-    /// max size for one on-disk chunk. Releases the GIL for the actual
-    /// work, same as every other method on this class.
+    /// Creates the index at `index_path` and returns a builder for it. PyO3
+    /// drops this doc, so the class doc carries the arguments.
     #[new]
     #[pyo3(signature = (
         index_path,
@@ -76,9 +79,11 @@ impl BuilderWrapper {
 
     /// select_representatives(embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings")
     ///
-    /// Picks cluster representatives out of `embeddings_file` via `strategy`
-    /// ("offset" | "random") and persists them. Must be called (or
-    /// select_representatives_custom) before build.
+    /// Picks the representatives the tree is built from, out of the dataset
+    /// ``grp_name`` in ``embeddings_file`` (``.h5`` or ``.zarr``). ``strategy`` is
+    /// "offset" (evenly spaced items) or "random". ``target_cluster_items`` is the
+    /// average cluster size to aim for, and ``fallback_batch_rows`` the chunk size
+    /// assumed if the file isn't chunked.
     #[pyo3(signature = (embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings"))]
     fn select_representatives(
         &mut self,
@@ -103,12 +108,11 @@ impl BuilderWrapper {
         Ok(())
     }
 
-    /// select_representatives_custom(ids: np.ndarray[u32, 1], embeddings: np.ndarray[f32, 2])
+    /// select_representatives_custom(ids, embeddings)
     ///
-    /// Uses caller-supplied representatives directly instead of running a
-    /// selection strategy, for when representatives come from an external
-    /// clustering step. Must be called (or select_representatives) before
-    /// build.
+    /// Uses your own representatives instead of picking them, such as ones from
+    /// an external clustering step. ``ids[i]`` is the id of row ``i`` of
+    /// ``embeddings``.
     fn select_representatives_custom(
         &mut self,
         py: Python<'_>,
@@ -122,9 +126,9 @@ impl BuilderWrapper {
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")
     ///
-    /// Writes the index root and descends the full tree over
-    /// `embeddings_file`, using the representatives already selected via
-    /// select_representatives or select_representatives_custom.
+    /// Builds the tree from the dataset ``grp_name`` in ``embeddings_file``, whose
+    /// rows get item ids 0, 1, 2, ... in order. ``fallback_batch_rows`` works as
+    /// in ``select_representatives``.
     #[pyo3(signature = (embeddings_file, fallback_batch_rows, grp_name="embeddings"))]
     fn build(
         &mut self,

@@ -28,10 +28,9 @@ def test_insert_multiple_points_in_one_call_are_all_findable(tmp_path):
 
 
 def test_concurrent_insert_and_search_from_multiple_threads(tmp_path):
-    """Python threads against one shared Index, which releases the GIL
-    during both insert and search (see pyindex.rs's py.detach calls).
-    This is what actually exercises ecp-core's per-leaf locking from
-    Python, not just proves the Rust API accepts the calls."""
+    """Python threads sharing one Index. Both insert and search release the
+    GIL, so the threads overlap and exercise the per-leaf locking rather than
+    only checking that the calls are accepted."""
     index_path = build_two_clusters_index(tmp_path)
     index = ecpfs.Index(index_path)
     errors = []

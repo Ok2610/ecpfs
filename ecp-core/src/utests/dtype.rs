@@ -1,7 +1,7 @@
 use super::*;
 
-/// The lossy pairs form a partial order, not a chain: Int8 and UInt8 each
-/// narrow the other, since neither range contains the other's.
+/// Int8 and UInt8 each narrow the other, since neither range contains the
+/// other's.
 #[test]
 fn narrows_flags_every_lossy_direction_and_no_lossless_one() {
     use EmbeddingDtype::{F16, F32, Int8, UInt8};

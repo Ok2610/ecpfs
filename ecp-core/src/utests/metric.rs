@@ -24,10 +24,9 @@ fn l2_distances_are_euclidean_norms() {
     assert_eq!(distances.to_vec(), vec![0.0, 5.0, 1.0]);
 }
 
-/// Same vectors as `l2_distances_are_euclidean_norms`, but normalized to
-/// unit length and passed with `is_normalized: true`, exercising the
-/// `‖e−q‖² = 1 − 2·e·q + ‖q‖²` fast path instead of the general one. The
-/// two must still agree on the actual distance values, not just ranking.
+/// Unit-length vectors with `is_normalized: true` take the shortcut formula,
+/// and must give the same distances as the general formula, not just the
+/// same ranking.
 #[test]
 fn l2_with_is_normalized_true_matches_general_formula_on_unit_vectors() {
     let embeddings = array![[0.0f32, 1.0], [0.6, 0.8], [1.0, 0.0]];

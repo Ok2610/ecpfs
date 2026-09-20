@@ -1,5 +1,5 @@
-//! Proves `Builder` agrees with search end to end: build via `Builder`,
-//! then load and search with `Index::load`.
+//! Tests `Builder` end to end. Each test builds an index, then loads it with
+//! `Index::load` and searches it.
 
 mod common;
 
@@ -18,8 +18,8 @@ use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::search::Index;
 use ecp_core::utils::{EmbeddingDtype, Metric};
 
-/// `(node count, total children summed across those nodes)` for one
-/// `/lvl_N/` tier.
+/// Counts the nodes on one level (`/lvl_N/`) and their children in total,
+/// as `(nodes, children)`.
 fn level_node_count_and_children(
     store: &zarrs::storage::ReadableListableStorage,
     level: u32,
@@ -35,6 +35,7 @@ fn level_node_count_and_children(
     (listing.prefixes().len(), total_children)
 }
 
+/// Writes `embeddings` to `path` as a single f16 chunk.
 fn write_embeddings_f16(
     store: &Arc<FilesystemStore>,
     path: &str,
@@ -81,12 +82,13 @@ fn builder_produces_a_structure_that_searches_correctly() {
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-/// `ns = node_size`, `total_levels = 3`, chosen so `R = ns^3` exactly (no
-/// rounding): 81 items, target_cluster_items=3 -> R=27 representatives,
-/// ns=3. Dense ascending 1D values, so every level's representatives partition a
-/// contiguous, fully-covered range: no node at any level ends up with zero
-/// children. Expected node counts per level: lvl_1 = ns = 3, lvl_2 = ns^2 =
-/// 9, lvl_3 (leaf) = ns^3 = R = 27.
+/// A 3-level build sized so `R = ns^3` exactly, with no rounding. 81 items and
+/// target_cluster_items=3 give R=27 representatives and ns=3. Dense ascending
+/// 1D values, so every level's representatives split a contiguous range and no
+/// node at any level ends up with zero children.
+///
+/// Expected nodes per level: lvl_1 = ns = 3, lvl_2 = ns^2 = 9, lvl_3 (leaf) =
+/// ns^3 = R = 27.
 #[test]
 fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the_leaf() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -152,12 +154,10 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
     );
 }
 
-/// A node ending up with fewer children than another (even zero) is
-/// expected, not a bug: items with tied nearest-representative scores all
-/// route to the same node. Forcing an exact tie (two representatives at
-/// the same value) drives this deliberately: lvl_1 ends up with 1 node
-/// instead of `ns = 2`, but its total children still add up to `ns^2`, and
-/// search must still reach every item despite the missing `lvl_1/node_0`.
+/// Tied scores send every tied item to the same node, so a node can end up
+/// with no children, which is expected. Two representatives at the same value
+/// force a tie. lvl_1 then has 1 node instead of `ns = 2` but still `ns^2`
+/// children in total, and search must reach every item without `lvl_1/node_0`.
 #[test]
 fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -167,7 +167,7 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
 
     // Representatives (offset, target_cluster_items=2) are dataset[0,2,4,6]
     // = [0.0, 0.0, 4.0, 6.0]. dataset[2] is forced equal to dataset[0], so
-    // root (the first ns=2 representatives) is [0.0, 0.0]: an exact tie.
+    // root (the first ns=2 representatives) is [0.0, 0.0], an exact tie.
     let d = 8;
     let embeddings = ndarray::array![[0.0f32], [1.0], [0.0], [3.0], [4.0], [5.0], [6.0], [7.0]];
     write_embeddings(&store, "/dataset", &embeddings);
@@ -235,17 +235,10 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
     );
 }
 
-/// First end-to-end build+search test for `Metric::IP` (previously no
-/// coverage anywhere in this suite; see `calculate_distances`, whose IP
-/// arm had never been exercised past a single raw-vector unit test).
-/// Deliberately uses magnitude-skewed, non-unit vectors: `is_normalized`
-/// doesn't affect IP's own assignment or distance math at all (only L2's),
-/// so nothing stops a caller from building an IP index on raw, un-normalized
-/// embeddings like this. Doing so lets one large-magnitude representative
-/// dominate the nearest-representative assignment for nearly every point,
-/// which empties out other representatives' nodes, the same failure mode
-/// as the tied-score test above, reached through IP's own math instead of
-/// a forced tie.
+/// Builds and searches an IP index on vectors of very different magnitudes,
+/// which nothing prevents for IP. One large representative then wins nearly
+/// every point, leaving other nodes empty, the same situation the tied-score
+/// test reaches with a forced tie.
 #[test]
 fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -295,10 +288,8 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
     );
 }
 
-/// Same geometry, but the source is f16-native (as SigLIP-style embeddings
-/// often are) and the dtype is left at its default (`None`, native): the
-/// index should come out f16 on disk, and still search correctly since
-/// `Index::load`/`Node::embeddings` already upcast f16 on read.
+/// An f16 source (as SigLIP embeddings often are) with `embedding_dtype` left
+/// as `None` must give an f16 index on disk that still searches correctly.
 #[test]
 fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
@@ -340,10 +331,9 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-/// Integer-valued vectors, so the uint8 build stores them exactly rather
-/// than clamping or truncating. The two indexes must then agree on every
-/// returned distance bit-for-bit, not merely approximately: widening uint8
-/// to f32 is exact, and the search arithmetic is identical from there.
+/// Integer-valued vectors fit uint8 exactly, so a uint8 build and an f32 build
+/// must return identical distances, bit for bit. Widening uint8 to f32 is
+/// exact, and the search math is the same from there.
 #[test]
 fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
     let vectors = array![

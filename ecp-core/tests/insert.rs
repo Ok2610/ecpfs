@@ -1,7 +1,5 @@
-//! Proves `Index::insert` end to end: a point added after the initial
-//! build is durably on disk (found by a freshly reloaded `Index`) and
-//! immediately visible within the same process (found by a later search
-//! on the same `Index` instance, proving cache invalidation works).
+//! Tests `Index::insert` end to end. An inserted point must be found by a
+//! later search on the same `Index`, and by a freshly loaded one.
 
 mod common;
 
@@ -23,12 +21,11 @@ fn insert_is_found_in_the_same_process_and_after_a_reload() {
     let index = Index::load(index_path.clone(), None);
     let query = array![0.0f32, 0.0];
 
-    // Warms whichever leaf serves this region of the tree.
+    // Search once so the leaf covering this region is cached
     let (items, _) = index.new_search(query.clone(), 4, 4, -1, &HashSet::new());
     assert!(!items.iter().any(|(_, id)| *id == 8));
 
-    // Close enough to item 0 (at [0,0]) that it must route to the exact
-    // same leaf, so this exercises invalidation of an already-cached node.
+    // Close enough to item 0 at (0, 0) to land in the same, already cached leaf
     let assigned = index.insert(array![[0.001f32, 0.001]]);
     assert_eq!(assigned, 8..9, "the index already has items 0..7");
 
@@ -47,8 +44,8 @@ fn insert_is_found_in_the_same_process_and_after_a_reload() {
     );
 }
 
-/// Overwrites an existing `/info/{name}` scalar, to set up id-space states
-/// that only a crash mid-insert would otherwise produce.
+/// Overwrites the `/info/{name}` scalar, to set up the counters a crash
+/// mid-insert would leave.
 fn overwrite_info_u32(index_path: &std::path::Path, name: &str, value: u32) {
     let store: zarrs::storage::ReadableWritableListableStorage =
         Arc::new(FilesystemStore::new(index_path).expect("failed to reopen store"));
@@ -59,9 +56,9 @@ fn overwrite_info_u32(index_path: &std::path::Path, name: &str, value: u32) {
         .expect("failed to overwrite the info field");
 }
 
-/// A crash between reserving an id range and writing its vectors leaves the
-/// allocator ahead of the count. Reachable in production, since `insert`
-/// persists the reservation before `add_data` stores anything.
+/// A crash between taking ids and writing the vectors leaves `next_item_id`
+/// ahead of `total_items`. `insert` saves `next_item_id` before writing
+/// anything, so a crash in production can leave this state.
 #[test]
 fn a_reserved_but_unwritten_range_leaves_the_count_honest() {
     let (_tmp, index_path) = build_index(&two_clusters(), None);
@@ -130,10 +127,9 @@ fn insert_a_batch_routes_each_point_to_its_own_leaf() {
     assert!(near_far_cluster.iter().any(|(_, id)| *id == 9));
 }
 
-/// Uses `Builder::select_representatives_custom` to place a representative far
-/// from every real dataset point, so its leaf is never written during the
-/// initial build. Then inserts into exactly that leaf, exercising
-/// `zarrs_append`'s "array doesn't exist yet" branch through `insert`.
+/// Places a representative (with `select_representatives_custom`) far from
+/// every dataset point, so its leaf is never written during the build.
+/// Inserting next to it must create that leaf on disk.
 #[test]
 fn insert_into_a_previously_empty_leaf_creates_it_on_disk() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");

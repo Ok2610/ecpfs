@@ -8,6 +8,7 @@ use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 
+/// Writes `children` as the node's `child_key` array (`node_ids` or `item_ids`).
 fn write_children(
     store: &Arc<MemoryStore>,
     group_path: &str,
@@ -27,9 +28,9 @@ fn write_children(
         .expect("failed to store children chunk");
 }
 
-/// Writes a node's `embeddings` array and its `child_key` (node_ids/item_ids) array
-/// into `group_path` on an in-memory zarr store, mirroring what `append_node_batch`
-/// writes to disk for a real index.
+/// Writes a node's `embeddings` and `children` arrays at `group_path` in an
+/// in-memory store, the same layout `append_node_batch` writes. `child_key`
+/// names the children array (`node_ids` or `item_ids`).
 pub fn write_node(
     store: &Arc<MemoryStore>,
     group_path: &str,
@@ -52,9 +53,8 @@ pub fn write_node(
     write_children(store, group_path, child_key, children);
 }
 
-/// Writes `info/levels`, `info/metric`, and `info/is_normalized` as rank-0
-/// (scalar) arrays, mirroring the fields the build's own `write_index_info`
-/// puts at the root of a real index.
+/// Writes `info/levels`, `info/metric` and `info/is_normalized` the same way
+/// the build's `write_index_info` does.
 pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
     let scalar_shape: Vec<u64> = vec![];
 
@@ -95,8 +95,8 @@ pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_
         .expect("failed to store info/is_normalized chunk");
 }
 
-/// Writes `info/{name}` as a rank-0 (scalar) array, mirroring
-/// `write_info_u32`.
+/// Writes `info/{name}` as a `u32` scalar, the same way the build's
+/// `write_info_u32` does.
 pub fn write_info_u32(store: &Arc<MemoryStore>, name: &str, value: u32) {
     let scalar_shape: Vec<u64> = vec![];
     let path = format!("/info/{name}");
@@ -111,16 +111,15 @@ pub fn write_info_u32(store: &Arc<MemoryStore>, name: &str, value: u32) {
         .unwrap_or_else(|e| panic!("failed to store {path} chunk: {e}"));
 }
 
-/// Writes both id fields level with each other, as a fresh build leaves
-/// them. Tests that need the allocator ahead of the count (a crash mid-insert)
-/// write `next_item_id` themselves afterwards.
+/// Writes `info/total_items` and `info/next_item_id`, both set to
+/// `total_items` as a fresh build leaves them. A test simulating a crashed
+/// insert overwrites `next_item_id` afterwards.
 pub fn write_item_counts(store: &Arc<MemoryStore>, total_items: u32) {
     write_info_u32(store, "total_items", total_items);
     write_info_u32(store, "next_item_id", total_items);
 }
 
-/// Writes `/rep_item_ids`, mirroring the representative id array a real
-/// build leaves at the top level.
+/// Writes `ids` as `/rep_item_ids`, the representative ids a build saves.
 pub fn write_rep_item_ids(store: &Arc<MemoryStore>, ids: &Array1<u32>) {
     let shape = vec![ids.len() as u64];
     let array = ArrayBuilder::new(shape.clone(), shape, uint32(), 0u32)
@@ -134,7 +133,7 @@ pub fn write_rep_item_ids(store: &Arc<MemoryStore>, ids: &Array1<u32>) {
         .expect("failed to store rep_item_ids chunk");
 }
 
-/// Writes `index_root/embeddings`, the root node's representatives.
+/// Writes `embeddings` as `index_root/embeddings`, the root node's representatives.
 pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
     let shape = vec![embeddings.nrows() as u64, embeddings.ncols() as u64];
     let root_array = ArrayBuilder::new(shape.clone(), shape, float32(), 0.0f32)
@@ -148,14 +147,17 @@ pub fn write_index_root(store: &Arc<MemoryStore>, embeddings: &Array2<f32>) {
         .expect("failed to store index_root/embeddings chunk");
 }
 
+/// Creates an empty in-memory zarr store.
 pub fn new_memory_store() -> Arc<MemoryStore> {
     Arc::new(MemoryStore::new())
 }
 
+/// Returns `store` as read-only zarr storage.
 pub fn as_readable_listable(store: &Arc<MemoryStore>) -> ReadableListableStorage {
     store.clone()
 }
 
+/// Returns `store` as read-write zarr storage.
 pub fn as_readable_writable_listable(store: &Arc<MemoryStore>) -> ReadableWritableListableStorage {
     store.clone()
 }

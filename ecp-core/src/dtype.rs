@@ -1,27 +1,31 @@
+//! The types embeddings can be stored as on disk, and reading them back as f32.
+
 use half::f16;
 use ndarray::Array2;
 use zarrs::array::data_type::{float16, float32, int8, uint8};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::storage::ReadableStorageTraits;
 
-/// On-disk width for embeddings arrays. Narrower than `F32` means less disk
-/// and less to read, but nothing is cached narrow: every read widens to f32
-/// (see `read_subset_as_f32`), so resident size is the same whichever is
-/// chosen. `F16` loses precision on genuinely `F32` data, while `UInt8`
-/// (`0..=255`, SIFT-style descriptors) and `Int8` (`-128..=127`, symmetric
-/// scalar quantization) round-trip integer-valued data exactly.
+/// The type an index stores its embeddings as on disk. A narrower type uses
+/// less disk, but every read widens to f32, so memory use is the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddingDtype {
+    /// 8-bit unsigned integers (0 to 255), such as SIFT descriptors. Exact for
+    /// integer data.
     UInt8,
+    /// 8-bit signed integers (-128 to 127), such as scalar-quantized vectors.
+    /// Exact for integer data.
     Int8,
+    /// 16-bit floats. Loses precision on f32 data.
     F16,
+    /// 32-bit floats.
     F32,
 }
 
 impl EmbeddingDtype {
-    /// True if storing as `self` cannot represent every value `native` can,
-    /// so writing narrows the data. `Int8` and `UInt8` are each lossy for
-    /// the other: neither range contains the other's.
+    /// Checks whether storing `native` data as `self` loses information, because
+    /// `self` can't hold every value `native` can. `Int8` and `UInt8` each lose
+    /// information for the other, since neither range contains the other.
     pub fn narrows(self, native: EmbeddingDtype) -> bool {
         use EmbeddingDtype::{F16, F32, Int8, UInt8};
         matches!(
@@ -37,8 +41,8 @@ impl EmbeddingDtype {
     }
 }
 
-/// The dtype `array`'s elements are stored as. `context` names the array in
-/// the panic message when it holds a dtype ecpfs can't read.
+/// Returns the dtype that `array` is stored as. `context` names the array in
+/// the panic message if ecpfs can't read that dtype.
 pub fn dtype_of_array<T: ?Sized>(array: &Array<T>, context: &str) -> EmbeddingDtype {
     let dtype = array.data_type();
     if *dtype == float32() {
@@ -56,9 +60,9 @@ pub fn dtype_of_array<T: ?Sized>(array: &Array<T>, context: &str) -> EmbeddingDt
     }
 }
 
-/// Reads `subset` of `array` as f32, widening from whatever dtype it's
-/// stored as. Every distance computation runs on f32, so this is the one
-/// place a stored dtype is widened on the read path.
+/// Reads the `subset` region of `array` as f32, widening from the stored
+/// dtype, since distances are always computed on f32. `context` names the
+/// array in panic messages.
 pub fn read_subset_as_f32<T: ReadableStorageTraits + ?Sized + 'static>(
     array: &Array<T>,
     subset: &ArraySubset,

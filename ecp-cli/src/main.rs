@@ -11,7 +11,7 @@ use ecp_core::logging;
 use ecp_core::search::{Index, IndexInfo};
 use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
 
-/// Default `--memory-limit-gb` for both subcommands: 80% of system RAM.
+/// Returns the default --memory-limit-gb, 80% of RAM in whole GiB.
 fn default_memory_limit_gib() -> usize {
     default_memory_limit_bytes() / (1024 * 1024 * 1024)
 }
@@ -34,7 +34,9 @@ enum Command {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum MetricArg {
+    /// Euclidean distance
     L2,
+    /// Inner product
     Ip,
 }
 
@@ -49,7 +51,9 @@ impl From<MetricArg> for Metric {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum RepSelectionArg {
+    /// Evenly spaced items
     Offset,
+    /// A random sample
     Random,
 }
 
@@ -64,12 +68,17 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum EmbeddingDtypeArg {
+    /// The file's own type
     Native,
+    /// 8-bit unsigned integers (0 to 255)
     // Without this, clap's kebab-casing renders the variant as `u-int8`.
     #[value(name = "uint8")]
     UInt8,
+    /// 8-bit signed integers (-128 to 127)
     Int8,
+    /// 16-bit floats
     F16,
+    /// 32-bit floats
     F32,
 }
 
@@ -108,24 +117,25 @@ impl From<LogLevelArg> for log::LevelFilter {
     }
 }
 
-/// Logging flags shared by every subcommand. Off by default; when
-/// `with_logging` is set, writes JSONL to `log_dir` (default `ecp_logs/`).
+/// Logging flags shared by the subcommands. Logging is off unless
+/// --with-logging is set.
 #[derive(clap::Args)]
 struct LoggingArgs {
-    /// Turn on file-based logging for this run.
+    /// Log this run to a JSONL file.
     #[arg(long)]
     with_logging: bool,
 
-    /// Directory to write the log file into.
+    /// Directory for the log file, ecp_logs/ if not set.
     #[arg(long)]
     log_dir: Option<PathBuf>,
 
-    /// Log verbosity. `trace` also logs every node visited during search.
+    /// Log verbosity. trace also logs every node visited during search.
     #[arg(long, value_enum, default_value_t = LogLevelArg::Debug)]
     log_level: LogLevelArg,
 }
 
 impl LoggingArgs {
+    /// Starts logging if --with-logging was given, and prints the log file's path.
     fn init_if_requested(&self) {
         if !self.with_logging {
             return;
@@ -135,8 +145,7 @@ impl LoggingArgs {
     }
 }
 
-/// Selects cluster representatives from `embeddings_file`, then builds the
-/// full tree over it into `save_file`.
+/// Builds a new index from EMBEDDINGS_FILE, saved at --save-file.
 #[derive(clap::Args)]
 #[command(
     after_help = "Thread count is controlled by the RAYON_NUM_THREADS environment variable \
@@ -144,50 +153,49 @@ impl LoggingArgs {
 lifetime of the run."
 )]
 struct BuildIndexArgs {
-    /// Embeddings file with data vectors. Zarr or HDF5 file.
+    /// The embeddings to index, as a .zarr or .h5 file.
     embeddings_file: PathBuf,
 
-    /// Output index path.
+    /// Where to save the index.
     #[arg(long, default_value = "ecpfs_index.zarr")]
     save_file: PathBuf,
 
-    /// Levels in the index.
+    /// Number of node levels below the root.
     #[arg(long, default_value_t = 3)]
     levels: u32,
 
-    /// Preferred items for each cluster (no guarantees).
+    /// Average number of items per cluster to aim for.
     #[arg(long, default_value_t = 100)]
     target_cluster_items: usize,
 
-    /// Metric to use for distance calculations.
+    /// How the distance between vectors is measured.
     #[arg(long, value_enum, default_value_t = MetricArg::L2)]
     metric: MetricArg,
 
-    /// Set if every embedding is already unit-length, to skip norm computation.
+    /// Set only if every embedding is unit-length. L2 then skips computing norms.
     #[arg(long, default_value_t = false)]
     is_normalized: bool,
 
-    /// Width to write embeddings as. `native` matches the source; anything
-    /// narrower than the source warns, since it loses precision and, for
-    /// the integer dtypes, truncates fractions and clamps out-of-range
-    /// values. Every read widens back to f32, so this saves disk, not memory.
+    /// Type to store embeddings as on disk. A type narrower than the file's warns,
+    /// since it loses precision, and integer types also drop fractions and clamp
+    /// out-of-range values. Reads always widen to f32, so this saves disk, not memory.
     #[arg(long, value_enum, default_value_t = EmbeddingDtypeArg::Native)]
     embedding_dtype: EmbeddingDtypeArg,
 
-    /// Group name for the embeddings dataset.
+    /// Name of the embeddings dataset inside the file.
     #[arg(long, default_value = "embeddings")]
     emb_grp_name: String,
 
-    /// How representatives are selected.
+    /// How to pick the representatives the tree is built from.
     #[arg(long, value_enum, default_value_t = RepSelectionArg::Offset)]
     rep_selection: RepSelectionArg,
 
-    /// Memory budget for the build process, in GB (not strictly enforced).
-    /// Defaults to 80% of total system RAM.
+    /// Target for the build's memory use in GB, not a hard cap. Defaults to 80%
+    /// of RAM.
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
-    /// Row batch size used when a source has no natural on-disk chunk to align to.
+    /// Chunk size assumed when the file isn't chunked, in rows.
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
 
@@ -199,6 +207,7 @@ struct BuildIndexArgs {
     logging: LoggingArgs,
 }
 
+/// Runs build-index, picking the representatives and then building the tree.
 fn build_index(args: BuildIndexArgs) {
     args.logging.init_if_requested();
     let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
@@ -221,28 +230,26 @@ fn build_index(args: BuildIndexArgs) {
     builder.build(&source, args.fallback_batch_rows);
 }
 
-/// Bulk-appends new vectors from `embeddings_file` into an already-built
-/// index. Offline counterpart to calling `Index::insert` from a live
-/// session. One process, batches the file, exits.
+/// Adds every vector in EMBEDDINGS_FILE to an existing index.
+///
+/// Prints the ids the new vectors got.
 #[derive(clap::Args)]
 struct AddDataArgs {
-    /// Path to the index to insert into.
+    /// The index to add to.
     index_path: PathBuf,
 
-    /// Zarr or HDF5 file with the new data vectors to append.
+    /// The vectors to add, as a .zarr or .h5 file.
     embeddings_file: PathBuf,
 
-    /// Group name for the embeddings dataset.
+    /// Name of the embeddings dataset inside the file.
     #[arg(long, default_value = "embeddings")]
     emb_grp_name: String,
 
-    /// Row batch size used when the source has no natural on-disk chunk to
-    /// align to (same meaning as build-index's flag of the same name).
+    /// Rows added per batch, rounded up to whole chunks of the file.
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
 
-    /// Caps how many touched nodes stay cached, in GB. Defaults to 80% of
-    /// total system RAM.
+    /// Cap on the index data kept in memory, in GB. Defaults to 80% of RAM.
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
@@ -250,6 +257,7 @@ struct AddDataArgs {
     logging: LoggingArgs,
 }
 
+/// Runs add-data, inserting the file in batches and printing the ids assigned.
 fn add_data(args: AddDataArgs) {
     args.logging.init_if_requested();
     let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
@@ -260,8 +268,8 @@ fn add_data(args: AddDataArgs) {
     let batch_vecs =
         source.chunk_aligned_batch_vecs(args.fallback_batch_rows, args.fallback_batch_rows);
 
-    // Reported from what insert actually assigned, never predicted: a
-    // reserved-but-lost range means ids are not simply "the old count onward".
+    // Report the ids insert returned. After a crashed insert, they don't simply
+    // follow the old item count.
     let mut first_id: Option<u32> = None;
     let mut last_id_end = 0u32;
     let mut start = 0usize;
@@ -279,24 +287,25 @@ fn add_data(args: AddDataArgs) {
     }
 }
 
-/// Runs a query against an index, or continues a persisted one with
-/// `--resume`. Persists before exiting; prints `query_id` as the first
-/// output line.
+/// Searches an index for one query vector, or continues a saved query.
+///
+/// Prints the query id, then one line per result with the item id and score
+/// separated by a tab, and saves the query so --resume can continue it.
 #[derive(clap::Args)]
 struct SearchArgs {
-    /// Path to the index to search.
+    /// The index to search.
     index_path: PathBuf,
 
-    /// Zarr or HDF5 file to read the query vector from. Required unless
-    /// --resume is given.
+    /// The .zarr or .h5 file holding the query vector. Required unless --resume
+    /// is given.
     #[arg(required_unless_present = "resume")]
     query_file: Option<PathBuf>,
 
-    /// Row within `query_file` to use as the query.
+    /// Which row of QUERY_FILE is the query.
     #[arg(long, default_value_t = 0)]
     query_row: usize,
 
-    /// Group name for the query dataset.
+    /// Name of the query dataset inside the file.
     #[arg(long, default_value = "embeddings")]
     query_grp_name: String,
 
@@ -304,26 +313,25 @@ struct SearchArgs {
     #[arg(long, default_value_t = 10)]
     k: usize,
 
-    /// Search expansion factor.
+    /// How many leaves to scan. More gives better results but a slower search.
     #[arg(long, default_value_t = 4)]
     search_exp: u32,
 
-    /// Max retries when fewer than `k` items are found (-1 = unlimited).
+    /// How many times to double --search-exp while fewer than --k items are
+    /// found. -1 for no limit.
     #[arg(long, default_value_t = -1)]
     max_increments: i32,
 
-    /// Item ids to exclude, comma-separated.
+    /// Item ids to leave out, comma-separated.
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<u32>,
 
-    /// Caps how many touched nodes stay cached, in GB.
-    /// Defaults to 80% of total system RAM.
+    /// Cap on the index data kept in memory, in GB. Defaults to 80% of RAM.
     #[arg(long, default_value_t = default_memory_limit_gib())]
     memory_limit_gb: usize,
 
-    /// Resume a persisted query (id printed as this tool's first output
-    /// line) instead of starting a new one. Ignores
-    /// query_file/query_row/query_grp_name.
+    /// Continue the saved query with this id, printed first by an earlier
+    /// search, instead of starting a new one.
     #[arg(long, conflicts_with = "query_file")]
     resume: Option<usize>,
 
@@ -331,6 +339,7 @@ struct SearchArgs {
     logging: LoggingArgs,
 }
 
+/// Runs search, printing the query id and then one line per result.
 fn search(args: SearchArgs) {
     args.logging.init_if_requested();
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
@@ -364,21 +373,23 @@ fn search(args: SearchArgs) {
         )
     };
 
+    // Save the query so --resume can continue it
     index.shutdown();
 
     println!("query_id\t{query_id}");
-    for (distance, id) in items {
-        println!("{id}\t{distance}");
+    for (score, id) in items {
+        println!("{id}\t{score}");
     }
 }
 
-/// Prints an index's `info/*` metadata without loading its tree.
+/// Prints an index's settings and item counts without loading its tree.
 #[derive(clap::Args)]
 struct InfoArgs {
-    /// Path to the index to inspect.
+    /// The index to describe.
     index_path: PathBuf,
 }
 
+/// Runs info, printing each setting on its own line.
 fn info(args: InfoArgs) {
     let info = IndexInfo::load(args.index_path);
     println!("Levels: {}", info.levels);
@@ -395,14 +406,15 @@ fn info(args: InfoArgs) {
     println!("Total Representatives: {}", info.total_representatives);
 }
 
-/// Erases persisted queries nobody has resumed, so `/queries/` doesn't
-/// grow forever on an index `search` keeps being run against.
+/// Erases saved queries older than --older-than-hours.
+///
+/// Without it, repeated searches keep filling the index with saved queries.
 #[derive(clap::Args)]
 struct CleanupQueriesArgs {
-    /// Path to the index to clean up.
+    /// The index to clean up.
     index_path: PathBuf,
 
-    /// Erase any persisted query older than this many hours.
+    /// Erase queries saved more than this many hours ago.
     #[arg(long)]
     older_than_hours: u64,
 
@@ -410,6 +422,7 @@ struct CleanupQueriesArgs {
     logging: LoggingArgs,
 }
 
+/// Runs cleanup-queries and prints how many queries it erased.
 fn cleanup_queries(args: CleanupQueriesArgs) {
     args.logging.init_if_requested();
     let index = Index::load(args.index_path, None);
@@ -426,6 +439,7 @@ fn cleanup_queries(args: CleanupQueriesArgs) {
     );
 }
 
+/// Parses the command line and runs the chosen subcommand.
 fn main() {
     let cli = Cli::parse();
     match cli.command {

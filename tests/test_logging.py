@@ -9,13 +9,10 @@ import ecpfs
 
 
 def test_init_logging_creates_a_jsonl_file_with_valid_log_lines(tmp_path):
-    # ecp_core::logging::init's global logger can only be set once per
-    # process (log::set_boxed_logger), so init_logging is idempotent: a
-    # later call in the same process silently returns the first call's
-    # path, ignoring its own log_dir/level. A plain in-process call here
-    # would be at the mercy of whatever other test ran first in this
-    # pytest session, so this runs in its own subprocess to guarantee it's
-    # the first (and only) call.
+    # Only the first init_logging call in a process sets logging up; a later
+    # one returns the same path and ignores its own log_dir and level. This
+    # runs in a subprocess so it is that first call, whatever else the test
+    # session did.
     script = f"""
 import json
 import ecpfs
@@ -40,8 +37,7 @@ for line in lines:
 
 
 def test_init_logging_rejects_an_unknown_level(tmp_path):
-    # parse_level runs before logging::init touches the process-global
-    # logger, so this fails the same way regardless of what earlier tests
-    # already called init_logging with. No subprocess needed.
+    # The level is parsed before logging is set up, so this fails the same way
+    # whatever earlier tests did. No subprocess needed.
     with pytest.raises(ValueError, match="unknown log level"):
         ecpfs.init_logging(log_dir=str(tmp_path), level="bogus")

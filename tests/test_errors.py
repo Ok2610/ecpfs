@@ -4,12 +4,10 @@ import ecpfs
 
 
 def assert_is_panic_exception(exc):
-    # Rust panics surface to Python as pyo3_runtime.PanicException, a
-    # BaseException subclass, not a plain Exception. pyo3_runtime isn't
-    # independently importable (it's a synthetic module PyO3 attaches to
-    # the exception type, not a real sys.modules entry), so an explicit
-    # type-name/module check is the reliable way to assert on it from
-    # outside the extension.
+    # Rust panics reach Python as pyo3_runtime.PanicException, a BaseException
+    # subclass rather than an Exception. pyo3_runtime cannot be imported, since
+    # PyO3 attaches it to the exception type instead of adding it to sys.modules,
+    # so checking the type's name and module is the way to assert on it here.
     assert type(exc).__name__ == "PanicException"
     assert type(exc).__module__ == "pyo3_runtime"
     assert not issubclass(type(exc), Exception), "PanicException must not be catchable as a plain Exception"

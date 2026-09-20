@@ -37,9 +37,8 @@ def test_exclude_vec_omits_the_given_item_ids(tmp_path):
 
 
 def test_ip_metric_ranks_highest_dot_product_first(tmp_path):
-    # Unit-normalized vectors, since IP's own math ignores is_normalized
-    # entirely. Normalizing is on the caller, not the index (see
-    # ecp_core::utils::calculate_distances).
+    # Unit-length vectors, since IP ignores is_normalized. Normalizing is the
+    # caller's job, not the index's (see ecp_core::metric::calculate_distances).
     angles = [0.0, 0.05, 0.10, 0.15, np.pi, np.pi + 0.05, np.pi + 0.10, np.pi + 0.15]
     unit_vectors = np.array([[np.cos(a), np.sin(a)] for a in angles], dtype=np.float32)
 

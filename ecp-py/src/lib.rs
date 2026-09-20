@@ -14,6 +14,7 @@ use pylogging::init_logging;
 use pymetric::PyMetric;
 
 // Every method in this module that performs I/O releases the GIL via py.detach.
+/// Registers the classes and functions of the `ecp` Python module.
 #[pymodule(gil_used = true)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;

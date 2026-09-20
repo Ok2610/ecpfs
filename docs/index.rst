@@ -1,7 +1,7 @@
 ecpfs
 =====
 
-An implementation of the extended Cluster Pruning (eCP) index, with a Rust core
+An implementation of the Extended Cluster Pruning (eCP) index, with a Rust core
 (``ecp-core``), Python bindings (``ecpfs``), and a standalone CLI (``ecp``).
 
 This site covers the Python package. For the Rust crates themselves
@@ -11,6 +11,8 @@ This site covers the Python package. For the Rust crates themselves
    :maxdepth: 2
 
    quickstart
+   search-parameters
    api
    cli
    multithreading
+   format

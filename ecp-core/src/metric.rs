@@ -52,15 +52,17 @@ pub fn calculate_distances(
 
     match metric {
         Metric::IP => embeddings.dot(q),
+        // Terms of similar size can cancel to a small negative where the true
+        // distance is zero, and the root would turn that into NaN
         Metric::L2 if is_normalized => {
             let dots = embeddings.dot(q);
             let q_norm_sq = q.dot(q);
-            (1.0 - 2.0 * dots + q_norm_sq).mapv(f32::sqrt)
+            (1.0 - 2.0 * dots + q_norm_sq).mapv(|v| v.max(0.0).sqrt())
         }
         Metric::L2 => {
             let q_2d = q.clone().insert_axis(Axis(0));
             let neg_dist_sq = negative_squared_distances(embeddings, &q_2d);
-            neg_dist_sq.column(0).mapv(|v| (-v).sqrt())
+            neg_dist_sq.column(0).mapv(|v| (-v).max(0.0).sqrt())
         }
     }
 }

@@ -109,7 +109,7 @@ fn chunk_rows_fills_the_asked_for_bytes_at_any_dim_or_dtype() {
         (1536, EmbeddingDtype::F16),
     ] {
         let bytes_per_vec = dim * dtype.bytes();
-        let bytes = chunk_rows(dim, dtype, asked) as usize * bytes_per_vec;
+        let bytes = chunk_rows(dim, dtype, asked).unwrap() as usize * bytes_per_vec;
         assert!(
             bytes <= asked && bytes + bytes_per_vec > asked,
             "dim {dim} as {dtype:?} chunked {bytes} bytes"
@@ -118,15 +118,33 @@ fn chunk_rows_fills_the_asked_for_bytes_at_any_dim_or_dtype() {
 }
 
 #[test]
-fn chunk_rows_honours_a_large_request_and_never_returns_zero() {
+fn chunk_rows_honours_a_large_request() {
     // dim=1152 f32 is 4608 bytes a vector, so 100 MiB holds 22755 of them.
     assert_eq!(
-        chunk_rows(1152, EmbeddingDtype::F32, 100 * 1024 * 1024),
+        chunk_rows(1152, EmbeddingDtype::F32, 100 * 1024 * 1024).unwrap(),
         22755,
         "a large chunk must be given as asked, not capped"
     );
-    // A vector wider than the whole chunk still gets a one-row chunk.
-    assert_eq!(chunk_rows(64, EmbeddingDtype::F32, 16), 1);
+}
+
+#[test]
+fn chunk_rows_rejects_a_vector_wider_than_the_whole_chunk() {
+    // dim=64 f32 is 256 bytes a vector, wider than a 16-byte chunk.
+    let err = chunk_rows(64, EmbeddingDtype::F32, 16).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn chunk_rows_rejects_a_dimension_of_zero() {
+    let err = chunk_rows(0, EmbeddingDtype::F32, 1024).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn chunk_rows_rejects_a_dimension_whose_byte_size_overflows() {
+    // usize::MAX values of 4 bytes each do not fit in a usize.
+    let err = chunk_rows(usize::MAX, EmbeddingDtype::F32, 1024).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 /// The tree nodes and the representative arrays each take their own setting.
@@ -145,7 +163,8 @@ fn build_chunks_nodes_and_representatives_from_their_own_settings() {
         .unwrap();
     builder.build(&dataset, 10).unwrap();
 
-    let expected_rows = chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES) as usize;
+    let expected_rows =
+        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES).unwrap() as usize;
     for path in ["/index_root/embeddings", "/lvl_1/node_0/embeddings"] {
         let array = Array::open(as_readable_writable_listable(&store), path).unwrap();
         assert_eq!(
@@ -161,7 +180,7 @@ fn build_chunks_nodes_and_representatives_from_their_own_settings() {
     assert_eq!(
         reps.chunk_shape_usize(&[0, 0])
             .expect("failed to read chunk shape")[0],
-        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_REP_CHUNK_BYTES) as usize,
+        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_REP_CHUNK_BYTES).unwrap() as usize,
         "the representative arrays take rep_chunk_bytes"
     );
 }

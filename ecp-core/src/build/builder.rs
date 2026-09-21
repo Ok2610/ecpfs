@@ -62,17 +62,34 @@ impl Default for ChunkSizes {
 }
 
 /// Returns how many vectors of length `dim` fit in `chunk_bytes` when stored
-/// as `dtype`, and never fewer than one.
-pub fn chunk_rows(dim: usize, dtype: EmbeddingDtype, chunk_bytes: usize) -> u64 {
-    let bytes_per_vec = (dim * dtype.bytes()).max(1);
-    (chunk_bytes / bytes_per_vec).max(1) as u64
+/// as `dtype`. Errors for a dimension of 0, or if one vector is wider than
+/// `chunk_bytes`.
+pub fn chunk_rows(dim: usize, dtype: EmbeddingDtype, chunk_bytes: usize) -> Result<u64> {
+    if dim == 0 {
+        return Err(EcpError::InvalidInput(
+            "the embedding dimension must be at least 1".to_string(),
+        ));
+    }
+    let bytes_per_vec = dim.saturating_mul(dtype.bytes());
+    if bytes_per_vec > chunk_bytes {
+        return Err(EcpError::InvalidInput(format!(
+            "one vector of dimension {dim} stored as {dtype:?} takes {bytes_per_vec} bytes, \
+             wider than the {chunk_bytes}-byte chunk"
+        )));
+    }
+    Ok((chunk_bytes / bytes_per_vec) as u64)
 }
 
 /// Picks the tree's fan-out, the number of children each node (the root
 /// included) gets, so the bottom level has room for every cluster.
 /// Fan-out = `total_clusters^(1/levels)`, rounded up.
-fn node_size_for(total_clusters: usize, levels: u32) -> usize {
-    (total_clusters as f64).powf(1.0 / levels as f64).ceil() as usize
+fn node_size_for(total_clusters: usize, levels: u32) -> Result<usize> {
+    if levels == 0 {
+        return Err(EcpError::InvalidInput(
+            "levels must be at least 1".to_string(),
+        ));
+    }
+    Ok((total_clusters as f64).powf(1.0 / levels as f64).ceil() as usize)
 }
 
 /// Builds one index in three steps: `create`, then `select_representatives`
@@ -104,6 +121,11 @@ impl Builder {
         embedding_dtype: Option<EmbeddingDtype>,
         chunks: ChunkSizes,
     ) -> Result<Self> {
+        if levels == 0 {
+            return Err(EcpError::InvalidInput(
+                "levels must be at least 1".to_string(),
+            ));
+        }
         write_index_info(&store, levels, metric, is_normalized)?;
         Ok(Builder {
             store,
@@ -159,7 +181,7 @@ impl Builder {
         let (total_items, dim) = source.shape()?;
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype()?);
         self.rep_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,
         ];
 
@@ -168,7 +190,7 @@ impl Builder {
             "selected {} representatives via {strategy:?} from {total_items} items (target_cluster_items={target_cluster_items})",
             selected_ids.len()
         );
-        self.node_size = node_size_for(selected_ids.len(), self.levels);
+        self.node_size = node_size_for(selected_ids.len(), self.levels)?;
         collect_representatives(
             &self.store,
             source,
@@ -199,7 +221,7 @@ impl Builder {
         let dim = embeddings.ncols();
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);
         self.rep_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,
         ];
         zarrs_append(
@@ -212,7 +234,7 @@ impl Builder {
             self.resolved_dtype,
         )?;
 
-        self.node_size = node_size_for(ids.len(), self.levels);
+        self.node_size = node_size_for(ids.len(), self.levels)?;
         self.representatives = Some(if fits_in_memory(ids.len(), dim, self.memory_limit_bytes) {
             Representatives::InMemory { embeddings, ids }
         } else {
@@ -235,7 +257,7 @@ impl Builder {
         write_info_u32(&self.store, "next_item_id", total_items as u32)?;
 
         let node_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.node_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.node_chunk_bytes)?,
             dim as u64,
         ];
         log::info!(

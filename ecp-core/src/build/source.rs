@@ -74,6 +74,12 @@ impl EmbeddingsSource {
     /// Opens the dataset (`.h5`) or array (`.zarr`) called `name` in the file
     /// at `path`, picking the format from `path`'s extension.
     pub fn open(path: &Path, name: &str) -> Result<Self> {
+        if !path.exists() {
+            return Err(EcpError::NotFound(format!(
+                "{} does not exist",
+                path.display()
+            )));
+        }
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("h5") => {
                 let file =

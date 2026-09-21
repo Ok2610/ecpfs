@@ -164,9 +164,8 @@ impl IndexWrapper {
         if self.closed {
             return Ok(());
         }
-        py.detach(|| self.inner.shutdown()).map_err(to_pyerr)?;
         self.closed = true;
-        Ok(())
+        py.detach(|| self.inner.shutdown()).map_err(to_pyerr)
     }
 
     fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {

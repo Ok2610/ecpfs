@@ -16,7 +16,7 @@ use ordered_float::NotNan;
 use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data};
 use crate::build::writer::write_info_u32;
 use crate::dtype::{dtype_of_array, read_subset_as_f32};
-use crate::error::{Result, ResultExt};
+use crate::error::{EcpError, Result, ResultExt};
 use crate::metric::Metric;
 use crate::search::info::{read_info_fields, read_info_u32};
 use crate::search::node::Node;
@@ -70,6 +70,12 @@ impl Index {
     /// root. Other nodes load on first visit. `memory_limit_bytes` caps the
     /// node and query data kept in memory; `None` means no cap.
     pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Result<Self> {
+        if !index_path.exists() {
+            return Err(EcpError::NotFound(format!(
+                "index directory {} does not exist",
+                index_path.display()
+            )));
+        }
         let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).store_err("failed to open store")?);
         Self::load_from_store(store, memory_limit_bytes)
@@ -265,9 +271,20 @@ impl Index {
     /// instead. Safe to call more than once. `Err` if any query fails to save.
     pub fn shutdown(&self) -> Result<()> {
         self.accepting.store(false, Ordering::SeqCst);
+        let mut failed = 0;
+        // Count a failed save and go on, so every open query is tried
         for (query_id, state_arc) in self.queries.iter() {
             let state = state_arc.lock().unwrap();
-            persistence::persist_or_erase(&self.store, *query_id, &state)?;
+            if let Err(e) = persistence::persist_or_erase(&self.store, *query_id, &state) {
+                log::error!("failed to persist query_id={query_id} on shutdown: {e}");
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            return Err(EcpError::Store(format!(
+                "failed to persist {failed} of {} open queries",
+                self.queries.entry_count()
+            )));
         }
         Ok(())
     }

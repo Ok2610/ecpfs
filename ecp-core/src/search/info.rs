@@ -77,6 +77,12 @@ pub struct IndexInfo {
 impl IndexInfo {
     /// Loads an index's info fields from `index_path`.
     pub fn load(index_path: PathBuf) -> Result<Self> {
+        if !index_path.exists() {
+            return Err(EcpError::NotFound(format!(
+                "index directory {} does not exist",
+                index_path.display()
+            )));
+        }
         let store: ReadableListableStorage =
             Arc::new(FilesystemStore::new(&index_path).store_err("failed to open store")?);
         Self::load_from_store(store)

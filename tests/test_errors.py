@@ -18,6 +18,16 @@ def test_select_representatives_rejects_an_unsupported_embeddings_file_extension
         builder.select_representatives(bogus_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
 
 
+def test_select_representatives_raises_file_not_found_for_a_missing_embeddings_file(tmp_path):
+    index_path = tmp_path / "index.zarr"
+    builder = ecpfs.Builder(index_path, levels=2, metric=ecpfs.Metric.L2)
+
+    missing_path = tmp_path / "does_not_exist.h5"
+
+    with pytest.raises(FileNotFoundError):
+        builder.select_representatives(missing_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
+
+
 def test_select_representatives_rejects_an_unsupported_embeddings_dtype(tmp_path):
     h5_path = tmp_path / "embeddings.h5"
     with h5py.File(h5_path, "w") as f:
@@ -27,6 +37,13 @@ def test_select_representatives_rejects_an_unsupported_embeddings_dtype(tmp_path
     builder = ecpfs.Builder(index_path, levels=1, metric=ecpfs.Metric.L2)
     with pytest.raises(ValueError, match="unsupported embeddings dtype"):
         builder.select_representatives(h5_path, target_cluster_items=2, strategy="offset", fallback_batch_rows=100)
+
+
+def test_index_raises_file_not_found_for_a_missing_directory(tmp_path):
+    missing_path = tmp_path / "does_not_exist.zarr"
+
+    with pytest.raises(FileNotFoundError):
+        ecpfs.Index(missing_path)
 
 
 def test_index_raises_runtime_error_for_a_directory_that_is_not_an_index(tmp_path):

@@ -1,15 +1,23 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use ecp_core::build::builder::Builder;
-use ecp_core::build::builder::DEFAULT_MAX_CHUNK_BYTES;
+use ecp_core::build::builder::{
+    Builder, ChunkSizes, DEFAULT_NODE_CHUNK_BYTES, DEFAULT_REP_CHUNK_BYTES,
+};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
 use ecp_core::search::{Index, IndexInfo};
 use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
+
+/// Largest --rep-chunk-mb whose size in bytes still fits in a `usize`.
+const MAX_REP_CHUNK_MB: u64 = (usize::MAX / (1024 * 1024)) as u64;
+
+/// Largest --node-chunk-kb whose size in bytes still fits in a `usize`.
+const MAX_NODE_CHUNK_KB: u64 = (usize::MAX / 1024) as u64;
 
 /// Returns the default --memory-limit-gb, 80% of RAM in whole GiB.
 fn default_memory_limit_gib() -> usize {
@@ -199,9 +207,23 @@ struct BuildIndexArgs {
     #[arg(long, default_value_t = 100_000)]
     fallback_batch_rows: usize,
 
-    /// Max size for one on-disk chunk, in MB.
-    #[arg(long, default_value_t = DEFAULT_MAX_CHUNK_BYTES / (1024 * 1024))]
-    max_chunk_mb: usize,
+    /// Chunk size for the representative arrays, in MB. Measure zarr read
+    /// speed at a few chunk sizes on your own data before changing it.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_REP_CHUNK_BYTES / (1024 * 1024),
+        value_parser = clap::value_parser!(u64).range(1..=MAX_REP_CHUNK_MB).map(|mb| mb as usize)
+    )]
+    rep_chunk_mb: usize,
+
+    /// Chunk size for the tree nodes, in KB. Measure zarr read speed at a few
+    /// chunk sizes on your own data before changing it.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_NODE_CHUNK_BYTES / 1024,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_NODE_CHUNK_KB).map(|kb| kb as usize)
+    )]
+    node_chunk_kb: usize,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -219,7 +241,10 @@ fn build_index(args: BuildIndexArgs) {
         args.is_normalized,
         memory_limit_bytes,
         args.embedding_dtype.into(),
-        args.max_chunk_mb * 1024 * 1024,
+        ChunkSizes {
+            rep_chunk_bytes: args.rep_chunk_mb * 1024 * 1024,
+            node_chunk_bytes: args.node_chunk_kb * 1024,
+        },
     );
     builder.select_representatives(
         &source,
@@ -450,3 +475,7 @@ fn main() {
         Command::CleanupQueries(args) => cleanup_queries(args),
     }
 }
+
+#[cfg(test)]
+#[path = "utests/main.rs"]
+mod tests;

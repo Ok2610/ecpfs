@@ -23,6 +23,15 @@ pub enum EmbeddingDtype {
 }
 
 impl EmbeddingDtype {
+    /// How many bytes one stored value takes on disk.
+    pub fn bytes(self) -> usize {
+        match self {
+            EmbeddingDtype::UInt8 | EmbeddingDtype::Int8 => 1,
+            EmbeddingDtype::F16 => 2,
+            EmbeddingDtype::F32 => 4,
+        }
+    }
+
     /// Checks whether storing `native` data as `self` loses information, because
     /// `self` can't hold every value `native` can. `Int8` and `UInt8` each lose
     /// information for the other, since neither range contains the other.

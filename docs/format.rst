@@ -48,6 +48,21 @@ Embeddings arrays are stored as ``float32``, ``float16``, ``uint8`` or ``int8``,
 chosen at build time with ``EmbeddingDtype``. Every read widens them to
 ``float32``.
 
+Chunking
+--------
+
+Every array carries its own chunk shape, fixed when the array is created. The
+representative arrays take ``rep_chunk_bytes`` and the tree nodes take
+``node_chunk_bytes``, both given to ``Builder`` at build time and counted in the
+stored dtype.
+
+A node holding fewer rows than its chunk still declares the full shape. That
+costs nothing on disk, since the unused part compresses away, but reading the
+node decodes the whole chunk. A node holding more rows spans several chunks.
+
+An index keeps the chunk shape it was built with, so changing either setting
+affects new indexes only.
+
 Saved queries
 -------------
 

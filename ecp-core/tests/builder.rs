@@ -12,7 +12,7 @@ use zarrs::array::{Array, ArrayBuilder};
 use zarrs::filesystem::FilesystemStore;
 
 use common::{build_index, two_clusters, write_embeddings};
-use ecp_core::build::builder::{Builder, DEFAULT_MAX_CHUNK_BYTES};
+use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::search::Index;
@@ -113,7 +113,7 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
         false,
         1_000_000_000,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives(
         &dataset,
@@ -190,7 +190,7 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
         false,
         1_000_000_000,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives(
         &dataset,
@@ -266,7 +266,7 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
         false,
         1_000_000_000,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);
@@ -307,7 +307,7 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
         false,
         1_000_000_000,
         None,
-        DEFAULT_MAX_CHUNK_BYTES,
+        ChunkSizes::default(),
     );
     builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
     builder.build(&dataset, 100);

@@ -149,6 +149,47 @@ fn exhausted_query_is_erased_not_persisted() {
     );
 }
 
+/// A query stays in memory until it is evicted or `shutdown` saves it, so a
+/// search that evicts nothing must leave `/queries/` untouched.
+#[test]
+fn a_search_alone_does_not_save_its_query_to_disk() {
+    let store = write_ivf_style_fixture();
+
+    // Generous enough that nothing is evicted during the search.
+    let index = Index::load_from_store(as_readable_writable_listable(&store), Some(1 << 20));
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
+    index.queries.run_pending_tasks();
+
+    assert!(
+        persistence::load_query(&index.store, query_id).is_none(),
+        "a search must not save its query; only eviction or shutdown does"
+    );
+}
+
+/// The other half of the same rule: a query the cache cannot hold is saved,
+/// so it is still resumable.
+#[test]
+fn a_query_evicted_during_a_search_is_saved_to_disk() {
+    let store = write_ivf_style_fixture();
+
+    // The query cache gets 5% of this, well under one QueryState's weight.
+    let index = Index::load_from_store(as_readable_writable_listable(&store), Some(400));
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new());
+    index.queries.run_pending_tasks();
+
+    assert_eq!(
+        index.queries.entry_count(),
+        0,
+        "sanity check: the query must be evicted"
+    );
+    assert!(
+        persistence::load_query(&index.store, query_id).is_some(),
+        "an evicted query must be saved so it can be resumed"
+    );
+}
+
 #[test]
 fn evicted_query_resumes_correctly_within_the_same_process() {
     let store = write_ivf_style_fixture();

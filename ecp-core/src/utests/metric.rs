@@ -20,7 +20,7 @@ fn metric_from_str_rejects_unknown_values() {
 fn l2_distances_are_euclidean_norms() {
     let embeddings = array![[0.0f32, 0.0], [3.0, 4.0], [1.0, 0.0]];
     let q = array![0.0f32, 0.0];
-    let distances = calculate_distances(&embeddings, &q, &Metric::L2, false);
+    let distances = calculate_distances(&embeddings, &q, &Metric::L2, false).unwrap();
     assert_eq!(distances.to_vec(), vec![0.0, 5.0, 1.0]);
 }
 
@@ -32,8 +32,8 @@ fn l2_with_is_normalized_true_matches_general_formula_on_unit_vectors() {
     let embeddings = array![[0.0f32, 1.0], [0.6, 0.8], [1.0, 0.0]];
     let q = array![1.0f32, 0.0];
 
-    let general = calculate_distances(&embeddings, &q, &Metric::L2, false);
-    let fast_path = calculate_distances(&embeddings, &q, &Metric::L2, true);
+    let general = calculate_distances(&embeddings, &q, &Metric::L2, false).unwrap();
+    let fast_path = calculate_distances(&embeddings, &q, &Metric::L2, true).unwrap();
 
     for (a, b) in general.iter().zip(fast_path.iter()) {
         assert!((a - b).abs() < 1e-6, "general={a}, fast_path={b}");
@@ -60,7 +60,7 @@ fn l2_distance_from_a_vector_to_itself_is_zero_not_nan() {
 
     for row in 0..embeddings.nrows() {
         let q = embeddings.row(row).to_owned();
-        let distances = calculate_distances(&embeddings, &q, &Metric::L2, false);
+        let distances = calculate_distances(&embeddings, &q, &Metric::L2, false).unwrap();
         assert!(
             distances.iter().all(|d| !d.is_nan()),
             "row {row} scored NaN against {:?}",
@@ -87,7 +87,7 @@ fn l2_normalized_distance_from_a_vector_to_itself_is_zero_not_nan() {
 
     for row in 0..embeddings.nrows() {
         let q = embeddings.row(row).to_owned();
-        let distances = calculate_distances(&embeddings, &q, &Metric::L2, true);
+        let distances = calculate_distances(&embeddings, &q, &Metric::L2, true).unwrap();
         assert!(
             distances.iter().all(|d| !d.is_nan()),
             "row {row} scored NaN"
@@ -104,14 +104,14 @@ fn l2_normalized_distance_from_a_vector_to_itself_is_zero_not_nan() {
 fn ip_distances_are_dot_products() {
     let embeddings = array![[1.0f32, 0.0], [0.0, 1.0], [2.0, 3.0]];
     let q = array![2.0f32, 3.0];
-    let distances = calculate_distances(&embeddings, &q, &Metric::IP, false);
+    let distances = calculate_distances(&embeddings, &q, &Metric::IP, false).unwrap();
     assert_eq!(distances.to_vec(), vec![2.0, 3.0, 13.0]);
 }
 
 #[test]
-#[should_panic(expected = "same dim")]
 fn calculate_distances_rejects_mismatched_dims() {
     let embeddings = array![[1.0f32, 2.0, 3.0]];
     let q = array![1.0f32, 2.0];
-    let _ = calculate_distances(&embeddings, &q, &Metric::L2, false);
+    let err = calculate_distances(&embeddings, &q, &Metric::L2, false).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }

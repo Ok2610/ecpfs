@@ -34,7 +34,7 @@ fn random_suffix_is_six_hex_chars() {
 #[test]
 fn init_writes_log_lines_to_its_file() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let path = init(Some(tmp.path()), LevelFilter::Debug);
+    let path = init(Some(tmp.path()), LevelFilter::Debug).expect("failed to init logging");
 
     assert!(path.starts_with(tmp.path()));
     assert!(path.extension().is_some_and(|ext| ext == "jsonl"));

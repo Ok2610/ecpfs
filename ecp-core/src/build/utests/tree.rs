@@ -17,7 +17,8 @@ fn node_cache_evicts_once_over_capacity() {
         &array![10u32],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
     append_node_batch(
         &store,
         "/lvl_1/node_1",
@@ -26,13 +27,14 @@ fn node_cache_evicts_once_over_capacity() {
         &array![20u32],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     // 1 embedding row (2 f32s) + 1 child id (1 u32) = 12 bytes, room for
     // exactly one entry, so caching both forces an eviction.
     let cache = NodeCache::new(12);
-    cache.get_or_read(&store, "/lvl_1/node_0");
-    cache.get_or_read(&store, "/lvl_1/node_1");
+    cache.get_or_read(&store, "/lvl_1/node_0").unwrap();
+    cache.get_or_read(&store, "/lvl_1/node_1").unwrap();
     cache.cache.run_pending_tasks();
 
     assert!(
@@ -60,7 +62,8 @@ fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
         &array![10u32],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let cache = NodeCache::new(1_000_000);
     const THREADS: usize = 8;
@@ -71,7 +74,7 @@ fn node_cache_get_or_read_is_safe_under_concurrent_access_to_the_same_path() {
             .map(|_| {
                 scope.spawn(|| {
                     barrier.wait();
-                    cache.get_or_read(&store, "/lvl_1/node_0")
+                    cache.get_or_read(&store, "/lvl_1/node_0").unwrap()
                 })
             })
             .collect();

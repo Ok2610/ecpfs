@@ -4,6 +4,7 @@
 
 use rust_hdf5::{DatatypeMessage, H5File};
 
+use ecp_core::EcpError;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::utils::EmbeddingDtype;
 
@@ -23,16 +24,16 @@ fn hdf5_source_reports_shape_and_reads_vec_ranges() {
         .expect("failed to write HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
 
-    assert_eq!(source.shape(), (4, 2));
+    assert_eq!(source.shape().unwrap(), (4, 2));
     assert_eq!(
-        source.natural_chunk_vecs(999),
+        source.natural_chunk_vecs(999).unwrap(),
         999,
         "contiguous storage has no chunk alignment to exploit"
     );
 
-    let vecs = source.read_vecs(1, 3);
+    let vecs = source.read_vecs(1, 3).unwrap();
     assert_eq!(vecs, ndarray::array![[2.0f32, 3.0], [4.0, 5.0]]);
 }
 
@@ -49,10 +50,10 @@ fn hdf5_source_reports_its_actual_on_disk_chunk_vec_count() {
         .expect("failed to create HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
 
     assert_eq!(
-        source.natural_chunk_vecs(999),
+        source.natural_chunk_vecs(999).unwrap(),
         2,
         "fallback must be ignored when the source is chunked"
     );
@@ -79,10 +80,10 @@ fn hdf5_f16_source_reads_correctly_upcast_to_f32() {
         .expect("failed to write HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-    assert_eq!(source.native_dtype(), EmbeddingDtype::F16);
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::F16);
 
-    let vecs = source.read_vecs(0, 2);
+    let vecs = source.read_vecs(0, 2).unwrap();
     assert_eq!(vecs, ndarray::array![[1.0f32, 2.0], [3.0, 4.0]]);
 }
 
@@ -102,19 +103,28 @@ fn write_int_dataset() -> (tempfile::TempDir, std::path::PathBuf) {
 }
 
 #[test]
-#[should_panic(expected = "unsupported embeddings dtype")]
-fn hdf5_native_dtype_panics_for_unsupported_dtype() {
+fn hdf5_native_dtype_rejects_an_unsupported_dtype() {
     let (_tmp, file_path) = write_int_dataset();
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-    let _ = source.native_dtype();
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
+    let err = source.native_dtype().unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 #[test]
-#[should_panic(expected = "unsupported embeddings dtype")]
-fn hdf5_read_vecs_panics_for_unsupported_dtype() {
+fn hdf5_read_vecs_rejects_an_unsupported_dtype() {
     let (_tmp, file_path) = write_int_dataset();
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-    let _ = source.read_vecs(0, 2);
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
+    let err = source.read_vecs(0, 2).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn hdf5_open_reports_a_missing_dataset_as_not_found() {
+    let (_tmp, file_path) = write_int_dataset();
+    let err = EmbeddingsSource::open(&file_path, "no_such_dataset")
+        .err()
+        .expect("opening a missing dataset should fail");
+    assert!(matches!(err, EcpError::NotFound(_)), "{err:?}");
 }
 
 /// SIFT descriptors are often distributed as uint8. The HDF5 crate won't
@@ -136,10 +146,10 @@ fn hdf5_uint8_source_reads_correctly_widened_to_f32() {
         .expect("failed to write HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-    assert_eq!(source.native_dtype(), EmbeddingDtype::UInt8);
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::UInt8);
 
-    let vecs = source.read_vecs(0, 2);
+    let vecs = source.read_vecs(0, 2).unwrap();
     assert_eq!(vecs, ndarray::array![[0.0f32, 255.0], [1.0, 128.0]]);
 }
 
@@ -159,9 +169,9 @@ fn hdf5_int8_source_reads_correctly_widened_to_f32() {
         .expect("failed to write HDF5 dataset");
     file.close().expect("failed to close HDF5 file");
 
-    let source = EmbeddingsSource::open(&file_path, "embeddings");
-    assert_eq!(source.native_dtype(), EmbeddingDtype::Int8);
+    let source = EmbeddingsSource::open(&file_path, "embeddings").unwrap();
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::Int8);
 
-    let vecs = source.read_vecs(0, 2);
+    let vecs = source.read_vecs(0, 2).unwrap();
     assert_eq!(vecs, ndarray::array![[-128.0f32, 127.0], [-1.0, 0.0]]);
 }

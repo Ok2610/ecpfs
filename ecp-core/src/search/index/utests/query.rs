@@ -10,7 +10,7 @@ fn l2_search_returns_nearest_items_in_order() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
@@ -30,7 +30,9 @@ fn results_are_sorted_even_when_the_tree_is_exhausted_before_search_exp_is_reach
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) = index.new_search(query, 8, 100, -1, &HashSet::new());
+    let (items, _query_id) = index
+        .new_search(query, 8, 100, -1, &HashSet::new())
+        .unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
@@ -42,7 +44,7 @@ fn l2_search_respects_exclude_set() {
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = [0].into_iter().collect();
 
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &exclude);
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &exclude).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![1, 2, 3, 4], "excluded item 0 must not appear");
@@ -55,10 +57,12 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new());
+    let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
     assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
 
-    let second = index.get_next_k_items(query_id, 4, 1, 2, &HashSet::new());
+    let second = index
+        .get_next_k_items(query_id, 4, 1, 2, &HashSet::new())
+        .unwrap();
     assert_eq!(
         second.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![1, 2, 3, 4]
@@ -73,7 +77,7 @@ fn search_exp_doubles_until_k_items_found_with_unlimited_retries() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 1, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -91,7 +95,7 @@ fn finite_max_increments_still_allows_configured_number_of_retries() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 1, 1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -108,7 +112,7 @@ fn new_search_stops_once_max_increments_is_exhausted() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 1, 1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -127,13 +131,17 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
     let query_a: Array1<f32> = array![0.0, 0.0];
     let query_b: Array1<f32> = array![11.0, 11.0];
 
-    let (first_a, query_id_a) = index.new_search(query_a, 2, 4, -1, &HashSet::new());
+    let (first_a, query_id_a) = index
+        .new_search(query_a, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         first_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![0, 1]
     );
 
-    let (first_b, query_id_b) = index.new_search(query_b, 2, 4, -1, &HashSet::new());
+    let (first_b, query_id_b) = index
+        .new_search(query_b, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         first_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![6, 7]
@@ -141,25 +149,33 @@ fn interleaved_queries_on_the_same_index_stay_independent() {
     assert_ne!(query_id_a, query_id_b);
 
     // Resume A, then B, then A again.
-    let second_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+    let second_a = index
+        .get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         second_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![2, 3]
     );
 
-    let second_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+    let second_b = index
+        .get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         second_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![5, 4]
     );
 
-    let third_a = index.get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new());
+    let third_a = index
+        .get_next_k_items(query_id_a, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         third_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![4, 5]
     );
 
-    let third_b = index.get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new());
+    let third_b = index
+        .get_next_k_items(query_id_b, 2, 4, -1, &HashSet::new())
+        .unwrap();
     assert_eq!(
         third_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![3, 2]
@@ -172,7 +188,7 @@ fn three_level_tree_descends_through_intermediate_level() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // search_exp=4 explores all 4 leaf nodes, so this is an exact top-4.
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
@@ -190,7 +206,7 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
     let query: Array1<f32> = array![0.0, 0.0];
 
     // Every node here is a leaf, so search_exp=4 scans all 4 clusters.
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3]);
@@ -201,11 +217,15 @@ fn levels_1_index_searches_like_ivf_without_panicking() {
 fn missing_query_id_returns_empty_instead_of_panicking() {
     let index = build_test_index();
 
-    let items = index.get_next_k_items(999, 4, 4, -1, &HashSet::new());
+    let items = index
+        .get_next_k_items(999, 4, 4, -1, &HashSet::new())
+        .unwrap();
     assert!(items.is_empty());
 
     // A no-op, not a panic.
-    index.incremental_search(999, 4, 4, -1, &HashSet::new());
+    index
+        .incremental_search(999, 4, 4, -1, &HashSet::new())
+        .unwrap();
 }
 
 /// Many threads searching one shared `Index` each get the results a
@@ -222,13 +242,16 @@ fn concurrent_searches_from_multiple_threads_return_correct_results() {
             std::thread::spawn(move || {
                 for _ in 0..SEARCHES_PER_THREAD {
                     let query: Array1<f32> = array![0.0, 0.0];
-                    let (items, query_id) = index.new_search(query, 4, 4, -1, &HashSet::new());
+                    let (items, query_id) =
+                        index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
                     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
                     assert_eq!(ids, vec![0, 1, 2, 3]);
 
                     // search_exp=4 explores all 4 leaves, so all 8 items are
                     // already buffered; this page just drains the rest.
-                    let more = index.get_next_k_items(query_id, 4, 4, -1, &HashSet::new());
+                    let more = index
+                        .get_next_k_items(query_id, 4, 4, -1, &HashSet::new())
+                        .unwrap();
                     let more_ids: Vec<u32> = more.iter().map(|(_, id)| *id).collect();
                     assert_eq!(more_ids, vec![4, 5, 6, 7]);
                 }

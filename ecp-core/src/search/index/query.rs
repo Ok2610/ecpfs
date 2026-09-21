@@ -6,7 +6,11 @@ use ndarray::{Array1, Array2};
 use ordered_float::NotNan;
 
 use super::{Index, persistence};
+use crate::error::{EcpError, Result};
 use crate::metric::{Metric, calculate_distances};
+
+/// Items a search found, as `(score, item_id)` pairs.
+pub type ScoredItems = Vec<(NotNan<f32>, u32)>;
 
 /// One open query's search state.
 pub(super) struct QueryState {
@@ -14,7 +18,7 @@ pub(super) struct QueryState {
     /// Nodes still to explore, best score first.
     pub(super) tree_pq: BinaryHeap<HeapEntry>,
     /// Items found but not yet returned, as `(score, item_id)`, best first.
-    pub(super) items: Vec<(NotNan<f32>, u32)>,
+    pub(super) items: ScoredItems,
 }
 
 /// A node waiting in a search's priority queue, ordered by `score`.
@@ -48,25 +52,37 @@ impl Ord for HeapEntry {
     }
 }
 
+const QUERY_NEVER_PERSISTED: &str = "query was never persisted";
+
 impl Index {
     /// Gets the state of query `query_id` from the cache, or from disk on a
-    /// miss. `None` if it is in neither.
-    fn get_or_load_query(&self, query_id: usize) -> Option<Arc<Mutex<QueryState>>> {
-        self.queries.optionally_get_with(query_id, || {
-            persistence::load_query(&self.store, query_id).map(|state| Arc::new(Mutex::new(state)))
-        })
+    /// miss. `Ok(None)` if it is in neither.
+    fn get_or_load_query(&self, query_id: usize) -> Result<Option<Arc<Mutex<QueryState>>>> {
+        match self.queries.try_get_with(query_id, || {
+            // moka can only say "here it is" or "something failed," so a
+            // clean "not found" is faked as this one error and unpacked below.
+            persistence::load_query(&self.store, query_id)?
+                .map(|state| Arc::new(Mutex::new(state)))
+                .ok_or_else(|| EcpError::NotFound(QUERY_NEVER_PERSISTED.to_string()))
+        }) {
+            Ok(state_arc) => Ok(Some(state_arc)),
+            Err(e) if matches!(&*e, EcpError::NotFound(msg) if msg == QUERY_NEVER_PERSISTED) => {
+                Ok(None)
+            }
+            Err(e) => Err((*e).clone()),
+        }
     }
 
     /// Removes and returns up to `k` of the best items buffered for query
     /// `query_id`. Empty for an unknown `query_id`.
-    fn drain_items(&self, query_id: usize, k: usize) -> Vec<(NotNan<f32>, u32)> {
-        match self.get_or_load_query(query_id) {
+    fn drain_items(&self, query_id: usize, k: usize) -> Result<ScoredItems> {
+        match self.get_or_load_query(query_id)? {
             Some(state_arc) => {
                 let mut state = state_arc.lock().unwrap();
                 let cnt = state.items.len().min(k);
-                state.items.drain(0..cnt).collect()
+                Ok(state.items.drain(0..cnt).collect())
             }
-            None => Vec::new(),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -80,10 +96,10 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
-    ) -> (Vec<(NotNan<f32>, u32)>, usize) {
+    ) -> Result<(ScoredItems, usize)> {
         let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
         if !self.accepting.load(Ordering::SeqCst) {
-            return (Vec::new(), query_id);
+            return Ok((Vec::new(), query_id));
         }
         self.queries.insert(
             query_id,
@@ -93,8 +109,8 @@ impl Index {
                 items: Vec::new(),
             })),
         );
-        self.incremental_search(query_id, k, search_exp, max_increments, exclude);
-        (self.drain_items(query_id, k), query_id)
+        self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
+        Ok((self.drain_items(query_id, k)?, query_id))
     }
 
     /// Scores `search_exp` more leaves for query `query_id`, buffering their items
@@ -107,13 +123,13 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
-    ) {
+    ) -> Result<()> {
         // No-op after shutdown or for an unknown query_id
         if !self.accepting.load(Ordering::SeqCst) {
-            return;
+            return Ok(());
         }
-        let Some(state_arc) = self.get_or_load_query(query_id) else {
-            return;
+        let Some(state_arc) = self.get_or_load_query(query_id)? else {
+            return Ok(());
         };
         {
             let mut state = state_arc.lock().unwrap();
@@ -137,7 +153,7 @@ impl Index {
             // On the first call, queue every root entry
             if tree_pq.is_empty() {
                 let root_distances: Array1<f32> =
-                    calculate_distances(&self.root, query, &self.metric, self.is_normalized);
+                    calculate_distances(&self.root, query, &self.metric, self.is_normalized)?;
                 // In a 1-level index, root's entries point straight at leaves.
                 let is_root_leaf = self.levels == 1;
                 for i in 0..root_distances.len() {
@@ -161,14 +177,19 @@ impl Index {
                 log::trace!("visiting node lvl={lvl} node={node_id} is_leaf={is_leaf}");
                 let node = self.node_at(lvl, node_id);
                 // Skip an id that was never written to disk
-                let embeddings_f32: &Array2<f32> = match node.embeddings() {
+                let embeddings_f32: &Array2<f32> = match node.embeddings()? {
                     Some(embs) => embs,
                     None => continue,
                 };
 
                 let distances: Array1<f32> =
-                    calculate_distances(embeddings_f32, query, &self.metric, self.is_normalized);
-                let children = node.children().as_ref().unwrap();
+                    calculate_distances(embeddings_f32, query, &self.metric, self.is_normalized)?;
+                let children = node.children()?.ok_or_else(|| {
+                    EcpError::Corrupt(format!(
+                        "{} has embeddings but no children, likely an interrupted write",
+                        node.group_path
+                    ))
+                })?;
                 if is_leaf == 1 {
                     // For a leaf, collect its items. items sorts ascending, so flip
                     // the heap's score back to lower-is-better.
@@ -218,6 +239,7 @@ impl Index {
         if self.memory_limit_bytes.is_some() {
             self.queries.insert(query_id, state_arc);
         }
+        Ok(())
     }
 
     /// Returns the next `k` items of query `query_id`, searching further first
@@ -230,15 +252,15 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
-    ) -> Vec<(NotNan<f32>, u32)> {
+    ) -> Result<ScoredItems> {
         if !self.accepting.load(Ordering::SeqCst) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let Some(state_arc) = self.get_or_load_query(query_id) else {
+        let Some(state_arc) = self.get_or_load_query(query_id)? else {
             log::debug!(
                 "get_next_k_items: query_id={query_id} not found (evicted, invalid, or never persisted), returning no items"
             );
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let needs_more_search = {
             let state = state_arc.lock().unwrap();
@@ -249,7 +271,7 @@ impl Index {
             state.items.len() < k && !state.tree_pq.is_empty()
         };
         if needs_more_search {
-            self.incremental_search(query_id, k, search_exp, max_increments, exclude);
+            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
         }
         self.drain_items(query_id, k)
     }

@@ -6,6 +6,8 @@ use zarrs::array::data_type::{float16, float32, int8, uint8};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::storage::ReadableStorageTraits;
 
+use crate::error::{EcpError, Result, ResultExt};
+
 /// The type an index stores its embeddings as on disk. A narrower type uses
 /// less disk, but every read widens to f32, so memory use is the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,49 +53,49 @@ impl EmbeddingDtype {
 }
 
 /// Returns the dtype that `array` is stored as. `context` names the array in
-/// the panic message if ecpfs can't read that dtype.
-pub fn dtype_of_array<T: ?Sized>(array: &Array<T>, context: &str) -> EmbeddingDtype {
+/// the error message if ecpfs can't read that dtype.
+pub fn dtype_of_array<T: ?Sized>(array: &Array<T>, context: &str) -> Result<EmbeddingDtype> {
     let dtype = array.data_type();
     if *dtype == float32() {
-        EmbeddingDtype::F32
+        Ok(EmbeddingDtype::F32)
     } else if *dtype == float16() {
-        EmbeddingDtype::F16
+        Ok(EmbeddingDtype::F16)
     } else if *dtype == uint8() {
-        EmbeddingDtype::UInt8
+        Ok(EmbeddingDtype::UInt8)
     } else if *dtype == int8() {
-        EmbeddingDtype::Int8
+        Ok(EmbeddingDtype::Int8)
     } else {
-        panic!(
+        Err(EcpError::InvalidInput(format!(
             "unsupported embeddings dtype: {context} is {dtype:?} (use float32, float16, uint8 or int8)"
-        )
+        )))
     }
 }
 
 /// Reads the `subset` region of `array` as f32, widening from the stored
 /// dtype, since distances are always computed on f32. `context` names the
-/// array in panic messages.
+/// array in error messages.
 pub fn read_subset_as_f32<T: ReadableStorageTraits + ?Sized + 'static>(
     array: &Array<T>,
     subset: &ArraySubset,
     context: &str,
-) -> Array2<f32> {
-    match dtype_of_array(array, context) {
+) -> Result<Array2<f32>> {
+    Ok(match dtype_of_array(array, context)? {
         EmbeddingDtype::F32 => array
             .retrieve_array_subset::<Array2<f32>>(subset)
-            .unwrap_or_else(|e| panic!("Failed to retrieve {context}: {e}")),
+            .store_err_with(|| format!("failed to retrieve {context}"))?,
         EmbeddingDtype::F16 => array
             .retrieve_array_subset::<Array2<f16>>(subset)
-            .unwrap_or_else(|e| panic!("Failed to retrieve {context}: {e}"))
+            .store_err_with(|| format!("failed to retrieve {context}"))?
             .mapv(|x| x.to_f32()),
         EmbeddingDtype::UInt8 => array
             .retrieve_array_subset::<Array2<u8>>(subset)
-            .unwrap_or_else(|e| panic!("Failed to retrieve {context}: {e}"))
+            .store_err_with(|| format!("failed to retrieve {context}"))?
             .mapv(|x| x as f32),
         EmbeddingDtype::Int8 => array
             .retrieve_array_subset::<Array2<i8>>(subset)
-            .unwrap_or_else(|e| panic!("Failed to retrieve {context}: {e}"))
+            .store_err_with(|| format!("failed to retrieve {context}"))?
             .mapv(|x| x as f32),
-    }
+    })
 }
 
 #[cfg(test)]

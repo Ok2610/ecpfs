@@ -74,9 +74,9 @@ fn builder_produces_a_structure_that_searches_correctly() {
         "f32 source with the default (native) dtype writes f32"
     );
 
-    let index = Index::load(index_path, None);
+    let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
@@ -99,7 +99,7 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
     let d = 81;
     let embeddings = ndarray::Array2::from_shape_fn((d, 1), |(i, _)| i as f32);
     write_embeddings(&store, "/dataset", &embeddings);
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+    let dataset = EmbeddingsSource::open(&index_path, "dataset").unwrap();
 
     let ns = 3u32;
     let total_levels = 3u32;
@@ -114,14 +114,17 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
         1_000_000_000,
         None,
         ChunkSizes::default(),
-    );
-    builder.select_representatives(
-        &dataset,
-        target_cluster_items,
-        RepresentativeStrategy::Offset,
-        1000,
-    );
-    builder.build(&dataset, 1000);
+    )
+    .unwrap();
+    builder
+        .select_representatives(
+            &dataset,
+            target_cluster_items,
+            RepresentativeStrategy::Offset,
+            1000,
+        )
+        .unwrap();
+    builder.build(&dataset, 1000).unwrap();
 
     let read_store: zarrs::storage::ReadableListableStorage =
         Arc::new(FilesystemStore::new(&index_path).expect("failed to reopen store"));
@@ -144,9 +147,9 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
         );
     }
 
-    let index = Index::load(index_path, None);
+    let index = Index::load(index_path, None).unwrap();
     let query = array![80.0f32];
-    let (items, _query_id) = index.new_search(query, 10, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 10, 4, -1, &HashSet::new()).unwrap();
 
     assert!(
         items.iter().any(|(_, id)| *id >= r as u32),
@@ -171,7 +174,7 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
     let d = 8;
     let embeddings = ndarray::array![[0.0f32], [1.0], [0.0], [3.0], [4.0], [5.0], [6.0], [7.0]];
     write_embeddings(&store, "/dataset", &embeddings);
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+    let dataset = EmbeddingsSource::open(&index_path, "dataset").unwrap();
 
     let ns = 2u32;
     let total_levels = 2u32;
@@ -191,14 +194,17 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
         1_000_000_000,
         None,
         ChunkSizes::default(),
-    );
-    builder.select_representatives(
-        &dataset,
-        target_cluster_items,
-        RepresentativeStrategy::Offset,
-        1000,
-    );
-    builder.build(&dataset, 1000);
+    )
+    .unwrap();
+    builder
+        .select_representatives(
+            &dataset,
+            target_cluster_items,
+            RepresentativeStrategy::Offset,
+            1000,
+        )
+        .unwrap();
+    builder.build(&dataset, 1000).unwrap();
 
     let read_store: zarrs::storage::ReadableListableStorage =
         Arc::new(FilesystemStore::new(&index_path).expect("failed to reopen store"));
@@ -222,9 +228,9 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
         "all D dataset items are still accounted for"
     );
 
-    let index = Index::load(index_path, None);
+    let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
 
     let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     ids.sort_unstable();
@@ -257,7 +263,7 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
         [0.0, 4.0]
     ];
     write_embeddings(&store, "/dataset", &embeddings);
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+    let dataset = EmbeddingsSource::open(&index_path, "dataset").unwrap();
 
     let mut builder = Builder::create(
         &index_path,
@@ -267,13 +273,16 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
         1_000_000_000,
         None,
         ChunkSizes::default(),
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-    builder.build(&dataset, 100);
+    )
+    .unwrap();
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100)
+        .unwrap();
+    builder.build(&dataset, 100).unwrap();
 
-    let index = Index::load(index_path, None);
+    let index = Index::load(index_path, None).unwrap();
     let query = array![1.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
 
     let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     ids.sort_unstable();
@@ -298,7 +307,7 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
         Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
 
     write_embeddings_f16(&store, "/dataset", &two_clusters());
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+    let dataset = EmbeddingsSource::open(&index_path, "dataset").unwrap();
 
     let mut builder = Builder::create(
         &index_path,
@@ -308,9 +317,12 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
         1_000_000_000,
         None,
         ChunkSizes::default(),
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-    builder.build(&dataset, 100);
+    )
+    .unwrap();
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100)
+        .unwrap();
+    builder.build(&dataset, 100).unwrap();
 
     let root = Array::open(
         Arc::new(FilesystemStore::new(&index_path).unwrap()),
@@ -323,9 +335,9 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
         "f16 source with the default (native) dtype writes f16"
     );
 
-    let index = Index::load(index_path, None);
+    let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new());
+    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
@@ -358,9 +370,14 @@ fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
     assert_eq!(*root.data_type(), zarrs::array::data_type::uint8());
 
     let query = array![1.0f32, 1.0];
-    let (uint8_items, _) =
-        Index::load(uint8_path, None).new_search(query.clone(), 8, 4, -1, &HashSet::new());
-    let (f32_items, _) = Index::load(f32_path, None).new_search(query, 8, 4, -1, &HashSet::new());
+    let (uint8_items, _) = Index::load(uint8_path, None)
+        .unwrap()
+        .new_search(query.clone(), 8, 4, -1, &HashSet::new())
+        .unwrap();
+    let (f32_items, _) = Index::load(f32_path, None)
+        .unwrap()
+        .new_search(query, 8, 4, -1, &HashSet::new())
+        .unwrap();
 
     assert_eq!(
         uint8_items, f32_items,

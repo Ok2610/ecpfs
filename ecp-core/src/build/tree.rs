@@ -11,6 +11,7 @@ use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::append_node_batch;
 use crate::dtype::EmbeddingDtype;
+use crate::error::{EcpError, Result};
 use crate::metric::Metric;
 use crate::search::Node;
 
@@ -41,28 +42,27 @@ impl NodeCache {
     }
 
     /// Gets a node's representatives and children, reading from disk only on a cache miss.
-    fn get_or_read(&self, store: &ReadableWritableListableStorage, group_path: &str) -> CachedNode {
-        self.cache.get_with(group_path.to_string(), || {
-            let read_store: ReadableListableStorage = store.clone().readable_listable();
-            let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
-            let representatives = node
-                .embeddings()
-                .as_ref()
-                .expect(
-                    "node embeddings missing: never written by build, or insert routed into a \
-                     branch with zero descendants from the original build",
-                )
-                .clone();
-            let child_ids = node
-                .children()
-                .as_ref()
-                .expect(
-                    "node children missing: never written by build, or insert routed into a \
-                     branch with zero descendants from the original build",
-                )
-                .clone();
-            Arc::new((representatives, child_ids))
-        })
+    fn get_or_read(
+        &self,
+        store: &ReadableWritableListableStorage,
+        group_path: &str,
+    ) -> Result<CachedNode> {
+        self.cache
+            .try_get_with(group_path.to_string(), || {
+                let read_store: ReadableListableStorage = store.clone().readable_listable();
+                let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
+                // Either the build never wrote this node, or an insert routed
+                // into a branch the build left empty.
+                let missing = || {
+                    EcpError::Corrupt(format!(
+                        "{group_path} has no embeddings or children on disk"
+                    ))
+                };
+                let representatives = node.embeddings()?.ok_or_else(missing)?.clone();
+                let child_ids = node.children()?.ok_or_else(missing)?.clone();
+                Ok::<CachedNode, EcpError>(Arc::new((representatives, child_ids)))
+            })
+            .map_err(|e: Arc<EcpError>| (*e).clone())
     }
 }
 
@@ -84,17 +84,21 @@ pub(crate) struct BuildConfig<'a> {
 }
 
 /// Calls `process(i)` for each `i` in `0..count` in parallel and collects the results.
-/// Set `on_caller_thread` to run them one at a time on this thread instead. Do so
-/// when `process` may wait on a leaf lock, since that can deadlock rayon's pool.
-fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Vec<(u32, u32)>
+/// Set `on_caller_thread` to run them one at a time on this thread instead. Do so when
+/// `process` may wait on a leaf lock, since that can deadlock rayon's pool.
+fn fan_out<F>(count: usize, on_caller_thread: bool, process: F) -> Result<Vec<(u32, u32)>>
 where
-    F: Fn(usize) -> Vec<(u32, u32)> + Sync + Send,
+    F: Fn(usize) -> Result<Vec<(u32, u32)>> + Sync + Send,
 {
-    if on_caller_thread {
-        (0..count).flat_map(process).collect()
+    let per_index: Vec<Vec<(u32, u32)>> = if on_caller_thread {
+        (0..count).map(process).collect::<Result<_>>()?
     } else {
-        (0..count).into_par_iter().flat_map(process).collect()
-    }
+        (0..count)
+            .into_par_iter()
+            .map(process)
+            .collect::<Result<_>>()?
+    };
+    Ok(per_index.into_iter().flatten().collect())
 }
 
 /// Routes a batch of vectors that belong under node `node_idx` at `level` down
@@ -106,7 +110,7 @@ fn route_batch_to_node(
     node_idx: u32,
     data_embeddings: &Array2<f32>,
     data_ids: &Array1<u32>,
-) -> Vec<(u32, u32)> {
+) -> Result<Vec<(u32, u32)>> {
     let group_path = format!("/lvl_{level}/node_{node_idx}");
 
     // At the target level, append the batch (under the leaf's lock, if any)
@@ -134,15 +138,15 @@ fn route_batch_to_node(
                     .or_insert_with(|| Arc::new(RwLock::new(())))
                     .clone();
                 let _guard = lock.write().unwrap();
-                write();
+                write()?;
             }
-            None => write(),
+            None => write()?,
         }
-        return vec![(level, node_idx)];
+        return Ok(vec![(level, node_idx)]);
     }
 
     // Above the target level, split the batch by nearest child and recurse into each
-    let entry = config.node_cache.get_or_read(config.store, &group_path);
+    let entry = config.node_cache.get_or_read(config.store, &group_path)?;
     let (representatives, child_ids) = (&entry.0, &entry.1);
 
     let (offsets, assignment) = determine_node_assignments(
@@ -159,7 +163,7 @@ fn route_batch_to_node(
             let start = offsets[child] as usize;
             let end = offsets[child + 1] as usize;
             if start == end {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let vec_indices: Vec<usize> = assignment
                 .slice(s![start..end])
@@ -187,7 +191,7 @@ pub(crate) fn add_data(
     root_embeddings: &Array2<f32>,
     data_embeddings: &Array2<f32>,
     data_ids: &Array1<u32>,
-) -> Vec<(u32, u32)> {
+) -> Result<Vec<(u32, u32)>> {
     let (offsets, assignment) = determine_node_assignments(
         root_embeddings,
         data_embeddings,
@@ -202,7 +206,7 @@ pub(crate) fn add_data(
             let start = offsets[root_node] as usize;
             let end = offsets[root_node + 1] as usize;
             if start == end {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let vec_indices: Vec<usize> = assignment
                 .slice(s![start..end])
@@ -249,7 +253,7 @@ pub struct BuildTreeArgs<'a> {
 /// target_level=2: reads first ns^3 = 1_000_000 of `representatives` (all of R)
 /// target_level=3 (== total_levels): reads all of `dataset`
 /// ```
-pub fn build_tree(args: &BuildTreeArgs) {
+pub fn build_tree(args: &BuildTreeArgs) -> Result<()> {
     let BuildTreeArgs {
         store,
         root_embeddings,
@@ -285,13 +289,13 @@ pub fn build_tree(args: &BuildTreeArgs) {
         } else {
             representatives
         };
-        let (total_vec_count, _dim) = source.shape();
+        let (total_vec_count, _dim) = source.shape()?;
         let vec_count = if target_level == total_levels {
             total_vec_count
         } else {
             (node_size.pow(target_level + 1) as usize).min(total_vec_count)
         };
-        let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs);
+        let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs)?;
 
         let config = BuildConfig {
             store,
@@ -312,12 +316,13 @@ pub fn build_tree(args: &BuildTreeArgs) {
         while start < vec_count {
             let end = (start + batch_vecs).min(vec_count);
             log::debug!("target_level={target_level}: processing vecs {start}..{end}");
-            let batch_embeddings = source.read_vecs(start, end);
+            let batch_embeddings = source.read_vecs(start, end)?;
             let batch_ids: Array1<u32> = (start as u32..end as u32).collect();
-            add_data(&config, root_embeddings, &batch_embeddings, &batch_ids);
+            add_data(&config, root_embeddings, &batch_embeddings, &batch_ids)?;
             start = end;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

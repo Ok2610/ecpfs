@@ -11,8 +11,12 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 
-/// The log file's path, set by the first `init` call.
-static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+use crate::error::{Result, ResultExt};
+
+/// The log file's path, or the failure that stopped `init` from setting one
+/// up. Only the first call runs; a failing first call is cached too, so a
+/// later call with a different `log_dir` does not get a second attempt.
+static LOG_PATH: OnceLock<Result<PathBuf>> = OnceLock::new();
 
 /// Writes each log record as one JSON line to `file`.
 struct JsonlLogger {
@@ -62,27 +66,27 @@ fn random_suffix() -> String {
 /// Starts logging this process to a new JSONL file in `log_dir` (default
 /// `ecp_logs/`), keeping records at `level` and above, and returns its path.
 /// Only the first call sets logging up; later calls return the same path.
-pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> PathBuf {
+pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> Result<PathBuf> {
     LOG_PATH
         .get_or_init(|| {
             let dir = log_dir
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| PathBuf::from("ecp_logs"));
-            fs::create_dir_all(&dir).expect("Failed to create log directory");
+            fs::create_dir_all(&dir).store_err("failed to create log directory")?;
 
             // One file per process, named by its start time plus a random suffix
             const TIMESTAMP_FORMAT: &[time::format_description::FormatItem] =
                 format_description!("[year][month][day]T[hour][minute][second]Z");
             let timestamp = OffsetDateTime::now_utc()
                 .format(TIMESTAMP_FORMAT)
-                .expect("Failed to format timestamp");
+                .store_err("failed to format the log file's timestamp")?;
             let path = dir.join(format!("{timestamp}-{}.jsonl", random_suffix()));
 
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
-                .expect("Failed to open log file");
+                .store_err("failed to open log file")?;
             // Leave the level alone if another logger was set first
             if log::set_boxed_logger(Box::new(JsonlLogger {
                 file: Mutex::new(file),
@@ -91,7 +95,7 @@ pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> PathBuf {
             {
                 log::set_max_level(level);
             }
-            path
+            Ok(path)
         })
         .clone()
 }

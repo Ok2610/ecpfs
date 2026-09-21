@@ -8,6 +8,7 @@ use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 
 use crate::pydtype::PyEmbeddingDtype;
+use crate::pyerror::to_pyerr;
 use crate::pymetric::PyMetric;
 
 /// Builds a new eCP index in three steps: create the ``Builder``, call
@@ -64,24 +65,26 @@ impl BuilderWrapper {
         embedding_dtype: Option<PyEmbeddingDtype>,
         rep_chunk_bytes: usize,
         node_chunk_bytes: usize,
-    ) -> Self {
+    ) -> PyResult<Self> {
         let metric = metric.into();
         let embedding_dtype = embedding_dtype.map(Into::into);
-        let inner = py.detach(|| {
-            Builder::create(
-                &index_path,
-                levels,
-                metric,
-                is_normalized,
-                memory_limit_bytes,
-                embedding_dtype,
-                ChunkSizes {
-                    rep_chunk_bytes,
-                    node_chunk_bytes,
-                },
-            )
-        });
-        BuilderWrapper { inner }
+        let inner = py
+            .detach(|| {
+                Builder::create(
+                    &index_path,
+                    levels,
+                    metric,
+                    is_normalized,
+                    memory_limit_bytes,
+                    embedding_dtype,
+                    ChunkSizes {
+                        rep_chunk_bytes,
+                        node_chunk_bytes,
+                    },
+                )
+            })
+            .map_err(to_pyerr)?;
+        Ok(BuilderWrapper { inner })
     }
 
     /// select_representatives(embeddings_file, target_cluster_items, strategy, fallback_batch_rows, grp_name="embeddings")
@@ -104,15 +107,15 @@ impl BuilderWrapper {
         let strategy = parse_strategy(strategy)?;
         let grp_name = grp_name.to_string();
         py.detach(|| {
-            let source = EmbeddingsSource::open(&embeddings_file, &grp_name);
+            let source = EmbeddingsSource::open(&embeddings_file, &grp_name)?;
             self.inner.select_representatives(
                 &source,
                 target_cluster_items,
                 strategy,
                 fallback_batch_rows,
-            );
-        });
-        Ok(())
+            )
+        })
+        .map_err(to_pyerr)
     }
 
     /// select_representatives_custom(ids, embeddings)
@@ -125,10 +128,11 @@ impl BuilderWrapper {
         py: Python<'_>,
         ids: PyReadonlyArray1<u32>,
         embeddings: PyReadonlyArray2<f32>,
-    ) {
+    ) -> PyResult<()> {
         let ids = ids.to_owned_array();
         let embeddings = embeddings.to_owned_array();
-        py.detach(|| self.inner.select_representatives_custom(ids, embeddings));
+        py.detach(|| self.inner.select_representatives_custom(ids, embeddings))
+            .map_err(to_pyerr)
     }
 
     /// build(embeddings_file, fallback_batch_rows, grp_name="embeddings")
@@ -143,11 +147,12 @@ impl BuilderWrapper {
         embeddings_file: PathBuf,
         fallback_batch_rows: usize,
         grp_name: &str,
-    ) {
+    ) -> PyResult<()> {
         let grp_name = grp_name.to_string();
         py.detach(|| {
-            let dataset = EmbeddingsSource::open(&embeddings_file, &grp_name);
-            self.inner.build(&dataset, fallback_batch_rows);
-        });
+            let dataset = EmbeddingsSource::open(&embeddings_file, &grp_name)?;
+            self.inner.build(&dataset, fallback_batch_rows)
+        })
+        .map_err(to_pyerr)
     }
 }

@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand, ValueEnum};
 
+use ecp_core::Result;
 use ecp_core::build::builder::{
     Builder, ChunkSizes, DEFAULT_NODE_CHUNK_BYTES, DEFAULT_REP_CHUNK_BYTES,
 };
@@ -144,12 +146,13 @@ struct LoggingArgs {
 
 impl LoggingArgs {
     /// Starts logging if --with-logging was given, and prints the log file's path.
-    fn init_if_requested(&self) {
+    fn init_if_requested(&self) -> Result<()> {
         if !self.with_logging {
-            return;
+            return Ok(());
         }
-        let path = logging::init(self.log_dir.as_deref(), self.log_level.into());
+        let path = logging::init(self.log_dir.as_deref(), self.log_level.into())?;
         eprintln!("logging to {}", path.display());
+        Ok(())
     }
 }
 
@@ -230,9 +233,9 @@ struct BuildIndexArgs {
 }
 
 /// Runs build-index, picking the representatives and then building the tree.
-fn build_index(args: BuildIndexArgs) {
-    args.logging.init_if_requested();
-    let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
+fn build_index(args: BuildIndexArgs) -> Result<()> {
+    args.logging.init_if_requested()?;
+    let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name)?;
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
     let mut builder = Builder::create(
         &args.save_file,
@@ -245,14 +248,14 @@ fn build_index(args: BuildIndexArgs) {
             rep_chunk_bytes: args.rep_chunk_mb * 1024 * 1024,
             node_chunk_bytes: args.node_chunk_kb * 1024,
         },
-    );
+    )?;
     builder.select_representatives(
         &source,
         args.target_cluster_items,
         args.rep_selection.into(),
         args.fallback_batch_rows,
-    );
-    builder.build(&source, args.fallback_batch_rows);
+    )?;
+    builder.build(&source, args.fallback_batch_rows)
 }
 
 /// Adds every vector in EMBEDDINGS_FILE to an existing index.
@@ -283,15 +286,15 @@ struct AddDataArgs {
 }
 
 /// Runs add-data, inserting the file in batches and printing the ids assigned.
-fn add_data(args: AddDataArgs) {
-    args.logging.init_if_requested();
-    let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name);
+fn add_data(args: AddDataArgs) -> Result<()> {
+    args.logging.init_if_requested()?;
+    let source = EmbeddingsSource::open(&args.embeddings_file, &args.emb_grp_name)?;
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
-    let index = Index::load(args.index_path, Some(memory_limit_bytes));
+    let index = Index::load(args.index_path, Some(memory_limit_bytes))?;
 
-    let (total_vecs, _dim) = source.shape();
+    let (total_vecs, _dim) = source.shape()?;
     let batch_vecs =
-        source.chunk_aligned_batch_vecs(args.fallback_batch_rows, args.fallback_batch_rows);
+        source.chunk_aligned_batch_vecs(args.fallback_batch_rows, args.fallback_batch_rows)?;
 
     // Report the ids insert returned. After a crashed insert, they don't simply
     // follow the old item count.
@@ -300,7 +303,7 @@ fn add_data(args: AddDataArgs) {
     let mut start = 0usize;
     while start < total_vecs {
         let end = (start + batch_vecs).min(total_vecs);
-        let assigned = index.insert(source.read_vecs(start, end));
+        let assigned = index.insert(source.read_vecs(start, end)?)?;
         first_id.get_or_insert(assigned.start);
         last_id_end = assigned.end;
         start = end;
@@ -310,6 +313,7 @@ fn add_data(args: AddDataArgs) {
         Some(first) => println!("inserted {total_vecs} items (ids {first}..{last_id_end})"),
         None => println!("inserted 0 items"),
     }
+    Ok(())
 }
 
 /// Searches an index for one query vector, or continues a saved query.
@@ -365,10 +369,10 @@ struct SearchArgs {
 }
 
 /// Runs search, printing the query id and then one line per result.
-fn search(args: SearchArgs) {
-    args.logging.init_if_requested();
+fn search(args: SearchArgs) -> Result<()> {
+    args.logging.init_if_requested()?;
     let memory_limit_bytes = args.memory_limit_gb * 1024 * 1024 * 1024;
-    let index = Index::load(args.index_path, Some(memory_limit_bytes));
+    let index = Index::load(args.index_path, Some(memory_limit_bytes))?;
     let exclude = args.exclude.into_iter().collect();
 
     let (items, query_id) = if let Some(query_id) = args.resume {
@@ -378,15 +382,15 @@ fn search(args: SearchArgs) {
             args.search_exp,
             args.max_increments,
             &exclude,
-        );
+        )?;
         (items, query_id)
     } else {
         let query_file = args
             .query_file
             .expect("clap enforces this when --resume is absent");
-        let source = EmbeddingsSource::open(&query_file, &args.query_grp_name);
+        let source = EmbeddingsSource::open(&query_file, &args.query_grp_name)?;
         let query = source
-            .read_vecs(args.query_row, args.query_row + 1)
+            .read_vecs(args.query_row, args.query_row + 1)?
             .row(0)
             .to_owned();
         index.new_search(
@@ -395,16 +399,17 @@ fn search(args: SearchArgs) {
             args.search_exp,
             args.max_increments,
             &exclude,
-        )
+        )?
     };
 
     // Save the query so --resume can continue it
-    index.shutdown();
+    index.shutdown()?;
 
     println!("query_id\t{query_id}");
     for (score, id) in items {
         println!("{id}\t{score}");
     }
+    Ok(())
 }
 
 /// Prints an index's settings and item counts without loading its tree.
@@ -415,8 +420,8 @@ struct InfoArgs {
 }
 
 /// Runs info, printing each setting on its own line.
-fn info(args: InfoArgs) {
-    let info = IndexInfo::load(args.index_path);
+fn info(args: InfoArgs) -> Result<()> {
+    let info = IndexInfo::load(args.index_path)?;
     println!("Levels: {}", info.levels);
     println!("Metric: {}", info.metric.as_str());
     println!("Normalized: {}", info.is_normalized);
@@ -429,6 +434,7 @@ fn info(args: InfoArgs) {
         );
     }
     println!("Total Representatives: {}", info.total_representatives);
+    Ok(())
 }
 
 /// Erases saved queries older than --older-than-hours.
@@ -448,31 +454,40 @@ struct CleanupQueriesArgs {
 }
 
 /// Runs cleanup-queries and prints how many queries it erased.
-fn cleanup_queries(args: CleanupQueriesArgs) {
-    args.logging.init_if_requested();
-    let index = Index::load(args.index_path, None);
+fn cleanup_queries(args: CleanupQueriesArgs) -> Result<()> {
+    args.logging.init_if_requested()?;
+    let index = Index::load(args.index_path, None)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after 1970")
         .as_secs();
     let cutoff = now.saturating_sub(args.older_than_hours * 3600);
 
-    let erased = index.cleanup_persisted_queries_older_than(cutoff);
+    let erased = index.cleanup_persisted_queries_older_than(cutoff)?;
     println!(
         "erased {erased} persisted quer{}",
         if erased == 1 { "y" } else { "ies" }
     );
+    Ok(())
 }
 
-/// Parses the command line and runs the chosen subcommand.
-fn main() {
+/// Parses the command line, runs the chosen subcommand, and prints a failure
+/// as a one-line message on stderr.
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    match cli.command {
+    let result = match cli.command {
         Command::BuildIndex(args) => build_index(args),
         Command::AddData(args) => add_data(args),
         Command::Search(args) => search(args),
         Command::Info(args) => info(args),
         Command::CleanupQueries(args) => cleanup_queries(args),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 

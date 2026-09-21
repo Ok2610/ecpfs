@@ -58,6 +58,7 @@ fn new_builder(
         None,
         ChunkSizes::default(),
     )
+    .unwrap()
 }
 
 #[test]
@@ -80,9 +81,12 @@ fn select_representatives_uses_the_builders_rep_chunk_bytes() {
             rep_chunk_bytes: 16,
             ..Default::default()
         },
-    );
+    )
+    .unwrap();
 
-    builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
+    builder
+        .select_representatives(&source, 3, RepresentativeStrategy::Offset, 10)
+        .unwrap();
 
     let rep_embeddings = Array::open(as_readable_writable_listable(&store), "/rep_embeddings")
         .expect("failed to open rep_embeddings");
@@ -136,8 +140,10 @@ fn build_chunks_nodes_and_representatives_from_their_own_settings() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     let expected_rows = chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES) as usize;
     for path in ["/index_root/embeddings", "/lvl_1/node_0/embeddings"] {
@@ -172,7 +178,9 @@ fn select_representatives_sets_node_size_and_persists_only() {
     );
     let mut builder = new_builder(&store, 2, 1_000_000);
 
-    builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
+    builder
+        .select_representatives(&source, 3, RepresentativeStrategy::Offset, 10)
+        .unwrap();
 
     assert_eq!(
         builder.node_size, 2,
@@ -189,10 +197,12 @@ fn select_representatives_custom_uses_caller_supplied_representatives() {
     let store = new_memory_store();
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9]),
-        array![[0.0f32, 0.0], [5.0, 5.0]],
-    );
+    builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9]),
+            array![[0.0f32, 0.0], [5.0, 5.0]],
+        )
+        .unwrap();
 
     assert_eq!(builder.node_size, 2);
     match builder.representatives {
@@ -202,25 +212,27 @@ fn select_representatives_custom_uses_caller_supplied_representatives() {
 }
 
 #[test]
-#[should_panic(expected = "ids and embeddings must have the same length")]
-fn select_representatives_custom_panics_on_a_length_mismatch() {
+fn select_representatives_custom_rejects_a_length_mismatch() {
     let store = new_memory_store();
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9, 11]),
-        array![[0.0f32, 0.0], [5.0, 5.0]],
-    );
+    let err = builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9, 11]),
+            array![[0.0f32, 0.0], [5.0, 5.0]],
+        )
+        .unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 #[test]
-#[should_panic(expected = "call select_representatives before build")]
-fn build_without_representatives_panics() {
+fn build_without_representatives_is_a_usage_error() {
     let store = new_memory_store();
     let source = write_source(&store, "/dataset", &array![[0.0f32, 0.0]]);
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.build(&source, 10);
+    let err = builder.build(&source, 10).unwrap_err();
+    assert!(matches!(err, EcpError::Usage(_)), "{err:?}");
 }
 
 /// With levels=1 the root's children are the leaves, so only one level is
@@ -235,8 +247,10 @@ fn build_writes_index_root_and_leaf_nodes() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     let root = Array::open(
         as_readable_writable_listable(&store),
@@ -284,8 +298,10 @@ fn build_writes_total_items_and_next_item_id_from_the_datasets_row_count() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     for field in ["total_items", "next_item_id"] {
         let array = Array::open(
@@ -314,11 +330,13 @@ fn build_with_custom_representatives_writes_index_root_and_leaf_nodes() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9u32]),
-        array![[0.0f32, 0.0], [10.0, 0.0]],
-    );
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9u32]),
+            array![[0.0f32, 0.0], [10.0, 0.0]],
+        )
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     let root = Array::open(
         as_readable_writable_listable(&store),

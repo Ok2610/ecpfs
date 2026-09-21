@@ -66,7 +66,7 @@ build-index
          --log-dir <LOG_DIR>
              Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: info] [possible values: off, error, warn, info, debug, trace]
      -h, --help
              Print help (see more with '--help')
 
@@ -104,7 +104,7 @@ prints the ids it assigned.
          --log-dir <LOG_DIR>
              Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: info] [possible values: off, error, warn, info, debug, trace]
      -h, --help
              Print help (see more with '--help')
 
@@ -159,7 +159,7 @@ continue the same query without starting over. :doc:`search-parameters` explains
          --log-dir <LOG_DIR>
              Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: info] [possible values: off, error, warn, info, debug, trace]
      -h, --help
              Print help (see more with '--help')
 
@@ -168,13 +168,16 @@ info
 
 .. code-block:: text
 
-   Usage: ecp info <INDEX_PATH>
+   Usage: ecp info [OPTIONS] <INDEX_PATH>
 
    Arguments:
      <INDEX_PATH>  The index to describe
 
    Options:
-     -h, --help  Print help
+         --with-logging           Log this run to a JSONL file
+         --log-dir <LOG_DIR>      Directory for the log file, ecp_logs/ if not set
+         --log-level <LOG_LEVEL>  Log verbosity. trace also logs every node visited during search [default: info] [possible values: off, error, warn, info, debug, trace]
+     -h, --help                   Print help
 
 ``Total Items`` counts the items stored, and ``Next Item Id`` is the id the next
 insert gives out. They are equal unless a crash stopped an insert between taking
@@ -208,7 +211,7 @@ example from a scheduled job:
          --log-dir <LOG_DIR>
              Directory for the log file, ecp_logs/ if not set
          --log-level <LOG_LEVEL>
-             Log verbosity. trace also logs every node visited during search [default: debug] [possible values: off, error, warn, info, debug, trace]
+             Log verbosity. trace also logs every node visited during search [default: info] [possible values: off, error, warn, info, debug, trace]
      -h, --help
              Print help (see more with '--help')
 

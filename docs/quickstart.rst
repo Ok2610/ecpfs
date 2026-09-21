@@ -171,10 +171,13 @@ The equivalent from the CLI, for a scheduled cleanup job:
    ecp cleanup-queries my_index.zarr --older-than-hours 24
 
 Enabling logging
-------------------
+----------------
 
 .. code-block:: python
 
    from ecpfs import init_logging
 
-   log_path = init_logging(log_dir="ecp_logs", level="debug")
+   log_path = init_logging(log_dir="ecp_logs")  # level defaults to "info"
+
+See :doc:`logging` for the level policy, the record format, and where the
+file goes.

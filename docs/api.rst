@@ -37,4 +37,7 @@ EmbeddingDtype
 Logging
 -------
 
+See :doc:`logging` for the level policy, the JSONL record format, and where
+the file goes.
+
 .. autofunction:: ecpfs.ecp.init_logging

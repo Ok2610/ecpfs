@@ -3,6 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use log::{LevelFilter, Log, Metadata, Record};
@@ -21,17 +22,23 @@ static LOG_PATH: OnceLock<Result<PathBuf>> = OnceLock::new();
 /// Writes each log record as one JSON line to `file`.
 struct JsonlLogger {
     file: Mutex<File>,
+    /// Set after the first write failure, so a full disk gets one line on
+    /// stderr instead of one per record.
+    write_failed: AtomicBool,
 }
 
 impl Log for JsonlLogger {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= log::max_level()
     }
 
     fn log(&self, record: &Record) {
         let entry = format_entry(record);
-        if let Ok(mut file) = self.file.lock() {
-            let _ = writeln!(file, "{entry}");
+        if let Ok(mut file) = self.file.lock()
+            && let Err(e) = writeln!(file, "{entry}")
+            && !self.write_failed.swap(true, Ordering::Relaxed)
+        {
+            eprintln!("ecp_core::logging: failed to write a log line: {e}");
         }
     }
 
@@ -87,13 +94,22 @@ pub fn init(log_dir: Option<&Path>, level: LevelFilter) -> Result<PathBuf> {
                 .append(true)
                 .open(&path)
                 .store_err("failed to open log file")?;
-            // Leave the level alone if another logger was set first
-            if log::set_boxed_logger(Box::new(JsonlLogger {
+            match log::set_boxed_logger(Box::new(JsonlLogger {
                 file: Mutex::new(file),
-            }))
-            .is_ok()
-            {
-                log::set_max_level(level);
+                write_failed: AtomicBool::new(false),
+            })) {
+                Ok(()) => {
+                    log::set_max_level(level);
+                    log::info!("logging to {} at {level}", path.display());
+                }
+                // A logger was already installed for this process, log's one
+                // slot per program. Say so through it, since ours never ran.
+                Err(_) => log::warn!(
+                    "a logger was already active for this process before \
+                     ecp_core::logging::init ran; records go there, not to \
+                     {} (this file will stay empty)",
+                    path.display()
+                ),
             }
             Ok(path)
         })

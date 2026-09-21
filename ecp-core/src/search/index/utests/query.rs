@@ -228,6 +228,26 @@ fn missing_query_id_returns_empty_instead_of_panicking() {
         .unwrap();
 }
 
+/// `search_exp=4` against this 4-leaf fixture visits every leaf in one call.
+#[test]
+fn incremental_search_returns_how_many_leaves_it_visited() {
+    let index = build_test_index();
+    let query_id = 1;
+    index.queries.insert(
+        query_id,
+        Arc::new(Mutex::new(QueryState {
+            query: array![0.0, 0.0],
+            tree_pq: BinaryHeap::new(),
+            items: Vec::new(),
+        })),
+    );
+
+    let leaves_scanned = index
+        .incremental_search(query_id, 4, 4, -1, &HashSet::new())
+        .unwrap();
+    assert_eq!(leaves_scanned, 4);
+}
+
 /// Many threads searching one shared `Index` each get the results a
 /// sequential caller would.
 #[test]

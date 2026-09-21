@@ -109,6 +109,11 @@ impl Index {
         let next_item_id = read_info_u32(&readable, "next_item_id")?;
         let total_items = read_info_u32(&readable, "total_items")?;
 
+        log::info!(
+            "index loaded: levels={levels} metric={metric:?} items={total_items} \
+             memory_limit={memory_limit_bytes:?}"
+        );
+
         Ok(Index {
             store,
             metric,
@@ -139,6 +144,13 @@ impl Index {
         // With a limit, split it between the caches, sizing each entry in bytes
         if let Some(limit) = memory_limit_bytes {
             let query_capacity = (limit as f64 * QUERY_CACHE_MEMORY_FRACTION) as u64;
+            if query_capacity == 0 {
+                log::warn!(
+                    "query cache capacity is 0 bytes for memory_limit_bytes={limit}; \
+                     every query will be evicted to disk immediately and reloaded \
+                     on next use"
+                );
+            }
             let node_capacity = limit as u64 - query_capacity;
             nodes_builder = nodes_builder
                 .max_capacity(node_capacity)
@@ -206,8 +218,8 @@ impl Index {
         new_queries.run_pending_tasks();
         self.nodes = new_nodes;
         self.queries = new_queries;
-        log::debug!(
-            "set_memory_limit_bytes: resident now {} bytes, limit={memory_limit_bytes:?}",
+        log::info!(
+            "memory limit set to {memory_limit_bytes:?}, resident now {} bytes",
             self.resident_bytes()
         );
     }
@@ -221,6 +233,14 @@ impl Index {
 
         // Internal Node
         if !is_leaf {
+            log::trace!(
+                "lvl={lvl} node={node_id} cache {}",
+                if self.nodes.contains_key(&(lvl, node_id)) {
+                    "hit"
+                } else {
+                    "miss, reading from disk"
+                }
+            );
             return self.nodes.get_with((lvl, node_id), || {
                 Arc::new(Node::new(
                     self.store.clone().readable_listable(),
@@ -232,6 +252,7 @@ impl Index {
 
         // Leaf node already cached
         if let Some(hit) = self.nodes.get(&(lvl, node_id)) {
+            log::trace!("lvl={lvl} node={node_id} cache hit");
             return hit;
         }
 
@@ -245,8 +266,10 @@ impl Index {
 
         // Someone else may have populated it while we waited for the lock.
         if let Some(hit) = self.nodes.get(&(lvl, node_id)) {
+            log::trace!("lvl={lvl} node={node_id} cache hit after waiting for its lock");
             return hit;
         }
+        log::trace!("lvl={lvl} node={node_id} cache miss, reading from disk");
         let node = Arc::new(Node::new(
             self.store.clone().readable_listable(),
             format!("/lvl_{}/node_{node_id}", lvl + 1),
@@ -282,6 +305,7 @@ impl Index {
                 failed += 1;
             }
         }
+        log::info!("shutdown: saved {} of {total} open queries", total - failed);
         if failed > 0 {
             return Err(EcpError::Store(format!(
                 "failed to persist {failed} of {total} open queries"
@@ -293,7 +317,9 @@ impl Index {
     /// Erases every query saved to disk before `cutoff_unix_secs` (seconds
     /// since the Unix epoch). Returns how many were erased.
     pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> Result<usize> {
-        persistence::cleanup_older_than(&self.store, cutoff_unix_secs)
+        let erased = persistence::cleanup_older_than(&self.store, cutoff_unix_secs)?;
+        log::info!("cleanup: erased {erased} persisted queries older than {cutoff_unix_secs}");
+        Ok(erased)
     }
 
     /// Adds each row of `embeddings` to its nearest leaf, converted to the
@@ -361,6 +387,10 @@ impl Index {
             write_info_u32(&self.store, "total_items", *total)?;
         }
 
+        log::info!(
+            "insert: added {} rows, ids {start}..{end}",
+            embeddings.nrows()
+        );
         Ok(start..end)
     }
 }

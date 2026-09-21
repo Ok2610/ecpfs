@@ -101,6 +101,10 @@ impl Index {
         if !self.accepting.load(Ordering::SeqCst) {
             return Ok((Vec::new(), query_id));
         }
+        log::debug!(
+            "new_search: query_id={query_id} k={k} search_exp={search_exp} \
+             max_increments={max_increments} exclude={exclude:?}"
+        );
         self.queries.insert(
             query_id,
             Arc::new(Mutex::new(QueryState {
@@ -109,13 +113,20 @@ impl Index {
                 items: Vec::new(),
             })),
         );
-        self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
-        Ok((self.drain_items(query_id, k)?, query_id))
+        let leaves_scanned =
+            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
+        let items = self.drain_items(query_id, k)?;
+        log::info!(
+            "search: query_id={query_id} k={k} leaves_scanned={leaves_scanned} items_returned={}",
+            items.len()
+        );
+        Ok((items, query_id))
     }
 
     /// Scores `search_exp` more leaves for query `query_id`, buffering their items
     /// except those in `exclude`. If fewer than `k` items are buffered by then, it doubles
     /// `search_exp` and goes on, at most `max_increments` times (`-1` for no limit).
+    /// Returns how many leaves this call visited.
     pub fn incremental_search(
         &self,
         query_id: usize,
@@ -123,14 +134,15 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
-    ) -> Result<()> {
+    ) -> Result<u32> {
         // No-op after shutdown or for an unknown query_id
         if !self.accepting.load(Ordering::SeqCst) {
-            return Ok(());
+            return Ok(0);
         }
         let Some(state_arc) = self.get_or_load_query(query_id)? else {
-            return Ok(());
+            return Ok(0);
         };
+        let mut leaf_cnt = 0;
         {
             let mut state = state_arc.lock().unwrap();
             let QueryState {
@@ -147,7 +159,6 @@ impl Index {
             };
             let mut search_exp = search_exp;
 
-            let mut leaf_cnt = 0;
             let mut increments = 0;
 
             // On the first call, queue every root entry
@@ -179,7 +190,10 @@ impl Index {
                 // Skip an id that was never written to disk
                 let embeddings_f32: &Array2<f32> = match node.embeddings()? {
                     Some(embs) => embs,
-                    None => continue,
+                    None => {
+                        log::warn!("lvl={lvl} node={node_id} has no embeddings on disk, skipping");
+                        continue;
+                    }
                 };
 
                 let distances: Array1<f32> =
@@ -193,11 +207,17 @@ impl Index {
                 if is_leaf == 1 {
                     // For a leaf, collect its items. items sorts ascending, so flip
                     // the heap's score back to lower-is-better.
+                    let before = items.len();
                     for i in 0..distances.len() {
                         if !exclude.contains(&children[i]) {
                             items.push((NotNan::new(-sign * distances[i]).unwrap(), children[i]));
                         }
                     }
+                    log::trace!(
+                        "lvl={lvl} node={node_id}: collected {} of {} items",
+                        items.len() - before,
+                        distances.len()
+                    );
                     leaf_cnt += 1;
                 } else {
                     // For an internal node, queue its children
@@ -225,6 +245,11 @@ impl Index {
                     if increments < max_increments || max_increments == -1 {
                         increments += 1;
                         search_exp *= 2;
+                        log::debug!(
+                            "query_id={query_id}: only {} of {k} items after {leaf_cnt} leaves, \
+                             doubling search_exp to {search_exp}",
+                            items.len()
+                        );
                     } else {
                         break;
                     }
@@ -239,7 +264,7 @@ impl Index {
         if self.memory_limit_bytes.is_some() {
             self.queries.insert(query_id, state_arc);
         }
-        Ok(())
+        Ok(leaf_cnt)
     }
 
     /// Returns the next `k` items of query `query_id`, searching further first
@@ -257,23 +282,31 @@ impl Index {
             return Ok(Vec::new());
         }
         let Some(state_arc) = self.get_or_load_query(query_id)? else {
-            log::debug!(
-                "get_next_k_items: query_id={query_id} not found (evicted, invalid, or never persisted), returning no items"
+            log::warn!(
+                "get_next_k_items: query_id={query_id} not found (evicted, invalid, \
+                 or never persisted), returning no items"
             );
             return Ok(Vec::new());
         };
         let needs_more_search = {
             let state = state_arc.lock().unwrap();
             log::debug!(
-                "get_next_k_items: query_id={query_id} query={:?} k={k} search_exp={search_exp} max_increments={max_increments} exclude={exclude:?}",
-                state.query.to_vec()
+                "get_next_k_items: query_id={query_id} k={k} search_exp={search_exp} \
+                 max_increments={max_increments} exclude={exclude:?}"
             );
             state.items.len() < k && !state.tree_pq.is_empty()
         };
-        if needs_more_search {
-            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
-        }
-        self.drain_items(query_id, k)
+        let leaves_scanned = if needs_more_search {
+            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?
+        } else {
+            0
+        };
+        let items = self.drain_items(query_id, k)?;
+        log::info!(
+            "search: query_id={query_id} k={k} leaves_scanned={leaves_scanned} items_returned={}",
+            items.len()
+        );
+        Ok(items)
     }
 }
 

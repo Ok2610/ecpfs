@@ -129,7 +129,13 @@ impl EmbeddingsSource {
     pub fn natural_chunk_vecs(&self, fallback: usize) -> Result<usize> {
         Ok(match self {
             EmbeddingsSource::Hdf5(dataset) => {
-                dataset.chunk_dims().map(|dims| dims[0]).unwrap_or(fallback)
+                dataset.chunk_dims().map(|dims| dims[0]).unwrap_or_else(|| {
+                    log::warn!(
+                        "HDF5 dataset has no chunking; using the fallback batch size of \
+                     {fallback} rows"
+                    );
+                    fallback
+                })
             }
             EmbeddingsSource::Zarr { store, path } => {
                 let array = open_zarr_array(store, path)?;

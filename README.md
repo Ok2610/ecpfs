@@ -57,6 +57,7 @@ The site is at https://ok2610.github.io/ecpfs/ and covers:
 - Quickstart: installation and a build/search walkthrough
 - Search parameters: how `k`, `search_exp`, `max_increments` and `exclude`
   work together
+- Logging: the level policy, the JSONL record format, and where the file goes
 - Python API reference, with the Rust API reference under `/rust/`
 - CLI reference for `ecp`
 - Index format: the on-disk layout, including saved queries

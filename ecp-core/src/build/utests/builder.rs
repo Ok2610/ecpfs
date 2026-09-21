@@ -58,6 +58,7 @@ fn new_builder(
         None,
         ChunkSizes::default(),
     )
+    .unwrap()
 }
 
 #[test]
@@ -80,9 +81,12 @@ fn select_representatives_uses_the_builders_rep_chunk_bytes() {
             rep_chunk_bytes: 16,
             ..Default::default()
         },
-    );
+    )
+    .unwrap();
 
-    builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
+    builder
+        .select_representatives(&source, 3, RepresentativeStrategy::Offset, 10)
+        .unwrap();
 
     let rep_embeddings = Array::open(as_readable_writable_listable(&store), "/rep_embeddings")
         .expect("failed to open rep_embeddings");
@@ -105,7 +109,7 @@ fn chunk_rows_fills_the_asked_for_bytes_at_any_dim_or_dtype() {
         (1536, EmbeddingDtype::F16),
     ] {
         let bytes_per_vec = dim * dtype.bytes();
-        let bytes = chunk_rows(dim, dtype, asked) as usize * bytes_per_vec;
+        let bytes = chunk_rows(dim, dtype, asked).unwrap() as usize * bytes_per_vec;
         assert!(
             bytes <= asked && bytes + bytes_per_vec > asked,
             "dim {dim} as {dtype:?} chunked {bytes} bytes"
@@ -114,15 +118,33 @@ fn chunk_rows_fills_the_asked_for_bytes_at_any_dim_or_dtype() {
 }
 
 #[test]
-fn chunk_rows_honours_a_large_request_and_never_returns_zero() {
+fn chunk_rows_honours_a_large_request() {
     // dim=1152 f32 is 4608 bytes a vector, so 100 MiB holds 22755 of them.
     assert_eq!(
-        chunk_rows(1152, EmbeddingDtype::F32, 100 * 1024 * 1024),
+        chunk_rows(1152, EmbeddingDtype::F32, 100 * 1024 * 1024).unwrap(),
         22755,
         "a large chunk must be given as asked, not capped"
     );
-    // A vector wider than the whole chunk still gets a one-row chunk.
-    assert_eq!(chunk_rows(64, EmbeddingDtype::F32, 16), 1);
+}
+
+#[test]
+fn chunk_rows_rejects_a_vector_wider_than_the_whole_chunk() {
+    // dim=64 f32 is 256 bytes a vector, wider than a 16-byte chunk.
+    let err = chunk_rows(64, EmbeddingDtype::F32, 16).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn chunk_rows_rejects_a_dimension_of_zero() {
+    let err = chunk_rows(0, EmbeddingDtype::F32, 1024).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn chunk_rows_rejects_a_dimension_whose_byte_size_overflows() {
+    // usize::MAX values of 4 bytes each do not fit in a usize.
+    let err = chunk_rows(usize::MAX, EmbeddingDtype::F32, 1024).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 /// The tree nodes and the representative arrays each take their own setting.
@@ -136,10 +158,13 @@ fn build_chunks_nodes_and_representatives_from_their_own_settings() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
-    let expected_rows = chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES) as usize;
+    let expected_rows =
+        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_NODE_CHUNK_BYTES).unwrap() as usize;
     for path in ["/index_root/embeddings", "/lvl_1/node_0/embeddings"] {
         let array = Array::open(as_readable_writable_listable(&store), path).unwrap();
         assert_eq!(
@@ -155,7 +180,7 @@ fn build_chunks_nodes_and_representatives_from_their_own_settings() {
     assert_eq!(
         reps.chunk_shape_usize(&[0, 0])
             .expect("failed to read chunk shape")[0],
-        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_REP_CHUNK_BYTES) as usize,
+        chunk_rows(2, EmbeddingDtype::F32, DEFAULT_REP_CHUNK_BYTES).unwrap() as usize,
         "the representative arrays take rep_chunk_bytes"
     );
 }
@@ -172,7 +197,9 @@ fn select_representatives_sets_node_size_and_persists_only() {
     );
     let mut builder = new_builder(&store, 2, 1_000_000);
 
-    builder.select_representatives(&source, 3, RepresentativeStrategy::Offset, 10);
+    builder
+        .select_representatives(&source, 3, RepresentativeStrategy::Offset, 10)
+        .unwrap();
 
     assert_eq!(
         builder.node_size, 2,
@@ -189,10 +216,12 @@ fn select_representatives_custom_uses_caller_supplied_representatives() {
     let store = new_memory_store();
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9]),
-        array![[0.0f32, 0.0], [5.0, 5.0]],
-    );
+    builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9]),
+            array![[0.0f32, 0.0], [5.0, 5.0]],
+        )
+        .unwrap();
 
     assert_eq!(builder.node_size, 2);
     match builder.representatives {
@@ -202,25 +231,51 @@ fn select_representatives_custom_uses_caller_supplied_representatives() {
 }
 
 #[test]
-#[should_panic(expected = "ids and embeddings must have the same length")]
-fn select_representatives_custom_panics_on_a_length_mismatch() {
+fn select_representatives_custom_rejects_a_length_mismatch() {
     let store = new_memory_store();
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9, 11]),
-        array![[0.0f32, 0.0], [5.0, 5.0]],
-    );
+    let err = builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9, 11]),
+            array![[0.0f32, 0.0], [5.0, 5.0]],
+        )
+        .unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 #[test]
-#[should_panic(expected = "call select_representatives before build")]
-fn build_without_representatives_panics() {
+fn build_without_representatives_is_a_usage_error() {
     let store = new_memory_store();
     let source = write_source(&store, "/dataset", &array![[0.0f32, 0.0]]);
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.build(&source, 10);
+    let err = builder.build(&source, 10).unwrap_err();
+    assert!(matches!(err, EcpError::Usage(_)), "{err:?}");
+}
+
+#[test]
+fn builder_rejects_zero_levels() {
+    let store = new_memory_store();
+    let result = Builder::new(
+        as_readable_writable_listable(&store),
+        0,
+        Metric::L2,
+        false,
+        1_000_000,
+        None,
+        ChunkSizes::default(),
+    );
+    let Err(err) = result else {
+        panic!("levels = 0 was accepted");
+    };
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn node_size_for_rejects_zero_levels() {
+    let err = node_size_for(100, 0).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 /// With levels=1 the root's children are the leaves, so only one level is
@@ -235,8 +290,10 @@ fn build_writes_index_root_and_leaf_nodes() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     let root = Array::open(
         as_readable_writable_listable(&store),
@@ -284,8 +341,10 @@ fn build_writes_total_items_and_next_item_id_from_the_datasets_row_count() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10);
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     for field in ["total_items", "next_item_id"] {
         let array = Array::open(
@@ -314,11 +373,13 @@ fn build_with_custom_representatives_writes_index_root_and_leaf_nodes() {
     );
     let mut builder = new_builder(&store, 1, 1_000_000);
 
-    builder.select_representatives_custom(
-        Array1::from_vec(vec![7u32, 9u32]),
-        array![[0.0f32, 0.0], [10.0, 0.0]],
-    );
-    builder.build(&dataset, 10);
+    builder
+        .select_representatives_custom(
+            Array1::from_vec(vec![7u32, 9u32]),
+            array![[0.0f32, 0.0], [10.0, 0.0]],
+        )
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
 
     let root = Array::open(
         as_readable_writable_listable(&store),

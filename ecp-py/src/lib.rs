@@ -4,6 +4,7 @@ use pyo3::types::PyModule;
 
 mod pybuilder;
 mod pydtype;
+mod pyerror;
 mod pyindex;
 mod pylogging;
 mod pymetric;

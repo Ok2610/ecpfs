@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use ecp_core::logging;
 
+use crate::pyerror::to_pyerr;
+
 /// Parses a level name such as "debug", raising ValueError for an unknown one.
 fn parse_level(level: &str) -> PyResult<log::LevelFilter> {
     level.parse().map_err(|_| {
@@ -23,6 +25,6 @@ fn parse_level(level: &str) -> PyResult<log::LevelFilter> {
 #[pyo3(signature = (log_dir=None, level="debug"))]
 pub fn init_logging(log_dir: Option<PathBuf>, level: &str) -> PyResult<String> {
     let level = parse_level(level)?;
-    let path = logging::init(log_dir.as_deref(), level);
+    let path = logging::init(log_dir.as_deref(), level).map_err(to_pyerr)?;
     Ok(path.display().to_string())
 }

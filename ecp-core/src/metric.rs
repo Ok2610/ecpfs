@@ -2,6 +2,8 @@
 
 use ndarray::{Array1, Array2, Axis};
 
+use crate::error::{EcpError, Result};
+
 /// How the distance between two vectors is measured. `as_str` and `FromStr`
 /// convert it to and from the name stored in an index's `info/metric`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +27,7 @@ impl Metric {
 impl std::str::FromStr for Metric {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "L2" => Ok(Metric::L2),
             "IP" => Ok(Metric::IP),
@@ -43,14 +45,16 @@ pub fn calculate_distances(
     q: &Array1<f32>,
     metric: &Metric,
     is_normalized: bool,
-) -> Array1<f32> {
-    assert_eq!(
-        embeddings.ncols(),
-        q.len(),
-        "embeddings and query must have the same dim"
-    );
+) -> Result<Array1<f32>> {
+    if embeddings.ncols() != q.len() {
+        return Err(EcpError::InvalidInput(format!(
+            "query has dimension {}, the index expects {}",
+            q.len(),
+            embeddings.ncols()
+        )));
+    }
 
-    match metric {
+    Ok(match metric {
         Metric::IP => embeddings.dot(q),
         // Terms of similar size can cancel to a small negative where the true
         // distance is zero, and the root would turn that into NaN
@@ -64,7 +68,7 @@ pub fn calculate_distances(
             let neg_dist_sq = negative_squared_distances(embeddings, &q_2d);
             neg_dist_sq.column(0).mapv(|v| (-v).max(0.0).sqrt())
         }
-    }
+    })
 }
 
 /// Computes the squared L2 distance between every row of `a` and every row of

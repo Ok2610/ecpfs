@@ -118,7 +118,8 @@ fn collect_representatives_persists_matched_vecs_and_ids() {
         1_000_000,
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let persisted_ids =
         Array::open(dest.clone(), "/rep_item_ids").expect("rep_item_ids must be persisted");
@@ -156,7 +157,8 @@ fn collect_representatives_persists_the_same_result_when_batching_skips_a_chunk(
         0,
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let persisted_embeddings = Array::open(dest.clone(), "/rep_embeddings")
         .expect("rep_embeddings must still be persisted");

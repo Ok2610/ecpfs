@@ -7,6 +7,8 @@ use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::pyerror::to_pyerr;
+
 /// An eCP index opened from disk, for searching and inserting.
 ///
 /// ``memory_limit_bytes`` caps the index data kept in memory, nodes and open
@@ -38,7 +40,9 @@ impl IndexWrapper {
     #[new]
     #[pyo3(signature = (index_path, memory_limit_bytes=ecp_core::utils::default_memory_limit_bytes()))]
     fn new(py: Python<'_>, index_path: PathBuf, memory_limit_bytes: usize) -> PyResult<Self> {
-        let inner = py.detach(|| Index::load(index_path, Some(memory_limit_bytes)));
+        let inner = py
+            .detach(|| Index::load(index_path, Some(memory_limit_bytes)))
+            .map_err(to_pyerr)?;
         Ok(IndexWrapper {
             inner,
             closed: false,
@@ -74,10 +78,12 @@ impl IndexWrapper {
         let query: Array1<f32> = query.to_owned_array();
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
 
-        let (results, query_id): (Vec<(NotNan<f32>, u32)>, usize) = py.detach(|| {
-            self.inner
-                .new_search(query, k, search_exp, max_increments, &exclude_set)
-        });
+        let (results, query_id): (Vec<(NotNan<f32>, u32)>, usize) = py
+            .detach(|| {
+                self.inner
+                    .new_search(query, k, search_exp, max_increments, &exclude_set)
+            })
+            .map_err(to_pyerr)?;
 
         let items: Vec<(f32, u32)> = results
             .into_iter()
@@ -104,10 +110,12 @@ impl IndexWrapper {
     ) -> PyResult<Vec<(f32, u32)>> {
         self.check_not_closed()?;
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
-        let results: Vec<(NotNan<f32>, u32)> = py.detach(|| {
-            self.inner
-                .get_next_k_items(query_id, k, search_exp, max_increments, &exclude_set)
-        });
+        let results: Vec<(NotNan<f32>, u32)> = py
+            .detach(|| {
+                self.inner
+                    .get_next_k_items(query_id, k, search_exp, max_increments, &exclude_set)
+            })
+            .map_err(to_pyerr)?;
 
         Ok(results
             .into_iter()
@@ -124,7 +132,9 @@ impl IndexWrapper {
     fn insert(&self, py: Python<'_>, embeddings: PyReadonlyArray2<f32>) -> PyResult<(u32, u32)> {
         self.check_not_closed()?;
         let embeddings: Array2<f32> = embeddings.to_owned_array();
-        let range = py.detach(|| self.inner.insert(embeddings));
+        let range = py
+            .detach(|| self.inner.insert(embeddings))
+            .map_err(to_pyerr)?;
         Ok((range.start, range.end))
     }
 
@@ -138,23 +148,24 @@ impl IndexWrapper {
         cutoff_unix_secs: f64,
     ) -> PyResult<usize> {
         self.check_not_closed()?;
-        Ok(py.detach(|| {
+        py.detach(|| {
             self.inner
                 .cleanup_persisted_queries_older_than(cutoff_unix_secs as u64)
-        }))
+        })
+        .map_err(to_pyerr)
     }
 
     /// close()
     ///
     /// Saves every open query to disk so a later ``Index`` can resume it, then
-    /// closes this one. Any other method raises ValueError afterwards. Safe to
-    /// call more than once.
-    fn close(&mut self, py: Python<'_>) {
+    /// closes this one, raising OSError if a save failed. Any other method
+    /// raises ValueError afterwards. Safe to call more than once.
+    fn close(&mut self, py: Python<'_>) -> PyResult<()> {
         if self.closed {
-            return;
+            return Ok(());
         }
-        py.detach(|| self.inner.shutdown());
         self.closed = true;
+        py.detach(|| self.inner.shutdown()).map_err(to_pyerr)
     }
 
     fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
@@ -167,7 +178,7 @@ impl IndexWrapper {
         _exc_type: Option<Bound<'_, PyAny>>,
         _exc_value: Option<Bound<'_, PyAny>>,
         _traceback: Option<Bound<'_, PyAny>>,
-    ) {
-        self.close(py);
+    ) -> PyResult<()> {
+        self.close(py)
     }
 }

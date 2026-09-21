@@ -2,46 +2,58 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use zarrs::array::Array;
+use zarrs::array::{Array, ArrayCreateError};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::ReadableListableStorage;
 
+use crate::error::{EcpError, Result, ResultExt};
 use crate::metric::Metric;
 
+/// Opens the array at `info/{name}` in `store`. A missing array means the
+/// store isn't a valid index, so this maps to [`EcpError::Corrupt`] rather
+/// than [`EcpError::NotFound`].
+fn open_info_field(
+    store: &ReadableListableStorage,
+    name: &str,
+) -> Result<Array<dyn zarrs::storage::ReadableListableStorageTraits>> {
+    let path = format!("/info/{name}");
+    Array::open(store.clone(), &path).map_err(|e| match e {
+        ArrayCreateError::MissingMetadata => {
+            EcpError::Corrupt(format!("not a valid index: {path} is missing"))
+        }
+        other => EcpError::Store(format!("failed to open {path}: {other}")),
+    })
+}
+
 /// Reads `info/levels`, `info/metric` and `info/is_normalized`.
-pub(super) fn read_info_fields(store: &ReadableListableStorage) -> (u32, Metric, bool) {
-    let levels_array =
-        Array::open(store.clone(), "/info/levels").expect("Failed to open info/levels");
+pub(super) fn read_info_fields(store: &ReadableListableStorage) -> Result<(u32, Metric, bool)> {
+    let levels_array = open_info_field(store, "levels")?;
     let levels: u32 = levels_array
         .retrieve_array_subset::<Vec<u32>>(&levels_array.subset_all())
-        .expect("Failed to retrieve info/levels")[0];
+        .store_err("failed to retrieve info/levels")?[0];
 
-    let metric_array =
-        Array::open(store.clone(), "/info/metric").expect("Failed to open info/metric");
+    let metric_array = open_info_field(store, "metric")?;
     let metric_str = metric_array
         .retrieve_array_subset::<Vec<String>>(&metric_array.subset_all())
-        .expect("Failed to retrieve info/metric")
+        .store_err("failed to retrieve info/metric")?
         .remove(0);
     let metric = Metric::from_str(&metric_str)
-        .unwrap_or_else(|e| panic!("info/metric holds an unrecognized metric: {e}"));
+        .map_err(|e| EcpError::Corrupt(format!("info/metric holds an unrecognized metric: {e}")))?;
 
-    let is_normalized_array = Array::open(store.clone(), "/info/is_normalized")
-        .expect("Failed to open info/is_normalized");
+    let is_normalized_array = open_info_field(store, "is_normalized")?;
     let is_normalized: bool = is_normalized_array
         .retrieve_array_subset::<Vec<bool>>(&is_normalized_array.subset_all())
-        .expect("Failed to retrieve info/is_normalized")[0];
+        .store_err("failed to retrieve info/is_normalized")?[0];
 
-    (levels, metric, is_normalized)
+    Ok((levels, metric, is_normalized))
 }
 
 /// Reads the `u32` scalar at `info/{name}`.
-pub(super) fn read_info_u32(store: &ReadableListableStorage, name: &str) -> u32 {
-    let path = format!("/info/{name}");
-    let array =
-        Array::open(store.clone(), &path).unwrap_or_else(|e| panic!("Failed to open {path}: {e}"));
-    array
+pub(super) fn read_info_u32(store: &ReadableListableStorage, name: &str) -> Result<u32> {
+    let array = open_info_field(store, name)?;
+    Ok(array
         .retrieve_array_subset::<Vec<u32>>(&array.subset_all())
-        .unwrap_or_else(|e| panic!("Failed to retrieve {path}: {e}"))[0]
+        .store_err_with(|| format!("failed to retrieve info/{name}"))?[0])
 }
 
 /// An index's `info/*` fields and representative count, read without
@@ -64,31 +76,41 @@ pub struct IndexInfo {
 
 impl IndexInfo {
     /// Loads an index's info fields from `index_path`.
-    pub fn load(index_path: PathBuf) -> Self {
+    pub fn load(index_path: PathBuf) -> Result<Self> {
+        if !index_path.exists() {
+            return Err(EcpError::NotFound(format!(
+                "index directory {} does not exist",
+                index_path.display()
+            )));
+        }
         let store: ReadableListableStorage =
-            Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
+            Arc::new(FilesystemStore::new(&index_path).store_err("failed to open store")?);
         Self::load_from_store(store)
     }
 
     /// Reads the info fields from `store` instead of a path. Otherwise the same as `load`.
     /// Note: This function is only split out from `load` for unit tests.
-    fn load_from_store(store: ReadableListableStorage) -> Self {
-        let (levels, metric, is_normalized) = read_info_fields(&store);
-        let total_items = read_info_u32(&store, "total_items");
-        let next_item_id = read_info_u32(&store, "next_item_id");
+    fn load_from_store(store: ReadableListableStorage) -> Result<Self> {
+        let (levels, metric, is_normalized) = read_info_fields(&store)?;
+        let total_items = read_info_u32(&store, "total_items")?;
+        let next_item_id = read_info_u32(&store, "next_item_id")?;
 
-        let rep_ids_array =
-            Array::open(store.clone(), "/rep_item_ids").expect("Failed to open rep_item_ids");
+        let rep_ids_array = Array::open(store.clone(), "/rep_item_ids").map_err(|e| match e {
+            ArrayCreateError::MissingMetadata => {
+                EcpError::Corrupt("not a valid index: /rep_item_ids is missing".to_string())
+            }
+            other => EcpError::Store(format!("failed to open rep_item_ids: {other}")),
+        })?;
         let total_representatives = rep_ids_array.shape()[0] as u32;
 
-        IndexInfo {
+        Ok(IndexInfo {
             levels,
             metric,
             is_normalized,
             total_items,
             next_item_id,
             total_representatives,
-        }
+        })
     }
 }
 

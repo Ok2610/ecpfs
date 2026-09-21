@@ -13,6 +13,7 @@ use crate::build::source::EmbeddingsSource;
 use crate::build::tree::{BuildTreeArgs, build_tree};
 use crate::build::writer::{write_index_info, write_index_root, write_info_u32, zarrs_append};
 use crate::dtype::EmbeddingDtype;
+use crate::error::{EcpError, Result, ResultExt};
 use crate::metric::Metric;
 
 /// Picks the dtype the index stores embeddings as, which is `embedding_dtype`
@@ -61,17 +62,34 @@ impl Default for ChunkSizes {
 }
 
 /// Returns how many vectors of length `dim` fit in `chunk_bytes` when stored
-/// as `dtype`, and never fewer than one.
-pub fn chunk_rows(dim: usize, dtype: EmbeddingDtype, chunk_bytes: usize) -> u64 {
-    let bytes_per_vec = (dim * dtype.bytes()).max(1);
-    (chunk_bytes / bytes_per_vec).max(1) as u64
+/// as `dtype`. Errors for a dimension of 0, or if one vector is wider than
+/// `chunk_bytes`.
+pub fn chunk_rows(dim: usize, dtype: EmbeddingDtype, chunk_bytes: usize) -> Result<u64> {
+    if dim == 0 {
+        return Err(EcpError::InvalidInput(
+            "the embedding dimension must be at least 1".to_string(),
+        ));
+    }
+    let bytes_per_vec = dim.saturating_mul(dtype.bytes());
+    if bytes_per_vec > chunk_bytes {
+        return Err(EcpError::InvalidInput(format!(
+            "one vector of dimension {dim} stored as {dtype:?} takes {bytes_per_vec} bytes, \
+             wider than the {chunk_bytes}-byte chunk"
+        )));
+    }
+    Ok((chunk_bytes / bytes_per_vec) as u64)
 }
 
 /// Picks the tree's fan-out, the number of children each node (the root
 /// included) gets, so the bottom level has room for every cluster.
 /// Fan-out = `total_clusters^(1/levels)`, rounded up.
-fn node_size_for(total_clusters: usize, levels: u32) -> usize {
-    (total_clusters as f64).powf(1.0 / levels as f64).ceil() as usize
+fn node_size_for(total_clusters: usize, levels: u32) -> Result<usize> {
+    if levels == 0 {
+        return Err(EcpError::InvalidInput(
+            "levels must be at least 1".to_string(),
+        ));
+    }
+    Ok((total_clusters as f64).powf(1.0 / levels as f64).ceil() as usize)
 }
 
 /// Builds one index in three steps: `create`, then `select_representatives`
@@ -102,9 +120,14 @@ impl Builder {
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
         chunks: ChunkSizes,
-    ) -> Self {
-        write_index_info(&store, levels, metric, is_normalized);
-        Builder {
+    ) -> Result<Self> {
+        if levels == 0 {
+            return Err(EcpError::InvalidInput(
+                "levels must be at least 1".to_string(),
+            ));
+        }
+        write_index_info(&store, levels, metric, is_normalized)?;
+        Ok(Builder {
             store,
             levels,
             metric,
@@ -116,7 +139,7 @@ impl Builder {
             representatives: None,
             node_size: 0,
             resolved_dtype: EmbeddingDtype::F32,
-        }
+        })
     }
 
     /// Creates an index at `index_path`. `levels` is the number of node levels
@@ -130,10 +153,10 @@ impl Builder {
         memory_limit_bytes: usize,
         embedding_dtype: Option<EmbeddingDtype>,
         chunks: ChunkSizes,
-    ) -> Self {
+    ) -> Result<Self> {
         log::info!("creating index at {}", index_path.display());
         let store: ReadableWritableListableStorage =
-            Arc::new(FilesystemStore::new(index_path).expect("Failed to create store"));
+            Arc::new(FilesystemStore::new(index_path).store_err("failed to create store")?);
         Self::new(
             store,
             levels,
@@ -154,11 +177,11 @@ impl Builder {
         target_cluster_items: usize,
         strategy: RepresentativeStrategy,
         fallback_batch_vecs: usize,
-    ) {
-        let (total_items, dim) = source.shape();
-        self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype());
+    ) -> Result<()> {
+        let (total_items, dim) = source.shape()?;
+        self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype()?);
         self.rep_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,
         ];
 
@@ -167,7 +190,7 @@ impl Builder {
             "selected {} representatives via {strategy:?} from {total_items} items (target_cluster_items={target_cluster_items})",
             selected_ids.len()
         );
-        self.node_size = node_size_for(selected_ids.len(), self.levels);
+        self.node_size = node_size_for(selected_ids.len(), self.levels)?;
         collect_representatives(
             &self.store,
             source,
@@ -176,24 +199,29 @@ impl Builder {
             self.memory_limit_bytes,
             &self.rep_chunk_shape,
             self.resolved_dtype,
-        );
+        )?;
         self.representatives = Some(Representatives::PersistedOnly);
+        Ok(())
     }
 
     /// Uses caller-chosen representatives instead of picking them, such as ones
     /// from an external clustering step. `ids[i]` is the id of row `i` of `embeddings`.
-    pub fn select_representatives_custom(&mut self, ids: Array1<u32>, embeddings: Array2<f32>) {
-        assert_eq!(
-            ids.len(),
-            embeddings.nrows(),
-            "ids and embeddings must have the same length ({} ids, {} embeddings rows)",
-            ids.len(),
-            embeddings.nrows()
-        );
+    pub fn select_representatives_custom(
+        &mut self,
+        ids: Array1<u32>,
+        embeddings: Array2<f32>,
+    ) -> Result<()> {
+        if ids.len() != embeddings.nrows() {
+            return Err(EcpError::InvalidInput(format!(
+                "ids and embeddings must have the same length ({} ids, {} embeddings rows)",
+                ids.len(),
+                embeddings.nrows()
+            )));
+        }
         let dim = embeddings.ncols();
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);
         self.rep_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,
         ];
         zarrs_append(
@@ -204,31 +232,32 @@ impl Builder {
             &ids,
             &self.rep_chunk_shape,
             self.resolved_dtype,
-        );
+        )?;
 
-        self.node_size = node_size_for(ids.len(), self.levels);
+        self.node_size = node_size_for(ids.len(), self.levels)?;
         self.representatives = Some(if fits_in_memory(ids.len(), dim, self.memory_limit_bytes) {
             Representatives::InMemory { embeddings, ids }
         } else {
             Representatives::PersistedOnly
         });
+        Ok(())
     }
 
     /// Builds the tree from `dataset`, whose rows get item ids 0, 1, 2, ...
     /// in order. `fallback_batch_vecs` works as in `select_representatives`.
-    pub fn build(&mut self, dataset: &EmbeddingsSource, fallback_batch_vecs: usize) {
+    pub fn build(&mut self, dataset: &EmbeddingsSource, fallback_batch_vecs: usize) -> Result<()> {
         log::info!(
             "building tree: {} levels, metric={:?}",
             self.levels,
             self.metric
         );
         // Ids 0..total_items, so both counters start at total_items
-        let (total_items, dim) = dataset.shape();
-        write_info_u32(&self.store, "total_items", total_items as u32);
-        write_info_u32(&self.store, "next_item_id", total_items as u32);
+        let (total_items, dim) = dataset.shape()?;
+        write_info_u32(&self.store, "total_items", total_items as u32)?;
+        write_info_u32(&self.store, "next_item_id", total_items as u32)?;
 
         let node_chunk_shape = vec![
-            chunk_rows(dim, self.resolved_dtype, self.chunks.node_chunk_bytes),
+            chunk_rows(dim, self.resolved_dtype, self.chunks.node_chunk_bytes)?,
             dim as u64,
         ];
         log::info!(
@@ -237,10 +266,9 @@ impl Builder {
             self.resolved_dtype
         );
 
-        let representatives = self
-            .representatives
-            .take()
-            .expect("call select_representatives before build");
+        let representatives = self.representatives.take().ok_or_else(|| {
+            EcpError::Usage("call select_representatives before build".to_string())
+        })?;
 
         // Root holds the first node_size representatives
         let (root_embeddings, representatives_source) = match representatives {
@@ -253,7 +281,7 @@ impl Builder {
                     self.store.clone().readable_listable(),
                     "/rep_embeddings".to_string(),
                 );
-                let root = source.read_vecs(0, self.node_size);
+                let root = source.read_vecs(0, self.node_size)?;
                 (root, source)
             }
         };
@@ -264,7 +292,7 @@ impl Builder {
             &root_embeddings,
             &node_chunk_shape,
             self.resolved_dtype,
-        );
+        )?;
         build_tree(&BuildTreeArgs {
             store: &self.store,
             root_embeddings: &root_embeddings,
@@ -277,7 +305,7 @@ impl Builder {
             chunk_shape: &node_chunk_shape,
             embedding_dtype: self.resolved_dtype,
             memory_limit_bytes: self.memory_limit_bytes,
-        });
+        })
     }
 }
 

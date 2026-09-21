@@ -60,7 +60,7 @@ pub fn build_index(vectors: &Array2<f32>, dtype: Option<EmbeddingDtype>) -> (Tem
     let store =
         Arc::new(FilesystemStore::new(&index_path).expect("failed to create filesystem store"));
     write_embeddings(&store, "/dataset", vectors);
-    let dataset = EmbeddingsSource::open(&index_path, "dataset");
+    let dataset = EmbeddingsSource::open(&index_path, "dataset").expect("failed to open dataset");
 
     let mut builder = Builder::create(
         &index_path,
@@ -70,9 +70,12 @@ pub fn build_index(vectors: &Array2<f32>, dtype: Option<EmbeddingDtype>) -> (Tem
         1_000_000_000,
         dtype,
         ChunkSizes::default(),
-    );
-    builder.select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100);
-    builder.build(&dataset, 100);
+    )
+    .expect("failed to create builder");
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 100)
+        .expect("failed to select representatives");
+    builder.build(&dataset, 100).expect("failed to build");
 
     (tmp, index_path)
 }

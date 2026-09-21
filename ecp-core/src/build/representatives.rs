@@ -6,6 +6,7 @@ use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
 use crate::build::writer::zarrs_append;
 use crate::dtype::EmbeddingDtype;
+use crate::error::Result;
 
 /// How `select_representatives` picks representatives, the items that every
 /// other item is clustered around.
@@ -66,12 +67,12 @@ pub fn collect_representatives(
     memory_limit_bytes: usize,
     chunk_shape: &[u64],
     dtype: EmbeddingDtype,
-) {
-    let (total_items, dim) = source.shape();
+) -> Result<()> {
+    let (total_items, dim) = source.shape()?;
     let tracked_budget = (memory_limit_bytes as f64 * TRACKED_MEMORY_FRACTION) as usize;
     let bytes_per_vec = (dim * size_of::<f32>()).max(1);
     let memory_floor_vecs = (tracked_budget / bytes_per_vec).max(1);
-    let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs);
+    let batch_vecs = source.chunk_aligned_batch_vecs(memory_floor_vecs, fallback_batch_vecs)?;
     let selected: Vec<u32> = selected_ids.to_vec();
 
     let mut start = 0;
@@ -96,7 +97,7 @@ pub fn collect_representatives(
         );
 
         // Read the batch and append the selected rows
-        let batch = source.read_vecs(start, end);
+        let batch = source.read_vecs(start, end)?;
         let matched_vec_indices: Vec<usize> =
             matched_ids.iter().map(|&id| id as usize - start).collect();
         let matched_embeddings = batch.select(Axis(0), &matched_vec_indices);
@@ -109,10 +110,11 @@ pub fn collect_representatives(
             &matched_ids_array,
             chunk_shape,
             dtype,
-        );
+        )?;
 
         start = end;
     }
+    Ok(())
 }
 
 #[cfg(test)]

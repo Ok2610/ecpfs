@@ -44,7 +44,8 @@ fn a_mostly_empty_node_stays_small_on_disk_despite_a_large_chunk_shape() {
         &ids,
         &chunk_shape,
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let actual_size = dir_size(&tmp.path().join("node"));
     let naive_padded_size = chunk_shape[0] * chunk_shape[1] * 4;

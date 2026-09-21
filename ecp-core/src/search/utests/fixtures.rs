@@ -88,7 +88,7 @@ pub(super) fn build_test_index() -> Index {
         &array![6u32, 7],
     );
 
-    Index::load_from_store(as_readable_writable_listable(&store), None)
+    Index::load_from_store(as_readable_writable_listable(&store), None).unwrap()
 }
 
 /// Writes a levels=1 (IVF-style) index, where root holds all 4
@@ -140,6 +140,7 @@ pub(super) fn build_ivf_style_index() -> Index {
         as_readable_writable_listable(&write_ivf_style_fixture()),
         None,
     )
+    .unwrap()
 }
 
 /// Builds a 3-level tree, the only fixture where lvl_1's children are
@@ -229,5 +230,5 @@ pub(super) fn build_three_level_test_index() -> Index {
         &array![3u32],
     );
 
-    Index::load_from_store(as_readable_writable_listable(&store), None)
+    Index::load_from_store(as_readable_writable_listable(&store), None).unwrap()
 }

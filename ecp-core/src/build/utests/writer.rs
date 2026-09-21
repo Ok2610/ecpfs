@@ -17,7 +17,8 @@ fn zarrs_append_creates_on_first_call_and_grows_on_later_calls() {
         &array![10u32, 20],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
     zarrs_append(
         &store,
         "/node/embeddings",
@@ -26,7 +27,8 @@ fn zarrs_append_creates_on_first_call_and_grows_on_later_calls() {
         &array![30u32],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
@@ -58,7 +60,8 @@ fn zarrs_append_ignores_chunk_shape_on_a_later_call() {
         &array![10u32, 20],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
     // A different chunk_shape here must have no effect, since the array already exists.
     zarrs_append(
         &store,
@@ -68,7 +71,8 @@ fn zarrs_append_ignores_chunk_shape_on_a_later_call() {
         &array![30u32],
         &[7, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
@@ -99,7 +103,8 @@ fn zarrs_append_writes_f16_when_requested() {
         &array![10u32],
         &[100, 2],
         EmbeddingDtype::F16,
-    );
+    )
+    .unwrap();
     zarrs_append(
         &store,
         "/node/embeddings",
@@ -108,7 +113,8 @@ fn zarrs_append_writes_f16_when_requested() {
         &array![20u32],
         &[100, 2],
         EmbeddingDtype::F16,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
@@ -139,13 +145,14 @@ fn zarrs_append_round_trips_integer_values_through_uint8_exactly() {
         &array![10u32, 20],
         &[100, 2],
         EmbeddingDtype::UInt8,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
     assert_eq!(*embeddings.data_type(), zarrs::array::data_type::uint8());
     assert_eq!(
-        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings").unwrap(),
         array![[0.0f32, 255.0], [1.0, 128.0]],
         "every stored value must read back bit-for-bit as the f32 it went in as"
     );
@@ -164,13 +171,14 @@ fn zarrs_append_round_trips_integer_values_through_int8_exactly() {
         &array![10u32, 20],
         &[100, 2],
         EmbeddingDtype::Int8,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
     assert_eq!(*embeddings.data_type(), zarrs::array::data_type::int8());
     assert_eq!(
-        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings").unwrap(),
         array![[-128.0f32, 127.0], [-1.0, 0.0]]
     );
 }
@@ -191,12 +199,13 @@ fn storing_out_of_range_values_as_uint8_saturates_rather_than_wrapping() {
         &array![10u32, 20],
         &[100, 2],
         EmbeddingDtype::UInt8,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
     assert_eq!(
-        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings").unwrap(),
         array![[255.0f32, 0.0], [0.0, 2.0]],
         "300 clamps to 255, -5 clamps to 0, NaN becomes 0, and 2.7 truncates to 2"
     );
@@ -215,12 +224,13 @@ fn storing_out_of_range_values_as_int8_saturates_rather_than_wrapping() {
         &array![10u32],
         &[100, 2],
         EmbeddingDtype::Int8,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/node/embeddings").expect("failed to open embeddings");
     assert_eq!(
-        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings"),
+        read_subset_as_f32(&embeddings, &embeddings.subset_all(), "embeddings").unwrap(),
         array![[127.0f32, -128.0]]
     );
 }
@@ -228,7 +238,7 @@ fn storing_out_of_range_values_as_int8_saturates_rather_than_wrapping() {
 #[test]
 fn write_index_info_stores_levels_metric_and_is_normalized() {
     let store = new_memory_store();
-    write_index_info(&as_readable_writable_listable(&store), 2, Metric::IP, true);
+    write_index_info(&as_readable_writable_listable(&store), 2, Metric::IP, true).unwrap();
 
     let levels = Array::open(store.clone(), "/info/levels").expect("failed to open info/levels");
     assert_eq!(
@@ -260,8 +270,8 @@ fn write_index_info_stores_levels_metric_and_is_normalized() {
 fn write_info_u32_overwrites_an_existing_scalar() {
     let store = new_memory_store();
     let writable = as_readable_writable_listable(&store);
-    write_info_u32(&writable, "next_item_id", 42);
-    write_info_u32(&writable, "next_item_id", 99);
+    write_info_u32(&writable, "next_item_id", 42).unwrap();
+    write_info_u32(&writable, "next_item_id", 99).unwrap();
 
     let field =
         Array::open(store.clone(), "/info/next_item_id").expect("failed to open info/next_item_id");
@@ -287,7 +297,8 @@ fn append_node_batch_creates_embeddings_children_and_a_border_placeholder() {
         &array![10u32],
         &[100, 2],
         EmbeddingDtype::F32,
-    );
+    )
+    .unwrap();
 
     let embeddings =
         Array::open(store.clone(), "/lvl_1/node_0/embeddings").expect("failed to open embeddings");

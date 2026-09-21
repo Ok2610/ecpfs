@@ -16,6 +16,7 @@ use ordered_float::NotNan;
 use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data};
 use crate::build::writer::write_info_u32;
 use crate::dtype::{dtype_of_array, read_subset_as_f32};
+use crate::error::{EcpError, Result, ResultExt};
 use crate::metric::Metric;
 use crate::search::info::{read_info_fields, read_info_u32};
 use crate::search::node::Node;
@@ -68,9 +69,15 @@ impl Index {
     /// Opens the index at `index_path`, reading its `info/*` fields and
     /// root. Other nodes load on first visit. `memory_limit_bytes` caps the
     /// node and query data kept in memory; `None` means no cap.
-    pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Self {
+    pub fn load(index_path: PathBuf, memory_limit_bytes: Option<usize>) -> Result<Self> {
+        if !index_path.exists() {
+            return Err(EcpError::NotFound(format!(
+                "index directory {} does not exist",
+                index_path.display()
+            )));
+        }
         let store: ReadableWritableListableStorage =
-            Arc::new(FilesystemStore::new(&index_path).expect("Failed to open store"));
+            Arc::new(FilesystemStore::new(&index_path).store_err("failed to open store")?);
         Self::load_from_store(store, memory_limit_bytes)
     }
 
@@ -79,30 +86,30 @@ impl Index {
     fn load_from_store(
         store: ReadableWritableListableStorage,
         memory_limit_bytes: Option<usize>,
-    ) -> Self {
-        let (levels, metric, is_normalized) = read_info_fields(&store.clone().readable_listable());
+    ) -> Result<Self> {
+        let (levels, metric, is_normalized) = read_info_fields(&store.clone().readable_listable())?;
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
-            .expect("Failed to open index_root/embeddings");
+            .store_err("failed to open index_root/embeddings")?;
         let root: Array2<f32> = read_subset_as_f32(
             &root_array,
             &root_array.subset_all(),
             "index_root/embeddings",
-        );
+        )?;
 
         let (nodes, queries) = Self::build_caches(memory_limit_bytes, store.clone());
 
         // Start after the highest saved query id, so no id is reused
-        let next_query_id = persistence::query_ids_on_disk(&store)
+        let next_query_id = persistence::query_ids_on_disk(&store)?
             .into_iter()
             .max()
             .map_or(0, |max_id| max_id + 1);
 
         let readable = store.clone().readable_listable();
-        let next_item_id = read_info_u32(&readable, "next_item_id");
-        let total_items = read_info_u32(&readable, "total_items");
+        let next_item_id = read_info_u32(&readable, "next_item_id")?;
+        let total_items = read_info_u32(&readable, "total_items")?;
 
-        Index {
+        Ok(Index {
             store,
             metric,
             is_normalized,
@@ -116,7 +123,7 @@ impl Index {
             leaf_locks: DashMap::new(),
             next_item_id: Mutex::new(next_item_id),
             total_items: Mutex::new(total_items),
-        }
+        })
     }
 
     /// Builds the node and query caches, uncapped when `memory_limit_bytes`
@@ -169,7 +176,10 @@ impl Index {
                 }
                 log::debug!("evicting query_id={query_id} cause={cause:?}");
                 let state = state_arc.lock().unwrap();
-                persistence::persist_or_erase(&store, *query_id, &state);
+                // No caller is waiting on an eviction, so a failure here can only be logged.
+                if let Err(e) = persistence::persist_or_erase(&store, *query_id, &state) {
+                    log::error!("failed to persist evicted query_id={query_id}: {e}");
+                }
             })
             .build();
 
@@ -204,7 +214,7 @@ impl Index {
 
     /// Gets node `node_id` at 0-based level `lvl`, reading it from disk on a cache miss.
     /// `node_id` may not exist on disk (only nodes that received a child
-    /// during build do); `embeddings`/`children` return `None` for those.
+    /// during build do); `embeddings`/`children` return `Ok(None)` for those.
     fn node_at(&self, lvl: usize, node_id: u32) -> Arc<Node> {
         let is_leaf = lvl + 1 == self.levels as usize;
         let child_key = if is_leaf { "item_ids" } else { "node_ids" };
@@ -242,8 +252,9 @@ impl Index {
             format!("/lvl_{}/node_{node_id}", lvl + 1),
             child_key.to_string(),
         ));
-        node.embeddings();
-        node.children();
+        // Read the node's arrays into cache
+        let _ = node.embeddings();
+        let _ = node.children();
         // Store before the lock drops, so insert's invalidate() can never
         // land in between and miss this entry.
         self.nodes.insert((lvl, node_id), node.clone());
@@ -257,37 +268,50 @@ impl Index {
 
     /// Stops new searches and saves every open query to disk, so a later
     /// `Index` can resume it; a query with nothing left to return is erased
-    /// instead. Safe to call more than once.
-    pub fn shutdown(&self) {
+    /// instead. Safe to call more than once. `Err` if any query fails to save.
+    pub fn shutdown(&self) -> Result<()> {
         self.accepting.store(false, Ordering::SeqCst);
+        let mut total = 0;
+        let mut failed = 0;
+        // Count a failed save and go on, so every open query is tried
         for (query_id, state_arc) in self.queries.iter() {
+            total += 1;
             let state = state_arc.lock().unwrap();
-            persistence::persist_or_erase(&self.store, *query_id, &state);
+            if let Err(e) = persistence::persist_or_erase(&self.store, *query_id, &state) {
+                log::error!("failed to persist query_id={query_id} on shutdown: {e}");
+                failed += 1;
+            }
         }
+        if failed > 0 {
+            return Err(EcpError::Store(format!(
+                "failed to persist {failed} of {total} open queries"
+            )));
+        }
+        Ok(())
     }
 
     /// Erases every query saved to disk before `cutoff_unix_secs` (seconds
     /// since the Unix epoch). Returns how many were erased.
-    pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> usize {
+    pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> Result<usize> {
         persistence::cleanup_older_than(&self.store, cutoff_unix_secs)
     }
 
     /// Adds each row of `embeddings` to its nearest leaf, converted to the
     /// index's dtype, and returns the new ids in row order. Leaves only grow;
     /// the tree is never rebalanced. Safe alongside searches and inserts.
-    pub fn insert(&self, embeddings: Array2<f32>) -> std::ops::Range<u32> {
+    pub fn insert(&self, embeddings: Array2<f32>) -> Result<std::ops::Range<u32>> {
         if embeddings.nrows() == 0 {
             let next = *self.next_item_id.lock().unwrap();
-            return next..next;
+            return Ok(next..next);
         }
 
         // Read the dtype and chunk shape from the root; every node shares them
         let root_array = Array::open(self.store.clone(), "/index_root/embeddings")
-            .expect("Failed to open index_root/embeddings");
-        let embedding_dtype = dtype_of_array(&root_array, "index_root/embeddings");
+            .store_err("failed to open index_root/embeddings")?;
+        let embedding_dtype = dtype_of_array(&root_array, "index_root/embeddings")?;
         let chunk_shape: Vec<u64> = root_array
             .chunk_shape_usize(&[0, 0])
-            .expect("Failed to read index_root/embeddings chunk shape")
+            .store_err("failed to read index_root/embeddings chunk shape")?
             .into_iter()
             .map(|v| v as u64)
             .collect();
@@ -315,14 +339,14 @@ impl Index {
             let mut next = self.next_item_id.lock().unwrap();
             let start = *next;
             *next += embeddings.nrows() as u32;
-            write_info_u32(&self.store, "next_item_id", *next);
+            write_info_u32(&self.store, "next_item_id", *next)?;
             start
         };
         let end = start + embeddings.nrows() as u32;
         let ids = Array1::from_iter(start..end);
 
         // Append, then drop the stale cached copy of every leaf appended to
-        let touched = add_data(&config, &self.root, &embeddings, &ids);
+        let touched = add_data(&config, &self.root, &embeddings, &ids)?;
         for (level, node_id) in touched {
             // node_at's cache key is 0-based; on-disk level is 1-based.
             let key = (level as usize - 1, node_id);
@@ -334,10 +358,10 @@ impl Index {
         {
             let mut total = self.total_items.lock().unwrap();
             *total += embeddings.nrows() as u32;
-            write_info_u32(&self.store, "total_items", *total);
+            write_info_u32(&self.store, "total_items", *total)?;
         }
 
-        start..end
+        Ok(start..end)
     }
 }
 

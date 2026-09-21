@@ -54,8 +54,9 @@ fn write_embeddings_as(
         shape.clone(),
         &shape,
         dtype,
-    );
-    store_embeddings_subset(&array, &subset, embeddings, dtype, "/embeddings");
+    )
+    .unwrap();
+    store_embeddings_subset(&array, &subset, embeddings, dtype, "/embeddings").unwrap();
     EmbeddingsSource::from_zarr(as_readable_listable(store), "/embeddings".to_string())
 }
 
@@ -72,9 +73,9 @@ fn zarr_source_reports_shape_and_reads_vector_ranges() {
         path: "/embeddings".to_string(),
     };
 
-    assert_eq!(source.shape(), (4, 2));
+    assert_eq!(source.shape().unwrap(), (4, 2));
 
-    let vecs = source.read_vecs(1, 3);
+    let vecs = source.read_vecs(1, 3).unwrap();
     assert_eq!(vecs, array![[2.0f32, 3.0], [4.0, 5.0]]);
 }
 
@@ -93,7 +94,7 @@ fn zarr_source_reports_its_actual_on_disk_chunk_vector_count() {
     };
 
     assert_eq!(
-        source.natural_chunk_vecs(999),
+        source.natural_chunk_vecs(999).unwrap(),
         2,
         "fallback must be ignored when the source is chunked"
     );
@@ -103,15 +104,18 @@ fn zarr_source_reports_its_actual_on_disk_chunk_vector_count() {
 fn memory_source_reports_shape_and_reads_vector_ranges() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0], [2.0, 3.0], [4.0, 5.0]]);
 
-    assert_eq!(source.shape(), (3, 2));
-    assert_eq!(source.read_vecs(1, 3), array![[2.0f32, 3.0], [4.0, 5.0]]);
+    assert_eq!(source.shape().unwrap(), (3, 2));
+    assert_eq!(
+        source.read_vecs(1, 3).unwrap(),
+        array![[2.0f32, 3.0], [4.0, 5.0]]
+    );
 }
 
 #[test]
 fn memory_source_natural_chunk_vecs_is_always_the_fallback() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
-    assert_eq!(source.natural_chunk_vecs(7), 7);
+    assert_eq!(source.natural_chunk_vecs(7).unwrap(), 7);
 }
 
 #[test]
@@ -119,21 +123,21 @@ fn chunk_aligned_batch_vecs_rounds_the_memory_floor_up_to_a_whole_chunk() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
     assert_eq!(
-        source.chunk_aligned_batch_vecs(1, 1000),
+        source.chunk_aligned_batch_vecs(1, 1000).unwrap(),
         1000,
         "a floor below one chunk still returns a whole chunk"
     );
     assert_eq!(
-        source.chunk_aligned_batch_vecs(1000, 1000),
+        source.chunk_aligned_batch_vecs(1000, 1000).unwrap(),
         1000,
         "an exact multiple stays unchanged"
     );
     assert_eq!(
-        source.chunk_aligned_batch_vecs(1001, 1000),
+        source.chunk_aligned_batch_vecs(1001, 1000).unwrap(),
         2000,
         "any excess over a whole chunk rounds up to the next one"
     );
-    assert_eq!(source.chunk_aligned_batch_vecs(2500, 1000), 3000);
+    assert_eq!(source.chunk_aligned_batch_vecs(2500, 1000).unwrap(), 3000);
 }
 
 #[test]
@@ -141,7 +145,7 @@ fn zarr_f16_source_reports_its_native_dtype() {
     let store = new_memory_store();
     let source = write_embeddings_as(&store, &array![[0.0f32, 1.0]], EmbeddingDtype::F16);
 
-    assert_eq!(source.native_dtype(), EmbeddingDtype::F16);
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::F16);
 }
 
 /// SIFT-style descriptors, stored as uint8, read back as f32 with no
@@ -152,8 +156,8 @@ fn zarr_uint8_source_reports_its_dtype_and_reads_back_exactly() {
     let embeddings = array![[0.0f32, 255.0], [1.0, 128.0]];
     let source = write_embeddings_as(&store, &embeddings, EmbeddingDtype::UInt8);
 
-    assert_eq!(source.native_dtype(), EmbeddingDtype::UInt8);
-    assert_eq!(source.read_vecs(0, 2), embeddings);
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::UInt8);
+    assert_eq!(source.read_vecs(0, 2).unwrap(), embeddings);
 }
 
 #[test]
@@ -162,15 +166,18 @@ fn zarr_int8_source_reports_its_dtype_and_reads_back_exactly() {
     let embeddings = array![[-128.0f32, 127.0], [-1.0, 0.0]];
     let source = write_embeddings_as(&store, &embeddings, EmbeddingDtype::Int8);
 
-    assert_eq!(source.native_dtype(), EmbeddingDtype::Int8);
-    assert_eq!(source.read_vecs(0, 2), embeddings);
+    assert_eq!(source.native_dtype().unwrap(), EmbeddingDtype::Int8);
+    assert_eq!(source.read_vecs(0, 2).unwrap(), embeddings);
 }
 
 #[test]
 fn memory_source_native_dtype_is_always_f32() {
     let source = EmbeddingsSource::Memory(array![[0.0f32, 1.0]]);
 
-    assert_eq!(source.native_dtype(), crate::dtype::EmbeddingDtype::F32);
+    assert_eq!(
+        source.native_dtype().unwrap(),
+        crate::dtype::EmbeddingDtype::F32
+    );
 }
 
 /// Makes a source over an empty int32 array, a dtype ecpfs doesn't support.
@@ -195,15 +202,15 @@ fn int32_source() -> (
 }
 
 #[test]
-#[should_panic(expected = "unsupported embeddings dtype")]
-fn zarr_native_dtype_panics_for_unsupported_dtype() {
+fn zarr_native_dtype_rejects_an_unsupported_dtype() {
     let (_store, source) = int32_source();
-    let _ = source.native_dtype();
+    let err = source.native_dtype().unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }
 
 #[test]
-#[should_panic(expected = "unsupported embeddings dtype")]
-fn zarr_read_vecs_panics_for_unsupported_dtype() {
+fn zarr_read_vecs_rejects_an_unsupported_dtype() {
     let (_store, source) = int32_source();
-    let _ = source.read_vecs(0, 2);
+    let err = source.read_vecs(0, 2).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
 }

@@ -271,9 +271,11 @@ impl Index {
     /// instead. Safe to call more than once. `Err` if any query fails to save.
     pub fn shutdown(&self) -> Result<()> {
         self.accepting.store(false, Ordering::SeqCst);
+        let mut total = 0;
         let mut failed = 0;
         // Count a failed save and go on, so every open query is tried
         for (query_id, state_arc) in self.queries.iter() {
+            total += 1;
             let state = state_arc.lock().unwrap();
             if let Err(e) = persistence::persist_or_erase(&self.store, *query_id, &state) {
                 log::error!("failed to persist query_id={query_id} on shutdown: {e}");
@@ -282,8 +284,7 @@ impl Index {
         }
         if failed > 0 {
             return Err(EcpError::Store(format!(
-                "failed to persist {failed} of {} open queries",
-                self.queries.entry_count()
+                "failed to persist {failed} of {total} open queries"
             )));
         }
         Ok(())

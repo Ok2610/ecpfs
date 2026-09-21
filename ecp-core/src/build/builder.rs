@@ -154,7 +154,10 @@ impl Builder {
         embedding_dtype: Option<EmbeddingDtype>,
         chunks: ChunkSizes,
     ) -> Result<Self> {
-        log::info!("creating index at {}", index_path.display());
+        log::info!(
+            "creating index at {}: levels={levels} metric={metric:?} is_normalized={is_normalized}",
+            index_path.display()
+        );
         let store: ReadableWritableListableStorage =
             Arc::new(FilesystemStore::new(index_path).store_err("failed to create store")?);
         Self::new(
@@ -180,6 +183,10 @@ impl Builder {
     ) -> Result<()> {
         let (total_items, dim) = source.shape()?;
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, source.native_dtype()?);
+        log::info!(
+            "representatives will be stored as {:?}",
+            self.resolved_dtype
+        );
         self.rep_chunk_shape = vec![
             chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,
@@ -220,6 +227,10 @@ impl Builder {
         }
         let dim = embeddings.ncols();
         self.resolved_dtype = resolve_dtype(self.embedding_dtype, EmbeddingDtype::F32);
+        log::info!(
+            "representatives will be stored as {:?}",
+            self.resolved_dtype
+        );
         self.rep_chunk_shape = vec![
             chunk_rows(dim, self.resolved_dtype, self.chunks.rep_chunk_bytes)?,
             dim as u64,

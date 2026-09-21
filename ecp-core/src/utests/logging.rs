@@ -21,6 +21,34 @@ fn format_entry_produces_valid_json_with_expected_fields() {
     );
 }
 
+/// Sets and restores the process-wide max level immediately around the
+/// check, since `init_writes_log_lines_to_its_file` also depends on it and
+/// tests run in parallel.
+#[test]
+fn enabled_honors_the_configured_max_level() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let file = File::create(tmp.path().join("probe.jsonl")).expect("failed to create temp file");
+    let logger = JsonlLogger {
+        file: Mutex::new(file),
+        write_failed: AtomicBool::new(false),
+    };
+
+    let original = log::max_level();
+    log::set_max_level(LevelFilter::Warn);
+    let warn_enabled = logger.enabled(&Metadata::builder().level(log::Level::Warn).build());
+    let info_enabled = logger.enabled(&Metadata::builder().level(log::Level::Info).build());
+    log::set_max_level(original);
+
+    assert!(
+        warn_enabled,
+        "Warn must be enabled when the max level is Warn"
+    );
+    assert!(
+        !info_enabled,
+        "Info must not be enabled when the max level is Warn"
+    );
+}
+
 #[test]
 fn random_suffix_is_six_hex_chars() {
     let suffix = random_suffix();

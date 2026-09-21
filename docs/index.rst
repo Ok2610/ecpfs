@@ -12,6 +12,7 @@ This site covers the Python package. For the Rust crates themselves
 
    quickstart
    search-parameters
+   logging
    api
    cli
    multithreading

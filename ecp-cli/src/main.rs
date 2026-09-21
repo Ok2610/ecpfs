@@ -104,7 +104,7 @@ impl From<EmbeddingDtypeArg> for Option<EmbeddingDtype> {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 enum LogLevelArg {
     Off,
     Error,
@@ -140,7 +140,7 @@ struct LoggingArgs {
     log_dir: Option<PathBuf>,
 
     /// Log verbosity. trace also logs every node visited during search.
-    #[arg(long, value_enum, default_value_t = LogLevelArg::Debug)]
+    #[arg(long, value_enum, default_value_t = LogLevelArg::Info)]
     log_level: LogLevelArg,
 }
 
@@ -417,10 +417,14 @@ fn search(args: SearchArgs) -> Result<()> {
 struct InfoArgs {
     /// The index to describe.
     index_path: PathBuf,
+
+    #[command(flatten)]
+    logging: LoggingArgs,
 }
 
 /// Runs info, printing each setting on its own line.
 fn info(args: InfoArgs) -> Result<()> {
+    args.logging.init_if_requested()?;
     let info = IndexInfo::load(args.index_path)?;
     println!("Levels: {}", info.levels);
     println!("Metric: {}", info.metric.as_str());
@@ -485,6 +489,9 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            // The last chance to record this failure: nothing above main
+            // will see it, unlike a Result returned to a Rust or Python caller.
+            log::error!("{e}");
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }

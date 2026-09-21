@@ -279,6 +279,13 @@ pub fn build_tree(args: &BuildTreeArgs) -> Result<()> {
         .sum();
     let cache_capacity = total_cacheable_bytes.min(tracked_budget * 3 / 4);
     let batch_share = tracked_budget.saturating_sub(cache_capacity);
+    if batch_share < bytes_per_vec {
+        log::warn!(
+            "build memory budget leaves {batch_share} bytes for batching against \
+             {bytes_per_vec} bytes per vector; batches will collapse to about \
+             one vector each, which will be slow"
+        );
+    }
     let memory_floor_vecs = (batch_share / bytes_per_vec).max(1);
     let node_cache = NodeCache::new(cache_capacity as u64);
 

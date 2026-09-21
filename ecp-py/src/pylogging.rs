@@ -15,14 +15,14 @@ fn parse_level(level: &str) -> PyResult<log::LevelFilter> {
     })
 }
 
-/// init_logging(log_dir=None, level="debug")
+/// init_logging(log_dir=None, level="info")
 ///
 /// Starts logging this process to a new JSONL file in ``log_dir`` (default
 /// ``ecp_logs/``) and returns the file's path. ``level`` is "off", "trace",
 /// "debug", "info", "warn" or "error"; "off" creates the file but logs nothing.
 /// Only the first call sets logging up; later calls return the same path.
 #[pyfunction]
-#[pyo3(signature = (log_dir=None, level="debug"))]
+#[pyo3(signature = (log_dir=None, level="info"))]
 pub fn init_logging(log_dir: Option<PathBuf>, level: &str) -> PyResult<String> {
     let level = parse_level(level)?;
     let path = logging::init(log_dir.as_deref(), level).map_err(to_pyerr)?;

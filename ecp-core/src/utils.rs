@@ -14,10 +14,20 @@ pub fn default_memory_limit_bytes() -> usize {
         sysinfo::RefreshKind::nothing()
             .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram()),
     );
-    let total_ram_bytes = system
-        .cgroup_limits()
-        .map(|limits| limits.total_memory)
-        .unwrap_or_else(|| system.total_memory());
+    let total_ram_bytes = match system.cgroup_limits() {
+        Some(limits) => limits.total_memory,
+        None => {
+            // No cgroup limits is the normal, every-call result outside
+            // Linux, not a failure worth warning about there.
+            if cfg!(target_os = "linux") {
+                log::warn!(
+                    "failed to read this Linux host's cgroup memory limit, \
+                     falling back to its total RAM"
+                );
+            }
+            system.total_memory()
+        }
+    };
     default_memory_limit_bytes_for(total_ram_bytes)
 }
 

@@ -2,6 +2,36 @@ use super::*;
 
 use clap::error::ErrorKind;
 
+/// Info is the new default, promoted from Debug.
+#[test]
+fn log_level_defaults_to_info() {
+    let cli = Cli::try_parse_from(["ecp", "build-index", "embeddings.h5"]).unwrap();
+    let Command::BuildIndex(args) = cli.command else {
+        panic!("expected the build-index subcommand");
+    };
+    assert_eq!(args.logging.log_level, LogLevelArg::Info);
+}
+
+/// `info` didn't take `LoggingArgs` before, so a directory that isn't an
+/// index couldn't report through the log like every other subcommand.
+#[test]
+fn info_subcommand_accepts_the_logging_flags() {
+    let cli = Cli::try_parse_from([
+        "ecp",
+        "info",
+        "my_index.zarr",
+        "--with-logging",
+        "--log-level",
+        "debug",
+    ])
+    .unwrap();
+    let Command::Info(args) = cli.command else {
+        panic!("expected the info subcommand");
+    };
+    assert!(args.logging.with_logging);
+    assert_eq!(args.logging.log_level, LogLevelArg::Debug);
+}
+
 /// A chunk size of 0 is rejected while parsing, on both chunk flags.
 #[test]
 fn a_chunk_size_of_zero_is_rejected_at_parsing() {

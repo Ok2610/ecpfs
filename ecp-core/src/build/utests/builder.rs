@@ -254,6 +254,30 @@ fn build_without_representatives_is_a_usage_error() {
     assert!(matches!(err, EcpError::Usage(_)), "{err:?}");
 }
 
+#[test]
+fn builder_rejects_zero_levels() {
+    let store = new_memory_store();
+    let result = Builder::new(
+        as_readable_writable_listable(&store),
+        0,
+        Metric::L2,
+        false,
+        1_000_000,
+        None,
+        ChunkSizes::default(),
+    );
+    let Err(err) = result else {
+        panic!("levels = 0 was accepted");
+    };
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn node_size_for_rejects_zero_levels() {
+    let err = node_size_for(100, 0).unwrap_err();
+    assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
 /// With levels=1 the root's children are the leaves, so only one level is
 /// built. Two well-separated pairs of points; `Offset` picks vecs 0 and 2.
 #[test]

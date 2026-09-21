@@ -69,6 +69,11 @@ def test_new_search_rejects_a_query_of_the_wrong_dimension(tmp_path):
         )
 
 
+def test_builder_rejects_zero_levels(tmp_path):
+    with pytest.raises(ValueError, match="levels"):
+        ecpfs.Builder(tmp_path / "index.zarr", levels=0, metric=ecpfs.Metric.L2)
+
+
 def test_build_before_select_representatives_is_a_runtime_error(tmp_path):
     h5_path = tmp_path / "embeddings.h5"
     write_h5_embeddings(h5_path, TWO_CLUSTERS)

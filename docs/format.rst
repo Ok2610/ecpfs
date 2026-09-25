@@ -4,6 +4,26 @@ Index format
 An index is a directory holding a Zarr store. Every part of it is a zarr array,
 so any Zarr reader can inspect it.
 
+Version 1
+---------
+
+This page describes format version 1, stored in ``info/format_version``. The
+0.10.x releases keep this format and the public API unchanged.
+
+Every version 1 index has these arrays:
+
+- ``info/format_version``, ``info/levels``, ``info/metric``,
+  ``info/total_items`` and ``info/next_item_id``
+- ``rep_item_ids``
+- ``index_root/embeddings``
+- ``embeddings`` and either ``node_ids`` or ``item_ids`` in each node that
+  exists
+
+Every other array is optional. Loaders read an index without it, and a later
+release can add optional arrays without changing the version. The optional
+arrays today are ``info/is_normalized``, ``rep_embeddings``, each node's
+``border`` and everything under ``queries/``.
+
 Settings
 --------
 
@@ -24,7 +44,7 @@ Settings
 Representatives
 ---------------
 
-- ``rep_embeddings``, shape ``(num_representatives, dim)``: every
+- ``rep_embeddings``, shape ``(num_representatives, dim)``, optional: every
   representative, the items that every other item is clustered around.
 - ``rep_item_ids``, shape ``(num_representatives,)``, uint32: each
   representative's item id.
@@ -42,7 +62,8 @@ Level ``N`` of the tree lives under ``lvl_N/``, with one group per node.
   ``N+1``. Internal levels only.
 - ``lvl_N/node_M/item_ids``, shape ``(n,)``, uint32: the item ids. Leaf level
   only.
-- ``lvl_N/node_M/border``, shape ``(2,)``, float32: created, never populated.
+- ``lvl_N/node_M/border``, shape ``(2,)``, float32, optional: created, never
+  populated.
 
 ``n`` differs from node to node, since eCP does not enforce cluster sizes. A node
 that received no children during the build is never written, so node ids on a
@@ -70,8 +91,8 @@ affects new indexes only.
 Saved queries
 -------------
 
-``queries/Q/`` holds query ``Q``'s saved state, written by ``close()`` or when
-the query is evicted from memory. It has the query vector (``query``), the queue
+``queries/`` is optional. ``queries/Q/`` holds query ``Q``'s saved state, written
+by ``close()`` or when the query is evicted from memory. It has the query vector (``query``), the queue
 of nodes still to visit (``tree_pq_score``, ``tree_pq_is_leaf``,
 ``tree_pq_level``, ``tree_pq_node_id``), the buffered results (``items_score``,
 ``items_id``) and the save time in Unix seconds (``persisted_at``).

@@ -79,19 +79,19 @@ info/is_normalized      : bool, optional, an index without it is searched as not
 info/total_items        : uint32, items currently stored
 info/next_item_id       : uint32, the id the next insert hands out
 
-rep_embeddings          : shape=(num_representatives, dim)
+rep_embeddings          : shape=(num_representatives, dim), optional
 rep_item_ids            : shape=(num_representatives,), uint32
 
 index_root/embeddings   : shape=(node_size, dim), the top-level representatives
 
 lvl_1/node_M/embeddings : shape=(n, dim), for each node M at level 1
 lvl_1/node_M/node_ids   : shape=(n,), uint32, children at level 2
-lvl_1/node_M/border     : shape=(2,), float32, written but never populated
+lvl_1/node_M/border     : shape=(2,), float32, optional, written but never populated
 ...
 lvl_L/node_M/embeddings : shape=(n, dim), leaf-level clusters
 lvl_L/node_M/item_ids   : shape=(n,), uint32, the collection's item ids
 
-queries/Q/...           : a persisted query's state, one group per query id Q
+queries/Q/...           : optional, a persisted query's state, one group per query id Q
 ```
 
 `n` differs from node to node, since eCP does not enforce cluster sizes.

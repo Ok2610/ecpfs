@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::format::FORMAT_VERSION;
 use ndarray::{Array1, Array2};
 use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
@@ -55,9 +56,10 @@ pub fn write_node(
     write_children(store, group_path, child_key, children);
 }
 
-/// Writes `info/levels`, `info/metric` and `info/is_normalized` the same way
-/// the build's `write_index_info` does.
+/// Writes `info/format_version`, `info/levels`, `info/metric` and
+/// `info/is_normalized` the same way the build's `write_index_info` does.
 pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
+    write_info_u32(store, "format_version", FORMAT_VERSION);
     let scalar_shape: Vec<u64> = vec![];
 
     let levels_array =

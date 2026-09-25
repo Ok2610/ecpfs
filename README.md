@@ -72,6 +72,7 @@ builds just the Rust side.
 An index is a directory (currently a Zarr store):
 
 ```
+info/format_version     : uint32, 1 for this layout
 info/levels             : uint32, L
 info/metric             : string, "L2" or "IP"
 info/is_normalized      : bool, optional, an index without it is searched as not normalized

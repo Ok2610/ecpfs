@@ -1,3 +1,5 @@
+import struct
+
 import h5py
 import numpy as np
 import pytest
@@ -53,6 +55,15 @@ def test_index_raises_runtime_error_for_a_directory_that_is_not_an_index(tmp_pat
 
     with pytest.raises(RuntimeError):
         ecpfs.Index(not_an_index)
+
+
+def test_index_raises_value_error_for_a_format_version_it_does_not_read(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    # A scalar uint32 array stores its one value as 4 little-endian bytes in chunk "c"
+    (index_path / "info" / "format_version" / "c").write_bytes(struct.pack("<I", 2))
+
+    with pytest.raises(ValueError, match="format version 2 is not supported"):
+        ecpfs.Index(index_path)
 
 
 def test_new_search_rejects_a_query_of_the_wrong_dimension(tmp_path):

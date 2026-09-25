@@ -9,6 +9,9 @@ Settings
 
 ``info/`` holds one scalar per setting.
 
+- ``info/format_version`` (uint32): the version of this layout, currently 1.
+  ``Index`` refuses any other value. If the field is missing from an index that
+  is otherwise complete, ``Index`` adds it when it opens the index.
 - ``info/levels`` (uint32): node levels below the root. The last one holds the
   leaves.
 - ``info/metric`` (string): ``"L2"`` or ``"IP"``.

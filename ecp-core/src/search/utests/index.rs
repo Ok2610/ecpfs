@@ -1,6 +1,9 @@
 use super::*;
 use crate::search::index::fixtures::{build_test_index, write_ivf_style_fixture};
-use crate::test_fixtures::{as_readable_writable_listable, erase_info_field};
+use crate::test_fixtures::{
+    as_readable_listable, as_readable_writable_listable, erase_info_field, new_memory_store,
+    write_index_info, write_index_root, write_info_u32, write_item_counts, write_rep_item_ids,
+};
 use ndarray::array;
 use std::collections::HashSet;
 use std::sync::Barrier;
@@ -78,6 +81,46 @@ fn an_index_without_is_normalized_scores_as_not_normalized() {
     assert_eq!(ids, vec![0, 1]);
     let expected = (0.4f32 * 0.4 + 0.4 * 0.4).sqrt();
     assert!((items[1].0.into_inner() - expected).abs() < 1e-5);
+}
+
+#[test]
+fn loading_an_index_without_format_version_adds_it() {
+    let store = write_ivf_style_fixture();
+    // Every built index has these, and the fixture only writes what a load reads
+    write_rep_item_ids(&store, &array![0u32, 2, 4, 6]);
+    erase_info_field(&store, "format_version");
+
+    Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+
+    let stored = read_info_u32(&as_readable_listable(&store), "format_version").unwrap();
+    assert_eq!(stored, FORMAT_VERSION);
+}
+
+#[test]
+fn loading_an_index_with_an_unknown_format_version_is_refused() {
+    let store = write_ivf_style_fixture();
+    write_info_u32(&store, "format_version", 2);
+
+    let result = Index::load_from_store(as_readable_writable_listable(&store), None);
+
+    assert!(matches!(result, Err(EcpError::UnsupportedVersion(_))));
+}
+
+/// A load that fails must leave the store as it found it, so the missing
+/// version is only added once every other read has succeeded.
+#[test]
+fn a_failed_load_does_not_add_the_missing_format_version() {
+    let store = new_memory_store();
+    write_index_info(&store, 1, "not a metric", false);
+    write_item_counts(&store, 8);
+    write_rep_item_ids(&store, &array![0u32, 2]);
+    write_index_root(&store, &array![[0.0f32, 0.0]]);
+    erase_info_field(&store, "format_version");
+
+    let result = Index::load_from_store(as_readable_writable_listable(&store), None);
+
+    assert!(matches!(result, Err(EcpError::Corrupt(_))));
+    assert!(Array::open(store.clone(), "/info/format_version").is_err());
 }
 
 #[test]

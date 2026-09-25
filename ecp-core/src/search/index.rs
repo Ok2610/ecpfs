@@ -17,8 +17,9 @@ use crate::build::tree::{BuildConfig, NodeCache as BuildNodeCache, add_data};
 use crate::build::writer::write_info_u32;
 use crate::dtype::{dtype_of_array, read_subset_as_f32};
 use crate::error::{EcpError, Result, ResultExt};
+use crate::format::FORMAT_VERSION;
 use crate::metric::Metric;
-use crate::search::info::{read_info_fields, read_info_u32};
+use crate::search::info::{read_format_version, read_info_fields, read_info_u32};
 use crate::search::node::Node;
 
 mod persistence;
@@ -87,6 +88,9 @@ impl Index {
         store: ReadableWritableListableStorage,
         memory_limit_bytes: Option<usize>,
     ) -> Result<Self> {
+        // Check the version first, so a newer index reports its version
+        let format_version = read_format_version(&store.clone().readable_listable())?;
+
         let (levels, metric, is_normalized) = read_info_fields(&store.clone().readable_listable())?;
         // Not normalized is the setting that scores any data correctly
         let is_normalized = is_normalized.unwrap_or(false);
@@ -110,6 +114,17 @@ impl Index {
         let readable = store.clone().readable_listable();
         let next_item_id = read_info_u32(&readable, "next_item_id")?;
         let total_items = read_info_u32(&readable, "total_items")?;
+
+        // Add the missing version now that the index has loaded
+        if format_version.is_none() {
+            match write_info_u32(&store, "format_version", FORMAT_VERSION) {
+                Ok(()) => log::warn!("index had no info/format_version, added {FORMAT_VERSION}"),
+                Err(e) => log::warn!(
+                    "index has no info/format_version and adding it failed, \
+                     loading it as version {FORMAT_VERSION}: {e}"
+                ),
+            }
+        }
 
         log::info!(
             "index loaded: levels={levels} metric={metric:?} items={total_items} \

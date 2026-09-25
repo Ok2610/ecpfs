@@ -36,6 +36,37 @@ Building an index
        fallback_batch_rows=100_000,
    )
 
+A ``Builder`` has no context manager. The index is on disk when ``build()``
+returns.
+
+Loading an index
+----------------
+
+Open a newly built or existing index with ``Index``. As a context manager it
+calls ``close()`` when the block ends, including when the block raises.
+
+.. code-block:: python
+
+   from ecpfs import Index
+
+   with Index("my_index.zarr") as index:
+       ...  # search or insert
+
+Without ``with``, call ``close()`` in a ``finally`` block so it runs even if
+an error occurs.
+
+.. code-block:: python
+
+   index = Index("my_index.zarr")
+   try:
+       ...  # search or insert
+   finally:
+       index.close()
+
+``close()`` saves every query still in flight, so a later ``Index`` can resume
+it, and then closes the index. Every method raises ``ValueError`` afterward.
+Calling ``close()`` more than once is safe. The examples below use ``with``.
+
 Searching an index
 --------------------
 
@@ -64,7 +95,7 @@ Searching an index
            max_increments=-1,
            exclude_vec=[],
        )
-   # The `with` block's __exit__ calls close() automatically, see below.
+   # Leaving the `with` block calls close().
 
 Adding data to an existing index
 ---------------------------------
@@ -87,6 +118,9 @@ can map its own external ids to them.
        new_embeddings = np.random.rand(2, 128).astype(np.float32)
        start_id, end_id = index.insert(embeddings=new_embeddings)
        # start_id, end_id = 1000, 1002; the two rows got ids 1000 and 1001.
+
+The new rows are in the index when ``insert`` returns. ``close()`` is not what
+saves them.
 
 There's no rebalancing. A leaf that keeps growing just keeps growing, so
 search quality degrades gradually as an index accumulates far more
@@ -122,16 +156,16 @@ new ids the same way:
 Persisting and resuming queries
 --------------------------------
 
-An ``Index`` keeps every in-flight query (its position in the tree, its
-buffered results so far) in memory. ``close()`` persists whatever's still
-in flight to disk before releasing the index, and every method raises
-``ValueError`` afterward. Using ``Index`` as a context manager (as above)
-calls ``close()`` for you, including when the block raises; call it
-directly if you're not using ``with``.
+An ``Index`` keeps each query in flight, its position in the tree and its
+buffered results, in memory. A query reaches disk in two cases. ``close()``
+saves it, and so does evicting it from memory to stay under the memory limit.
+A query that was neither saved by ``close()`` nor evicted is lost when the
+process crashes or ``close()`` is never called. ``get_next_k_items`` then
+returns no items for its ``query_id``.
 
-A query a caller never finishes draining survives this way across a process
-restart. Resume it from a new ``Index`` pointed at the same path, using the
-``query_id`` the original ``new_search`` returned:
+A saved query can be resumed from a new ``Index`` on the same path, in the
+same or another process, using the ``query_id`` the original ``new_search``
+returned:
 
 .. code-block:: python
 
@@ -149,10 +183,10 @@ restart. Resume it from a new ``Index`` pointed at the same path, using the
            query_id=query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[]
        )
 
-A query that's already fully explored, with nothing left to hand back, is
-erased rather than persisted, so finished queries don't accumulate on disk
-by themselves. One that's *not* finished does accumulate, though, unless a
-caller resumes it or ``cleanup_persisted_queries_older_than`` clears it out:
+A query with nothing left to explore or return is erased rather than saved,
+so finished queries do not accumulate on disk. One with results left stays
+on disk until a caller resumes it or ``cleanup_persisted_queries_older_than``
+erases it:
 
 .. code-block:: python
 

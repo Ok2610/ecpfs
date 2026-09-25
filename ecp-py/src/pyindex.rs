@@ -97,8 +97,8 @@ impl IndexWrapper {
     ///
     /// Returns the next ``k`` ``(score, item_id)`` pairs of a query started with
     /// ``new_search``, searching further if needed. Empty for an unknown
-    /// ``query_id`` or after ``close``. See :doc:`search-parameters` for the other
-    /// arguments.
+    /// ``query_id``, and raises ValueError after ``close``. See
+    /// :doc:`search-parameters` for the other arguments.
     fn get_next_k_items(
         &self,
         py: Python<'_>,

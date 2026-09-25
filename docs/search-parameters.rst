@@ -57,5 +57,7 @@ are buffered and unvisited nodes remain, it first scans ``search_exp`` more
 leaves, with the same doubling rule. A later page can hold an item that scores
 better than one returned earlier, when it comes from a leaf scanned later.
 
-A query that still has results left can be resumed with its id after
-``close()``, from a new ``Index`` on the same path (see :doc:`quickstart`).
+A query is saved to disk when ``close()`` runs or when it is evicted from
+memory. If it still has results left, a new ``Index`` on the same path can
+resume it with its id (see :doc:`quickstart`). A query that was never saved
+cannot be resumed.

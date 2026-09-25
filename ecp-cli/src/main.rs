@@ -426,9 +426,13 @@ struct InfoArgs {
 fn info(args: InfoArgs) -> Result<()> {
     args.logging.init_if_requested()?;
     let info = IndexInfo::load(args.index_path)?;
+    println!("Format Version: {}", info.format_version);
     println!("Levels: {}", info.levels);
     println!("Metric: {}", info.metric.as_str());
-    println!("Normalized: {}", info.is_normalized);
+    match info.is_normalized {
+        Some(is_normalized) => println!("Normalized: {is_normalized}"),
+        None => println!("Normalized: not set"),
+    }
     println!("Total Items: {}", info.total_items);
     println!("Next Item Id: {}", info.next_item_id);
     if info.next_item_id > info.total_items {

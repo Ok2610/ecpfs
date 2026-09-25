@@ -267,6 +267,21 @@ fn write_index_info_stores_levels_metric_and_is_normalized() {
 }
 
 #[test]
+fn write_index_info_stores_the_format_version() {
+    let store = new_memory_store();
+    write_index_info(&as_readable_writable_listable(&store), 2, Metric::L2, false).unwrap();
+
+    let version = Array::open(store.clone(), "/info/format_version")
+        .expect("failed to open info/format_version");
+    assert_eq!(
+        version
+            .retrieve_array_subset::<Vec<u32>>(&version.subset_all())
+            .expect("failed to read format_version"),
+        vec![FORMAT_VERSION]
+    );
+}
+
+#[test]
 fn write_info_u32_overwrites_an_existing_scalar() {
     let store = new_memory_store();
     let writable = as_readable_writable_listable(&store);

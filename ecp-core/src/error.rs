@@ -32,6 +32,10 @@ pub enum EcpError {
     /// `select_representatives`. Maps to Python's `RuntimeError`.
     #[error("{0}")]
     Usage(String),
+    /// The index has a format version this build does not read, such as one
+    /// written by a newer ecpfs. Maps to Python's `ValueError`.
+    #[error("{0}")]
+    UnsupportedVersion(String),
 }
 
 /// This crate's result type.

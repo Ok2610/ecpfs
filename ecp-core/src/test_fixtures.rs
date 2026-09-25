@@ -2,11 +2,14 @@
 
 use std::sync::Arc;
 
+use crate::format::FORMAT_VERSION;
 use ndarray::{Array1, Array2};
 use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
 use zarrs::storage::store::MemoryStore;
-use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
+use zarrs::storage::{
+    ReadableListableStorage, ReadableWritableListableStorage, StorePrefix, WritableStorageTraits,
+};
 
 /// Writes `children` as the node's `child_key` array (`node_ids` or `item_ids`).
 fn write_children(
@@ -53,9 +56,10 @@ pub fn write_node(
     write_children(store, group_path, child_key, children);
 }
 
-/// Writes `info/levels`, `info/metric` and `info/is_normalized` the same way
-/// the build's `write_index_info` does.
+/// Writes `info/format_version`, `info/levels`, `info/metric` and
+/// `info/is_normalized` the same way the build's `write_index_info` does.
 pub fn write_index_info(store: &Arc<MemoryStore>, levels: u32, metric: &str, is_normalized: bool) {
+    write_info_u32(store, "format_version", FORMAT_VERSION);
     let scalar_shape: Vec<u64> = vec![];
 
     let levels_array =
@@ -117,6 +121,14 @@ pub fn write_info_u32(store: &Arc<MemoryStore>, name: &str, value: u32) {
 pub fn write_item_counts(store: &Arc<MemoryStore>, total_items: u32) {
     write_info_u32(store, "total_items", total_items);
     write_info_u32(store, "next_item_id", total_items);
+}
+
+/// Removes `info/{name}`, leaving the index as one built without that field.
+pub fn erase_info_field(store: &Arc<MemoryStore>, name: &str) {
+    let prefix = StorePrefix::new(format!("info/{name}/")).expect("info field prefix is valid");
+    store
+        .erase_prefix(&prefix)
+        .unwrap_or_else(|e| panic!("failed to erase info/{name}: {e}"));
 }
 
 /// Writes `ids` as `/rep_item_ids`, the representative ids a build saves.

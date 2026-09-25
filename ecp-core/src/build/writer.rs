@@ -12,6 +12,7 @@ use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableSt
 
 use crate::dtype::EmbeddingDtype;
 use crate::error::{EcpError, Result, ResultExt};
+use crate::format::FORMAT_VERSION;
 use crate::metric::Metric;
 
 /// Compresses every written array with zstd at level 3. Chunks are sized for
@@ -151,13 +152,15 @@ pub fn zarrs_append(
     Ok(())
 }
 
-/// Writes `info/levels`, `info/metric`, and `info/is_normalized`.
+/// Writes `info/format_version`, `info/levels`, `info/metric`, and `info/is_normalized`.
 pub fn write_index_info(
     store: &ReadableWritableListableStorage,
     levels: u32,
     metric: Metric,
     is_normalized: bool,
 ) -> Result<()> {
+    write_info_u32(store, "format_version", FORMAT_VERSION)?;
+
     // Zarr has no bare-scalar type; each of these is a rank-0 array.
     let scalar_shape: Vec<u64> = vec![];
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::search::index::fixtures::{build_test_index, write_ivf_style_fixture};
-use crate::test_fixtures::as_readable_writable_listable;
+use crate::test_fixtures::{as_readable_writable_listable, erase_info_field};
 use ndarray::array;
 use std::collections::HashSet;
 use std::sync::Barrier;
@@ -61,6 +61,23 @@ fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
         still_present < 6,
         "lowering the limit below current usage must evict immediately, not lazily"
     );
+}
+
+/// The fixture's vectors are not unit-length, so an index that fell back to
+/// `is_normalized = true` would score every item at distance 1.
+#[test]
+fn an_index_without_is_normalized_scores_as_not_normalized() {
+    let store = write_ivf_style_fixture();
+    erase_info_field(&store, "is_normalized");
+
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (items, _) = index.new_search(query, 2, 4, -1, &HashSet::new()).unwrap();
+
+    let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
+    assert_eq!(ids, vec![0, 1]);
+    let expected = (0.4f32 * 0.4 + 0.4 * 0.4).sqrt();
+    assert!((items[1].0.into_inner() - expected).abs() < 1e-5);
 }
 
 #[test]

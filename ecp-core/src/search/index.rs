@@ -88,6 +88,8 @@ impl Index {
         memory_limit_bytes: Option<usize>,
     ) -> Result<Self> {
         let (levels, metric, is_normalized) = read_info_fields(&store.clone().readable_listable())?;
+        // Not normalized is the setting that scores any data correctly
+        let is_normalized = is_normalized.unwrap_or(false);
 
         let root_array = Array::open(store.clone(), "/index_root/embeddings")
             .store_err("failed to open index_root/embeddings")?;

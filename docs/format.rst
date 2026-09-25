@@ -12,7 +12,8 @@ Settings
 - ``info/levels`` (uint32): node levels below the root. The last one holds the
   leaves.
 - ``info/metric`` (string): ``"L2"`` or ``"IP"``.
-- ``info/is_normalized`` (bool): whether every embedding is unit-length.
+- ``info/is_normalized`` (bool, optional): whether every embedding is
+  unit-length. An index without it is searched as not normalized.
 - ``info/total_items`` (uint32): items stored.
 - ``info/next_item_id`` (uint32): the id the next insert gives out. Equal to
   ``total_items`` unless a crash stopped an insert partway.

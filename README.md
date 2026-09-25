@@ -74,7 +74,7 @@ An index is a directory (currently a Zarr store):
 ```
 info/levels             : uint32, L
 info/metric             : string, "L2" or "IP"
-info/is_normalized      : bool
+info/is_normalized      : bool, optional, an index without it is searched as not normalized
 info/total_items        : uint32, items currently stored
 info/next_item_id       : uint32, the id the next insert hands out
 

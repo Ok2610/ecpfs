@@ -49,7 +49,7 @@ a version bump if one applies.
 
 ## Versioning
 
-Every release before `0.10.0` is a staged checkpoint, not governed by a
+Every version before `0.10.0` is a staged checkpoint, not governed by a
 fixed rule. From `0.10.0` onward, the last number moves for a bug fix or
 a small addition (`0.10.x`). The middle number moves for a breaking
 change or a major feature addition, something on the scale of `0.9.95`'s

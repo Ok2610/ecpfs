@@ -1,4 +1,4 @@
-Index format
+Index Format
 ============
 
 An index is a directory holding a Zarr store. Every part of it is a zarr array,
@@ -36,7 +36,7 @@ Settings
   ``Index`` refuses any other value. If the field is missing from an index that
   is otherwise complete, ``Index`` adds it when it opens the index.
 - ``info/levels`` (uint32): node levels below the root. The last one holds the
-  leaves.
+  leaf nodes.
 - ``info/metric`` (string): ``"L2"`` or ``"IP"``.
 - ``info/is_normalized`` (bool, optional): whether every embedding is
   unit-length. An index without it is searched as not normalized.

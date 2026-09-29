@@ -1,4 +1,4 @@
-Zarr concepts
+Zarr Concepts
 =============
 
 An index is stored as `Zarr <https://zarr.dev/>`_, and this page explains
@@ -39,43 +39,18 @@ a fill value:
 .. code-block:: rust
 
    let mut builder = ArrayBuilder::new(shape, chunk_shape, data_type, fill_value);
-   builder.bytes_to_bytes_codecs(compressor());
-   let array = builder.build(store.clone(), path)?;
-   array.store_metadata()?;
+   builder.bytes_to_bytes_codecs(compressor());       // compress each chunk with zstd
+   let array = builder.build(store.clone(), path)?;   // Array, still only in memory
+   array.store_metadata()?;                           // write its zarr.json to the store
+
+This writes the array's shape, dtype, and chunking, not any values.
+Values are written in chunks, covered next.
 
 Reading an existing array back is a plain path lookup:
 
 .. code-block:: rust
 
    let array = Array::open(store.clone(), path)?;
-
-Groups
-------
-
-A Zarr *group* is a named collection of arrays and other groups, roughly
-a directory. ``ecp-core`` registers one at every container path, the
-store's root, ``info``, ``index_root``, each level, and each node, all
-through the same small helper:
-
-.. code-block:: rust
-
-   pub(crate) fn build_group(store: &ReadableWritableListableStorage, path: &str) -> Result<()> {
-       GroupBuilder::default()
-           .build(store.clone(), path)?
-           .store_metadata()?;
-       Ok(())
-   }
-
-This writes a ``zarr.json`` with ``"node_type": "group"`` at ``path``.
-Zarr V3 removed support for implicit groups from the spec, so this
-explicit write is what actually makes something a group, not an
-optional nicety.
-
-``ecp-core``'s own reader still opens every array by its full path
-directly, never through these groups. They exist for the store's
-whitebox goal, so a generic Zarr reader such as zarr-python can browse
-and open the hierarchy on its own, without already knowing every path
-in advance.
 
 Chunking
 --------
@@ -88,12 +63,13 @@ written:
 
 .. code-block:: rust
 
-   array.retrieve_array_subset::<Array2<f32>>(subset)
-   array.retrieve_array_subset::<Vec<u32>>(&array.subset_all())  // whole array
+   array.store_array_subset(subset, embeddings)?;                 // write values
+   array.retrieve_array_subset::<Array2<f32>>(subset)             // read that subset back
+   array.retrieve_array_subset::<Vec<u32>>(&array.subset_all())   // read the whole array
 
-See the parameter tuning guide for why the chunk size choice matters,
-and :doc:`format` for what an underfilled chunk costs on disk, nothing,
-it compresses away, versus on a read, the whole chunk still decodes.
+See :doc:`tuning` for why the chunk size choice matters, and
+:doc:`format` for what an underfilled chunk costs on disk, nothing, it
+compresses away, versus on a read, the whole chunk still decodes.
 
 Compression
 -----------
@@ -122,6 +98,43 @@ match:
        EmbeddingDtype::Int8 => int8(),
    };
 
+Groups
+------
+
+A Zarr *group* is a named collection of arrays and other groups, roughly
+a directory. ``ecp-core`` registers one at every container path, the
+store's root, ``info``, ``index_root``, each level, and each node, all
+through the same small helper:
+
+.. code-block:: rust
+
+   pub(crate) fn build_group(store: &ReadableWritableListableStorage, path: &str) -> Result<()> {
+       GroupBuilder::default()
+           .build(store.clone(), path)?  // create the group in memory
+           .store_metadata()?;           // persist its zarr.json
+       Ok(())
+   }
+
+This writes a ``zarr.json`` with ``"node_type": "group"`` at ``path``.
+Without it, ``path`` is not a group at all, just a directory prefix two
+array paths happen to share.
+
+Reading a group back is the same shape as opening an array:
+
+.. code-block:: rust
+
+   let group = Group::open(store.clone(), path)?;
+
+``ecp-core`` never actually calls this. Its own reader opens every array
+by its full path directly, never through a group. The read side is
+shown here because it is genuinely useful on its own, for inspecting a
+store by hand in a test or a script, even though ecp-core's own code
+has no need for it.
+
+Groups exist for the store's whitebox goal. A generic Zarr reader such
+as zarr-python can then browse and open the hierarchy on its own,
+without already knowing every path in advance.
+
 On disk
 -------
 
@@ -140,8 +153,8 @@ read it directly, independently of ecpfs's own loader:
 .. code-block:: python
 
    import zarr
-   root = zarr.open_group("my_index.zarr", mode="r")
-   root.tree()
-   root["lvl_1"]["node_0"]["embeddings"][:]
+   root = zarr.open_group("my_index.zarr", mode="r")   # open the store as a group
+   root.tree()                                          # print the whole hierarchy
+   root["lvl_1"]["node_0"]["embeddings"][:]              # read values, group by group
 
 :doc:`format` describes every array ecpfs actually writes, by name.

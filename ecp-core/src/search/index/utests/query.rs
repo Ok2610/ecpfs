@@ -242,10 +242,10 @@ fn incremental_search_returns_how_many_leaves_it_visited() {
         })),
     );
 
-    let leaves_scanned = index
+    let leaf_nodes_scanned = index
         .incremental_search(query_id, 4, 4, -1, &HashSet::new())
         .unwrap();
-    assert_eq!(leaves_scanned, 4);
+    assert_eq!(leaf_nodes_scanned, 4);
 }
 
 /// Many threads searching one shared `Index` each get the results a

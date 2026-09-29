@@ -342,7 +342,7 @@ struct SearchArgs {
     #[arg(long, default_value_t = 10)]
     k: usize,
 
-    /// How many leaves to scan. More gives better results but a slower search.
+    /// How many leaf nodes to scan. More gives better results but a slower search.
     #[arg(long, default_value_t = 4)]
     search_exp: u32,
 

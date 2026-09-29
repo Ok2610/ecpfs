@@ -9,7 +9,7 @@ Installation
    pip install ecpfs
 
 Building an index
-------------------
+-----------------
 
 .. code-block:: python
 
@@ -68,7 +68,7 @@ it, and then closes the index. Every method raises ``ValueError`` afterward.
 Calling ``close()`` more than once is safe. The examples below use ``with``.
 
 Searching an index
---------------------
+------------------
 
 .. code-block:: python
 
@@ -98,9 +98,9 @@ Searching an index
    # Leaving the `with` block calls close().
 
 Adding data to an existing index
----------------------------------
+--------------------------------
 
-``insert`` routes each new point to its nearest leaf and appends it there,
+``insert`` routes each new point to its nearest leaf node and appends it there,
 the same descent search already does. Ids are assigned automatically in
 row order, starting at the index's ``next_item_id``. A fresh build sets
 that to the number of items it stored, so inserted ids continue straight
@@ -122,7 +122,7 @@ can map its own external ids to them.
 The new rows are in the index when ``insert`` returns. ``close()`` is not what
 saves them.
 
-There's no rebalancing. A leaf that keeps growing just keeps growing, so
+There's no rebalancing. A leaf node that keeps growing just keeps growing, so
 search quality degrades gradually as an index accumulates far more
 inserts than its original build accounted for. A rebuild is the only fix
 for that currently.
@@ -135,8 +135,9 @@ mid-insert without a gap in its ids.
 
 Concurrent inserts and searches on one loaded ``Index`` are safe and
 fine-grained. Two operations only serialize when they land on the same
-leaf, and a search may briefly see pre-insert (stale) data for a leaf an
-insert is concurrently touching rather than wait for it. This holds
+leaf node, and a search may briefly see pre-insert (stale) data for a
+leaf node an insert is concurrently touching rather than wait for it.
+This holds
 across Python threads too, because ecpfs releases the GIL during search and
 insert. It does not extend across separate processes. Two
 independent processes (or two separate ``Index(...)`` handles anywhere)
@@ -154,7 +155,7 @@ new ids the same way:
    ecp add-data my_index.zarr new_embeddings.h5
 
 Persisting and resuming queries
---------------------------------
+-------------------------------
 
 An ``Index`` keeps each query in flight, its position in the tree and its
 buffered results, in memory. A query reaches disk in two cases. ``close()``

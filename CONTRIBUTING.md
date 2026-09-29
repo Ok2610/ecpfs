@@ -90,6 +90,13 @@ New functionality needs tests backing it, Rust tests in `ecp-core`'s own
 request, say what the new tests cover, not just that the suite passes;
 the gate already confirms the suite passes.
 
+A new Python test dependency needs adding in two places, not one.
+`pyproject.toml`'s dev group covers `ci.yml` and local
+`uv sync --group dev`. `.github/workflows/wheels.yml` never reads that
+group at all; each platform's smoke test installs its own dependencies
+by hand, in a separate line repeated once per platform. Miss the second
+place and the wheel build's own test step breaks on the next tag push.
+
 ## Sign-off (DCO)
 
 Every commit needs a `Signed-off-by` trailer, added automatically with:

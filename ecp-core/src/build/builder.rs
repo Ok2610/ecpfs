@@ -11,7 +11,9 @@ use crate::build::representatives::{
 };
 use crate::build::source::EmbeddingsSource;
 use crate::build::tree::{BuildTreeArgs, build_tree};
-use crate::build::writer::{write_index_info, write_index_root, write_info_u32, zarrs_append};
+use crate::build::writer::{
+    build_group, write_index_info, write_index_root, write_info_u32, zarrs_append,
+};
 use crate::dtype::EmbeddingDtype;
 use crate::error::{EcpError, Result, ResultExt};
 use crate::metric::Metric;
@@ -126,6 +128,8 @@ impl Builder {
                 "levels must be at least 1".to_string(),
             ));
         }
+        build_group(&store, "/")?;
+        build_group(&store, "/info")?;
         write_index_info(&store, levels, metric, is_normalized)?;
         Ok(Builder {
             store,
@@ -298,6 +302,7 @@ impl Builder {
         };
 
         // Write root, then every level below it
+        build_group(&self.store, "/index_root")?;
         write_index_root(
             &self.store,
             &root_embeddings,

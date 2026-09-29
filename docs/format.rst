@@ -4,6 +4,9 @@ Index format
 An index is a directory holding a Zarr store. Every part of it is a zarr array,
 so any Zarr reader can inspect it.
 
+See :doc:`zarr` first for what a Zarr array, group, and chunk actually
+are. This page covers what ecpfs specifically stores in them.
+
 Version 1
 ---------
 

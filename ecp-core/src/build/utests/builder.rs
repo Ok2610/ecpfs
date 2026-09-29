@@ -3,6 +3,7 @@ use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
 use ndarray::array;
 use zarrs::array::data_type::float32;
 use zarrs::array::{Array, ArrayBuilder};
+use zarrs::group::Group;
 use zarrs::storage::store::MemoryStore;
 
 #[test]
@@ -276,6 +277,35 @@ fn builder_rejects_zero_levels() {
 fn node_size_for_rejects_zero_levels() {
     let err = node_size_for(100, 0).unwrap_err();
     assert!(matches!(err, EcpError::InvalidInput(_)), "{err:?}");
+}
+
+#[test]
+fn build_registers_a_zarr_group_at_every_container_path() {
+    let store = new_memory_store();
+    let dataset = write_source(
+        &store,
+        "/dataset",
+        &array![[0.0f32, 0.0], [0.0, 1.0], [10.0, 0.0], [10.0, 1.0]],
+    );
+    let mut builder = new_builder(&store, 1, 1_000_000);
+
+    builder
+        .select_representatives(&dataset, 2, RepresentativeStrategy::Offset, 10)
+        .unwrap();
+    builder.build(&dataset, 10).unwrap();
+
+    let readable = as_readable_writable_listable(&store);
+    for path in [
+        "/",
+        "/info",
+        "/index_root",
+        "/lvl_1",
+        "/lvl_1/node_0",
+        "/lvl_1/node_1",
+    ] {
+        Group::open(readable.clone(), path)
+            .unwrap_or_else(|e| panic!("expected a group at {path}: {e}"));
+    }
 }
 
 /// With levels=1 the root's children are the leaves, so only one level is

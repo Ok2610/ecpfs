@@ -16,4 +16,5 @@ This site covers the Python package. For the Rust crates themselves
    api
    cli
    multithreading
+   zarr
    format

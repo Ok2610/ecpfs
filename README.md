@@ -120,6 +120,12 @@ implementation:
 }
 ```
 
+## Contributing
+
+See `CONTRIBUTING.md` for development setup, the gate CI runs, and the
+project's conventions.
+Participation is covered by `CODE_OF_CONDUCT.md`.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option. See `LICENSE-MIT` and `LICENSE-APACHE`.

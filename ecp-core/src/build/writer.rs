@@ -8,6 +8,7 @@ use zarrs::array::{
     Array, ArrayBuilder, ArrayCreateError, ArraySubset, BytesToBytesCodecTraits, DataType,
     FillValue, FillValueMetadata,
 };
+use zarrs::group::GroupBuilder;
 use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableStorageTraits};
 
 use crate::dtype::EmbeddingDtype;
@@ -20,6 +21,17 @@ use crate::metric::Metric;
 /// zstd shrinks to almost nothing on disk.
 pub(super) fn compressor() -> Vec<Arc<dyn BytesToBytesCodecTraits>> {
     vec![Arc::new(ZstdCodec::new(3, false))]
+}
+
+/// Registers `path` as a Zarr group, so a generic Zarr reader (such as
+/// zarr-python) can list and open it as a real node, not just a directory
+/// two array paths happen to share.
+pub(crate) fn build_group(store: &ReadableWritableListableStorage, path: &str) -> Result<()> {
+    GroupBuilder::default()
+        .build(store.clone(), path)
+        .store_err_with(|| format!("failed to build {path} group"))?
+        .store_metadata()
+        .store_err_with(|| format!("failed to store {path} group metadata"))
 }
 
 /// Creates the embeddings array at `path` with `shape`, stored as `dtype`,
@@ -270,6 +282,7 @@ pub fn append_node_batch(
     )?;
 
     if is_new {
+        build_group(store, group_path)?;
         let border_shape = vec![2u64];
         let border_array = ArrayBuilder::new(border_shape.clone(), border_shape, float32(), 0.0f32)
             .build(store.clone(), &format!("{group_path}/border"))

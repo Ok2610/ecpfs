@@ -113,11 +113,11 @@ impl Index {
                 items: Vec::new(),
             })),
         );
-        let leaves_scanned =
+        let leaf_nodes_scanned =
             self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
         let items = self.drain_items(query_id, k)?;
         log::info!(
-            "search: query_id={query_id} k={k} leaves_scanned={leaves_scanned} items_returned={}",
+            "search: query_id={query_id} k={k} leaf_nodes_scanned={leaf_nodes_scanned} items_returned={}",
             items.len()
         );
         Ok((items, query_id))
@@ -296,14 +296,14 @@ impl Index {
             );
             state.items.len() < k && !state.tree_pq.is_empty()
         };
-        let leaves_scanned = if needs_more_search {
+        let leaf_nodes_scanned = if needs_more_search {
             self.incremental_search(query_id, k, search_exp, max_increments, exclude)?
         } else {
             0
         };
         let items = self.drain_items(query_id, k)?;
         log::info!(
-            "search: query_id={query_id} k={k} leaves_scanned={leaves_scanned} items_returned={}",
+            "search: query_id={query_id} k={k} leaf_nodes_scanned={leaf_nodes_scanned} items_returned={}",
             items.len()
         );
         Ok(items)

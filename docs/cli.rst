@@ -145,7 +145,7 @@ continue the same query without starting over. :doc:`search-parameters` explains
          --k <K>
              Number of items to return [default: 10]
          --search-exp <SEARCH_EXP>
-             How many leaves to scan. More gives better results but a slower search [default: 4]
+             How many leaf nodes to scan. More gives better results but a slower search [default: 4]
          --max-increments <MAX_INCREMENTS>
              How many times to double --search-exp while fewer than --k items are found. -1 for no limit [default: -1]
          --exclude <EXCLUDE>

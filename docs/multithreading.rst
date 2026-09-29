@@ -1,5 +1,5 @@
-Multithreading internals
-=========================
+Multithreading Internals
+========================
 
 This page is for anyone modifying ``ecp-core``'s build or insert code, not
 for users of the Python API. It explains how ``build_tree`` and
@@ -7,7 +7,7 @@ for users of the Python API. It explains how ``build_tree`` and
 deadlock this design has to avoid.
 
 Two pools, not one
--------------------
+------------------
 
 Nowhere in this codebase do we construct a ``rayon::ThreadPool``. Every use
 of ``.into_par_iter()`` runs on rayon's single, lazily-initialized default
@@ -30,7 +30,7 @@ can lose data, and it is the caller's responsibility to prevent that.
 ``leaf_locks`` (below) exists to fill exactly that gap.
 
 Why ``build_tree`` and ``Index::insert`` share code but not a threading strategy
-----------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 Both call the same routing methodology (``add_data``, then recursively
 ``route_batch_to_node``), which walks the tree from the root down to a
@@ -53,11 +53,12 @@ dispatched to rayon. This is required, not a performance choice, and the
 next section shows exactly why.
 
 The deadlock this avoids
--------------------------
+------------------------
 
-``Index::insert`` takes a lock on the specific leaf it's about to append to
-(``leaf_locks``, a lock per leaf id), so a concurrent search reading that
-same leaf can't race the write. If insert's own routing ran on rayon like
+``Index::insert`` takes a lock on the specific leaf node it's about to
+append to (``leaf_locks``, a lock per leaf node id), so a concurrent
+search reading that same leaf node can't race the write. If insert's own
+routing ran on rayon like
 ``build_tree``'s does, the thread that ends up acquiring that lock could be
 a rayon worker thread instead of insert's original caller. That's the
 problem. A worker thread that blocks on a lock stops being available for
@@ -78,22 +79,22 @@ more simultaneous unlucky assignments for every worker to end up stuck at
 once, which becomes more likely as insert activity increases.
 
 The fix keeps the mechanism, not the pool it runs on: as long as the
-thread reaching "acquire this leaf's lock" is never a rayon worker, it can
+thread reaching "acquire this leaf node's lock" is never a rayon worker, it can
 block freely without costing the pool anything, since it was never
 available to the pool's other work in the first place. ``on_caller_thread``
 is what guarantees that for insert.
 
 What ``leaf_locks`` is and isn't for
---------------------------------------
+------------------------------------
 
 ``leaf_locks`` protects two different things:
 
-- Writer-vs-writer: two concurrent inserts appending to the same leaf at
-  once. ``zarrs`` explicitly does not protect against this.
-- Reader-vs-writer: a search reading a leaf while an insert is mid-append
-  to it. Without a lock, the reader could observe the leaf's shape already
-  updated to include new rows whose data hasn't been written yet, and
-  either panic or read corrupted data.
+- Writer-vs-writer: two concurrent inserts appending to the same leaf
+  node at once. ``zarrs`` explicitly does not protect against this.
+- Reader-vs-writer: a search reading a leaf node while an insert is
+  mid-append to it. Without a lock, the reader could observe the leaf
+  node's shape already updated to include new rows whose data hasn't
+  been written yet, and either panic or read corrupted data.
 
 It is not protecting against concurrent reads or writes of a single
 node's own chunks. That's ``zarrs``'s own internal parallelism, described

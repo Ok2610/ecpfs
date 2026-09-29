@@ -1,4 +1,4 @@
-Search parameters
+Search Parameters
 =================
 
 ``new_search`` and ``get_next_k_items`` share four arguments, ``k``,
@@ -10,37 +10,39 @@ How a search runs
 
 The index is a tree. A search keeps a queue of nodes to visit, ordered by how
 close each node's representative is to the query, and always visits the closest
-one next. Visiting a leaf scores every item in it and adds the items to the
-query's buffer. The search stops scanning leaves at the limits below, sorts the
+one next. Visiting a leaf node scores every item in it and adds the items to the
+query's buffer. The search stops scanning leaf nodes at the limits below, sorts the
 buffer, and returns the best ``k`` items. The rest stay buffered for
 ``get_next_k_items``.
 
 ``k``
-   How many ``(score, item_id)`` pairs to return. Fewer come back if the search
-   finds fewer items.
+   How many ``(score, item_id)`` pairs to return. Fewer come back when the
+   search does not find that many, whether because too few items were
+   scanned or because ``exclude_vec`` filtered some out.
 
 ``search_exp``
-   How many leaves to scan in this call. More leaves give better results and a
-   slower search. Results are exact within the scanned leaves, so a closer item
-   in a leaf that wasn't scanned is missed.
+   How many leaf nodes to scan in this call. More leaf nodes give better results
+   and a slower search. Results are exact within the scanned leaf nodes, so a
+   closer item in a leaf node that wasn't scanned is missed.
 
 ``max_increments``
-   What to do when ``search_exp`` leaves gave fewer than ``k`` items. The search
-   doubles ``search_exp`` and keeps going, at most ``max_increments`` times.
-   ``0`` never doubles, and ``-1`` doubles until ``k`` items are found or the
-   whole tree has been scanned.
+   What to do when ``search_exp`` leaf nodes gave fewer than ``k`` items. The
+   search doubles ``search_exp`` and keeps going, at most ``max_increments``
+   times. ``0`` never doubles, and ``-1`` doubles until ``k`` items are found
+   or the whole tree has been scanned.
 
 ``exclude_vec``
-   Item ids to leave out of the results. It applies to the leaves scanned in this
-   call, so an item already buffered by an earlier call can still come back.
+   Item ids to leave out of the results. It applies to the leaf nodes scanned
+   in this call, so an item already buffered by an earlier call can still
+   come back.
 
 Example
 -------
 
 With ``k=10``, ``search_exp=4`` and ``max_increments=2``, the search scans 4
-leaves. If they hold 10 or more items, it stops there. Otherwise it doubles to 8
-leaves in total, then 16, and stops after that even if it still has fewer than
-10 items.
+leaf nodes. If they hold 10 or more items, it stops there. Otherwise it doubles
+to 8 leaf nodes in total, then 16, and stops after that even if it still has
+fewer than 10 items.
 
 Scores
 ------
@@ -54,8 +56,9 @@ Paging with ``get_next_k_items``
 
 ``get_next_k_items`` returns the next ``k`` buffered items. If fewer than ``k``
 are buffered and unvisited nodes remain, it first scans ``search_exp`` more
-leaves, with the same doubling rule. A later page can hold an item that scores
-better than one returned earlier, when it comes from a leaf scanned later.
+leaf nodes, with the same doubling rule. A later page can hold an item that
+scores better than one returned earlier, when it comes from a leaf node scanned
+later.
 
 A query is saved to disk when ``close()`` runs or when it is evicted from
 memory. If it still has results left, a new ``Index`` on the same path can

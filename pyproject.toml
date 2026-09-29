@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name        = "ecpfs"
-version     = "0.9.98"
+version     = "0.9.99"
 description = "Extended Cluster Pruning (eCP) approximate nearest neighbor index, with a Rust core"
 authors     = [
     { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
@@ -39,6 +39,7 @@ dev = [
   "pytest>=9.1.1",
   "shibuya>=2026.7.12",
   "sphinx>=9.1.0",
+  "zarr>=3.4.0",
 ]
 
 [tool.maturin]

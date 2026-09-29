@@ -9,7 +9,7 @@ use zarrs::storage::{ReadableListableStorage, ReadableWritableListableStorage};
 use crate::build::assign::determine_node_assignments;
 use crate::build::builder::TRACKED_MEMORY_FRACTION;
 use crate::build::source::EmbeddingsSource;
-use crate::build::writer::append_node_batch;
+use crate::build::writer::{append_node_batch, build_group};
 use crate::dtype::EmbeddingDtype;
 use crate::error::{EcpError, Result};
 use crate::metric::Metric;
@@ -290,6 +290,8 @@ pub fn build_tree(args: &BuildTreeArgs) -> Result<()> {
     let node_cache = NodeCache::new(cache_capacity as u64);
 
     for target_level in 1..=total_levels {
+        build_group(store, &format!("/lvl_{target_level}"))?;
+
         // Non-leaf levels are built from representatives, the leaf level from the dataset
         let source = if target_level == total_levels {
             dataset

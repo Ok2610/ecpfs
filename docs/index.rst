@@ -11,9 +11,11 @@ This site covers the Python package. For the Rust crates themselves
    :maxdepth: 2
 
    quickstart
+   tuning
    search-parameters
    logging
    api
    cli
    multithreading
+   zarr
    format

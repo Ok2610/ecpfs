@@ -57,7 +57,7 @@ Six levels, each including everything the ones before it show: ``off``,
 
 ``trace``
    Logs per-node details during a search, such as a cache hit versus a
-   disk read, or how many items a leaf contributed. The most detailed
+   disk read, or how many items a leaf node contributed. The most detailed
    level, and the most expensive to leave on for a large search.
 
 Record format
@@ -67,7 +67,7 @@ Every line is one JSON object with four fields, for example:
 
 .. code-block:: json
 
-   {"timestamp":"2026-09-21T12:28:09.815337Z","level":"INFO","target":"ecp_core::search::index::query","message":"search: query_id=0 k=3 leaves_scanned=2 items_returned=3"}
+   {"timestamp":"2026-09-21T12:28:09.815337Z","level":"INFO","target":"ecp_core::search::index::query","message":"search: query_id=0 k=3 leaf_nodes_scanned=2 items_returned=3"}
 
 ``timestamp``
    RFC 3339, UTC, with sub-second precision.

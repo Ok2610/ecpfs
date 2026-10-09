@@ -152,6 +152,31 @@ fn shutdown_then_reload_resumes_a_query_from_a_fresh_index() {
     );
 }
 
+/// new_search excludes item 2, which sits in leaf (2, 3), and scans only leaf (0, 1).
+/// A fresh `Index` resumes with an empty exclude, so item 2 stays out only if the
+/// saved query kept new_search's exclude.
+#[test]
+fn shutdown_then_reload_keeps_the_exclude_set() {
+    let store = write_ivf_style_fixture();
+
+    let first_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let exclude: HashSet<u32> = [2].into_iter().collect();
+    let (_, query_id) = first_process.new_search(query, 1, 1, -1, &exclude).unwrap();
+    first_process.shutdown().unwrap();
+
+    let second_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let next = second_process
+        .get_next_k_items(query_id, 3, 1, -1, &HashSet::new())
+        .unwrap();
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1, 3, 4]
+    );
+}
+
 #[test]
 fn next_query_id_is_seeded_above_every_persisted_id_after_reload() {
     let store = write_ivf_style_fixture();

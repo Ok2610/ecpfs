@@ -12,7 +12,8 @@ fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)
     entries
 }
 
-/// Builds a query state with two queued nodes and two buffered items.
+/// Builds a query state with two queued nodes, two buffered items and two
+/// excluded ids.
 fn sample_state() -> QueryState {
     QueryState {
         query: array![1.0f32, 2.0, 3.0],
@@ -34,6 +35,15 @@ fn sample_state() -> QueryState {
             (NotNan::new(0.1).unwrap(), 42),
             (NotNan::new(0.9).unwrap(), 99),
         ],
+        exclude: [17, 3].into_iter().collect(),
+    }
+}
+
+/// Builds `sample_state` with no excluded ids.
+fn sample_state_without_exclude() -> QueryState {
+    QueryState {
+        exclude: HashSet::new(),
+        ..sample_state()
     }
 }
 
@@ -53,6 +63,34 @@ fn round_trip_preserves_non_empty_state() {
         heap_entries_sorted(&original.tree_pq)
     );
     assert_eq!(loaded.items, original.items);
+    assert_eq!(loaded.exclude, original.exclude);
+}
+
+#[test]
+fn exclude_set_is_saved_as_a_u32_array() {
+    let store = as_readable_writable_listable(&new_memory_store());
+
+    persist_query(&store, 5, &sample_state()).unwrap();
+
+    let mut saved = read_u32_array(&store, "/queries/5/exclude").unwrap();
+    saved.sort_unstable();
+    assert_eq!(saved, vec![3, 17]);
+}
+
+#[test]
+fn empty_exclude_set_writes_no_array_and_loads_back_empty() {
+    let store = as_readable_writable_listable(&new_memory_store());
+
+    persist_query(&store, 5, &sample_state_without_exclude()).unwrap();
+
+    assert!(matches!(
+        Array::open(store.clone(), "/queries/5/exclude"),
+        Err(ArrayCreateError::MissingMetadata)
+    ));
+    let loaded = load_query(&store, 5)
+        .unwrap()
+        .expect("just-persisted query must load");
+    assert!(loaded.exclude.is_empty());
 }
 
 #[test]
@@ -62,6 +100,7 @@ fn round_trip_preserves_items_only_state() {
         query: array![0.0f32, 0.0],
         tree_pq: BinaryHeap::new(),
         items: vec![(NotNan::new(0.3).unwrap(), 4)],
+        exclude: HashSet::new(),
     };
 
     persist_query(&store, 2, &original).unwrap();
@@ -83,6 +122,7 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
         query: array![9.0f32],
         tree_pq: BinaryHeap::new(),
         items: vec![(NotNan::new(1.0).unwrap(), 1)],
+        exclude: HashSet::new(),
     };
     persist_query(&store, 9, &smaller).unwrap();
     persist_query(&store, 10, &smaller).unwrap();
@@ -121,6 +161,7 @@ fn persist_or_erase_erases_an_empty_state() {
         query: array![0.0f32],
         tree_pq: BinaryHeap::new(),
         items: Vec::new(),
+        exclude: HashSet::new(),
     };
     persist_or_erase(&store, 6, &empty).unwrap();
 

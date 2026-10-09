@@ -177,8 +177,8 @@ impl Index {
                     let state = state.lock().unwrap();
                     (state.query.len() * size_of::<f32>()
                         + state.tree_pq.len() * size_of::<HeapEntry>()
-                        + state.items.len() * size_of::<(NotNan<f32>, u32)>())
-                        as u32
+                        + state.items.len() * size_of::<(NotNan<f32>, u32)>()
+                        + state.exclude.len() * size_of::<u32>()) as u32
                 },
             );
         }

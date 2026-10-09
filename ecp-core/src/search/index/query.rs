@@ -19,6 +19,20 @@ pub(super) struct QueryState {
     pub(super) tree_pq: BinaryHeap<HeapEntry>,
     /// Items found but not yet returned, as `(score, item_id)`, best first.
     pub(super) items: ScoredItems,
+    /// Item ids left out of every result, the union of each call's `exclude`.
+    pub(super) exclude: HashSet<u32>,
+}
+
+impl QueryState {
+    /// Adds `exclude` to the stored set and removes newly excluded ids from `items`.
+    fn add_exclude(&mut self, exclude: &HashSet<u32>) {
+        let before = self.exclude.len();
+        self.exclude.extend(exclude);
+        if self.exclude.len() > before {
+            let excluded = &self.exclude;
+            self.items.retain(|(_, id)| !excluded.contains(id));
+        }
+    }
 }
 
 /// A node waiting in a search's priority queue, ordered by `score`.
@@ -86,9 +100,9 @@ impl Index {
         }
     }
 
-    /// Searches for `query` and returns the `k` best items as `(score, item_id)` pairs,
-    /// lowest score first (L2 distance, or negated inner product for IP), plus the
-    /// query id for `get_next_k_items`. Other arguments: [`Self::incremental_search`].
+    /// Searches for `query` and returns the `k` best items as `(score, item_id)` pairs, lowest
+    /// score first (L2 distance, or negated inner product for IP), plus the query id. The query
+    /// keeps `exclude` and never returns those ids. Other arguments: [`Self::incremental_search`].
     pub fn new_search(
         &self,
         query: Array1<f32>,
@@ -111,10 +125,11 @@ impl Index {
                 query,
                 tree_pq: BinaryHeap::new(),
                 items: Vec::new(),
+                exclude: exclude.clone(),
             })),
         );
         let leaf_nodes_scanned =
-            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?;
+            self.incremental_search(query_id, k, search_exp, max_increments)?;
         let items = self.drain_items(query_id, k)?;
         log::info!(
             "search: query_id={query_id} k={k} leaf_nodes_scanned={leaf_nodes_scanned} items_returned={}",
@@ -124,8 +139,8 @@ impl Index {
     }
 
     /// Scores `search_exp` more leaves for query `query_id`, buffering their items
-    /// except those in `exclude`. If fewer than `k` items are buffered by then, it doubles
-    /// `search_exp` and goes on, at most `max_increments` times (`-1` for no limit).
+    /// except the query's excluded ids. If fewer than `k` items are buffered by then, it
+    /// doubles `search_exp` and goes on, at most `max_increments` times (`-1` for no limit).
     /// Returns how many leaves this call visited.
     pub fn incremental_search(
         &self,
@@ -133,7 +148,6 @@ impl Index {
         k: usize,
         search_exp: u32,
         max_increments: i32,
-        exclude: &HashSet<u32>,
     ) -> Result<u32> {
         // No-op after shutdown or for an unknown query_id
         if !self.accepting.load(Ordering::SeqCst) {
@@ -149,6 +163,7 @@ impl Index {
                 query,
                 tree_pq,
                 items,
+                exclude,
             } = &mut *state;
 
             // BinaryHeap pops the largest score first, so negate L2's distance
@@ -267,8 +282,8 @@ impl Index {
         Ok(leaf_cnt)
     }
 
-    /// Returns the next `k` items of query `query_id`, searching further first
-    /// if fewer are buffered; empty for an unknown `query_id` or after
+    /// Adds `exclude` to query `query_id`'s exclude set, then returns its next `k` items,
+    /// searching further first if fewer are buffered; empty for an unknown `query_id` or after
     /// `shutdown`. Other arguments: [`Self::incremental_search`].
     pub fn get_next_k_items(
         &self,
@@ -289,7 +304,8 @@ impl Index {
             return Ok(Vec::new());
         };
         let needs_more_search = {
-            let state = state_arc.lock().unwrap();
+            let mut state = state_arc.lock().unwrap();
+            state.add_exclude(exclude);
             log::debug!(
                 "get_next_k_items: query_id={query_id} k={k} search_exp={search_exp} \
                  max_increments={max_increments} exclude={exclude:?}"
@@ -297,7 +313,7 @@ impl Index {
             state.items.len() < k && !state.tree_pq.is_empty()
         };
         let leaf_nodes_scanned = if needs_more_search {
-            self.incremental_search(query_id, k, search_exp, max_increments, exclude)?
+            self.incremental_search(query_id, k, search_exp, max_increments)?
         } else {
             0
         };

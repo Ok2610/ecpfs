@@ -9,6 +9,18 @@ strict semantic versioning while the project stays below `0.10.0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `QueryState` now holds the exclude set, saved as `queries/Q/exclude`.
+  `get_next_k_items` no longer needs the exclude set on every call, only
+  ids to add to it. Added ids are also removed from the items found but
+  not yet returned.
+
+### Changed
+
+- `Index::incremental_search` in `ecp-core` no longer takes `exclude`,
+  since the query keeps its own set.
+
 ## [0.9.99] - 2026-09-29
 
 ### Added

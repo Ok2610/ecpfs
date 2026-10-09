@@ -351,7 +351,8 @@ struct SearchArgs {
     #[arg(long, default_value_t = -1)]
     max_increments: i32,
 
-    /// Item ids to leave out, comma-separated.
+    /// Item ids to leave out, comma-separated. With --resume, they are added to
+    /// the query's exclude set.
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<u32>,
 

@@ -149,7 +149,7 @@ continue the same query without starting over. :doc:`search-parameters` explains
          --max-increments <MAX_INCREMENTS>
              How many times to double --search-exp while fewer than --k items are found. -1 for no limit [default: -1]
          --exclude <EXCLUDE>
-             Item ids to leave out, comma-separated
+             Item ids to leave out, comma-separated. With --resume, they are added to the query's exclude set
          --memory-limit-gb <MEMORY_LIMIT_GB>
              Cap on the index data kept in memory, in GB. Defaults to 80% of RAM
          --resume <RESUME>

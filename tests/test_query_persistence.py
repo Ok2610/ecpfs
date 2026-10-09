@@ -46,6 +46,36 @@ def test_close_persists_a_buffered_query_for_a_fresh_index_to_resume(tmp_path):
     assert [item_id for _, item_id in second] == [1, 2]
 
 
+def test_a_resumed_query_keeps_the_ids_excluded_by_new_search(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    # new_search scans only leaf (0, 1), so item 2 in leaf (2, 3) is first
+    # reached by the resume, which passes an empty exclude_vec.
+    _, query_id = index.new_search(
+        query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[2]
+    )
+    index.close()
+
+    reloaded = ecpfs.Index(index_path)
+    resumed = reloaded.get_next_k_items(query_id, k=3, search_exp=1, max_increments=-1, exclude_vec=[])
+    assert [item_id for _, item_id in resumed] == [1, 3, 4]
+
+
+def test_an_id_excluded_by_get_next_k_items_is_removed_from_found_items(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    # new_search scans leaf (0, 1), adds items 0 and 1 to the query's items,
+    # and returns item 0.
+    _, query_id = index.new_search(
+        query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[]
+    )
+    next_items = index.get_next_k_items(query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[1])
+    assert [item_id for _, item_id in next_items] == [2, 3]
+    index.close()
+
+
 def test_cleanup_persisted_queries_older_than_erases_stale_entries(tmp_path):
     index_path = build_two_clusters_index(tmp_path)
     index = ecpfs.Index(index_path)

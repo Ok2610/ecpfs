@@ -1,4 +1,4 @@
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ndarray::Array1;
@@ -53,6 +53,11 @@ pub(super) fn persist_query(
     }
     write_f32_array(store, &format!("{base}/items_score"), items_score)?;
     write_u32_array(store, &format!("{base}/items_id"), items_id)?;
+
+    if !state.exclude.is_empty() {
+        let exclude: Vec<u32> = state.exclude.iter().copied().collect();
+        write_u32_array(store, &format!("{base}/exclude"), exclude)?;
+    }
 
     write_persisted_at(store, &format!("{base}/persisted_at"), now_unix_secs())
 }
@@ -164,10 +169,23 @@ pub(super) fn load_query(
         })
         .collect::<Result<_>>()?;
 
+    // A query saved with no excluded ids has no exclude array
+    let exclude_path = format!("{base}/exclude");
+    let exclude: HashSet<u32> = match Array::open(store.clone(), &exclude_path) {
+        Ok(_) => read_u32_array(store, &exclude_path)?.into_iter().collect(),
+        Err(ArrayCreateError::MissingMetadata) => HashSet::new(),
+        Err(e) => {
+            return Err(EcpError::Store(format!(
+                "failed to open {exclude_path}: {e}"
+            )));
+        }
+    };
+
     Ok(Some(QueryState {
         query,
         tree_pq,
         items,
+        exclude,
     }))
 }
 

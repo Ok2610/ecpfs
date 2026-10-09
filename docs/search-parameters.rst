@@ -32,9 +32,10 @@ buffer, and returns the best ``k`` items. The rest stay buffered for
    or the whole tree has been scanned.
 
 ``exclude_vec``
-   Item ids to leave out of the results. It applies to the leaf nodes scanned
-   in this call, so an item already buffered by an earlier call can still
-   come back.
+   Item ids to leave out of the results. The query keeps them as its exclude
+   set, also when it is saved and resumed, so ``get_next_k_items`` only needs
+   ids to add to the set. Added ids are also removed from the items found but
+   not yet returned.
 
 Example
 -------

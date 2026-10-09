@@ -94,8 +94,15 @@ affects new indexes only.
 Saved queries
 -------------
 
-``queries/`` is optional. ``queries/Q/`` holds query ``Q``'s saved state, written
-by ``close()`` or when the query is evicted from memory. It has the query vector (``query``), the queue
-of nodes still to visit (``tree_pq_score``, ``tree_pq_is_leaf``,
-``tree_pq_level``, ``tree_pq_node_id``), the buffered results (``items_score``,
-``items_id``) and the save time in Unix seconds (``persisted_at``).
+``queries/`` is optional. ``queries/Q/`` holds query ``Q``'s saved state,
+written by ``close()`` or when the query is evicted from memory.
+
+- ``query``, shape ``(dim,)``, float32: the query vector.
+- ``tree_pq_score`` (float32), ``tree_pq_is_leaf`` (int32), ``tree_pq_level``
+  and ``tree_pq_node_id`` (uint32), each shape ``(n,)``: the queue of nodes
+  still to visit, split into one array per field.
+- ``items_score`` (float32) and ``items_id`` (uint32), each shape ``(m,)``: the
+  items found but not yet returned.
+- ``exclude``, shape ``(e,)``, uint32, optional: the query's exclude set.
+  Written only when the set is not empty.
+- ``persisted_at`` (uint64): the save time in Unix seconds.

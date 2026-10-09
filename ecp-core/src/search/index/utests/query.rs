@@ -69,6 +69,45 @@ fn get_next_k_items_tops_up_a_partially_filled_buffer_below_k() {
     );
 }
 
+/// new_search excludes item 2, which sits in leaf (2, 3), and scans only leaf (0, 1).
+/// The resume scans leaf (2, 3) with an empty exclude, so item 2 stays out only if
+/// the query kept new_search's exclude.
+#[test]
+fn a_resumed_query_keeps_excluding_ids_given_to_new_search() {
+    let index = build_test_index();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let exclude: HashSet<u32> = [2].into_iter().collect();
+    let (_, query_id) = index.new_search(query, 1, 1, -1, &exclude).unwrap();
+
+    let next = index
+        .get_next_k_items(query_id, 3, 1, -1, &HashSet::new())
+        .unwrap();
+
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1, 3, 4]
+    );
+}
+
+/// new_search scans leaf (0, 1), adds items 0 and 1 to `items`, and returns item 0.
+/// get_next_k_items then excludes item 1, which must remove it from `items`.
+#[test]
+fn an_id_excluded_on_a_later_call_is_removed_from_items() {
+    let index = build_test_index();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let exclude: HashSet<u32> = [1].into_iter().collect();
+
+    let next = index
+        .get_next_k_items(query_id, 2, 1, -1, &exclude)
+        .unwrap();
+
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+}
+
 /// search_exp=1 explores 1 leaf (ids 0, 1), not enough for k=4. With
 /// max_increments=-1, search_exp doubles to 2 and a 2nd leaf (ids 2, 3)
 /// reaches k.
@@ -223,9 +262,7 @@ fn missing_query_id_returns_empty_instead_of_panicking() {
     assert!(items.is_empty());
 
     // A no-op, not a panic.
-    index
-        .incremental_search(999, 4, 4, -1, &HashSet::new())
-        .unwrap();
+    index.incremental_search(999, 4, 4, -1).unwrap();
 }
 
 /// `search_exp=4` against this 4-leaf fixture visits every leaf in one call.
@@ -239,12 +276,11 @@ fn incremental_search_returns_how_many_leaves_it_visited() {
             query: array![0.0, 0.0],
             tree_pq: BinaryHeap::new(),
             items: Vec::new(),
+            exclude: HashSet::new(),
         })),
     );
 
-    let leaf_nodes_scanned = index
-        .incremental_search(query_id, 4, 4, -1, &HashSet::new())
-        .unwrap();
+    let leaf_nodes_scanned = index.incremental_search(query_id, 4, 4, -1).unwrap();
     assert_eq!(leaf_nodes_scanned, 4);
 }
 

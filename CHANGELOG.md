@@ -7,7 +7,7 @@ Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is
 described in `CONTRIBUTING.md`'s Versioning section, and does not follow
 strict semantic versioning while the project stays below `0.10.0`.
 
-## [Unreleased]
+## [0.9.100] - 2026-10-29
 
 ### Added
 

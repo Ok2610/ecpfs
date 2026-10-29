@@ -331,11 +331,55 @@ impl Index {
         Ok(())
     }
 
+    /// Saves every open query to disk and drops it from memory, without stopping searches.
+    /// Returns `(flushed, failed)`; a query that fails to save stays in memory. A change another
+    /// call makes between a query's save and its drop is lost, so a resume may repeat items.
+    pub fn flush_queries(&self) -> (usize, usize) {
+        let mut flushed = 0;
+        let mut failed = 0;
+        for (query_id, state_arc) in self.queries.iter() {
+            let query_id = *query_id;
+            // Save it under its lock, skipping a query with nothing to save,
+            // such as a new_search that has not searched yet
+            {
+                let state = state_arc.lock().unwrap();
+                if state.tree_pq.is_empty() && state.items.is_empty() {
+                    continue;
+                }
+                if let Err(e) = persistence::persist_query(&self.store, query_id, &state) {
+                    log::error!("failed to persist query_id={query_id} on flush: {e}");
+                    failed += 1;
+                    continue;
+                }
+            }
+            // Drop it only if the cache still holds the state just saved. Done
+            // outside the lock, which an eviction during these calls also takes.
+            if self
+                .queries
+                .get(&query_id)
+                .is_some_and(|cached| Arc::ptr_eq(&cached, &state_arc))
+            {
+                self.queries.invalidate(&query_id);
+                flushed += 1;
+            }
+        }
+        log::info!("flush: saved {flushed} open queries, {failed} failed");
+        (flushed, failed)
+    }
+
     /// Erases every query saved to disk before `cutoff_unix_secs` (seconds
     /// since the Unix epoch). Returns how many were erased.
     pub fn cleanup_persisted_queries_older_than(&self, cutoff_unix_secs: u64) -> Result<usize> {
         let erased = persistence::cleanup_older_than(&self.store, cutoff_unix_secs)?;
         log::info!("cleanup: erased {erased} persisted queries older than {cutoff_unix_secs}");
+        Ok(erased)
+    }
+
+    /// Erases every query saved to disk. Returns how many were erased. Open
+    /// queries in memory are untouched, and are saved again on eviction or `shutdown`.
+    pub fn cleanup_persisted_queries(&self) -> Result<usize> {
+        let erased = persistence::erase_all(&self.store)?;
+        log::info!("cleanup: erased all {erased} persisted queries");
         Ok(erased)
     }
 

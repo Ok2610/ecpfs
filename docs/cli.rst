@@ -16,7 +16,7 @@ output; ``--help`` adds a longer description of each choice.
      add-data         Adds every vector in EMBEDDINGS_FILE to an existing index
      search           Searches an index for one query vector, or continues a saved query
      info             Prints an index's settings and item counts without loading its tree
-     cleanup-queries  Erases saved queries older than --older-than-hours
+     cleanup-queries  Erases saved queries older than --older-than-hours, or all of them with --all
      help             Print this message or the help of the given subcommand(s)
 
    Options:
@@ -189,16 +189,19 @@ cleanup-queries
 
 Unfinished queries saved by ``search`` stay in the index until someone resumes
 them. This erases the ones saved more than ``--older-than-hours`` ago, for
-example from a scheduled job:
+example from a scheduled job. ``--all`` erases every one of them instead:
 
 .. code-block:: bash
 
    # Erase anything saved more than a day ago.
    ecp cleanup-queries my_index.zarr --older-than-hours 24
 
+   # Erase every saved query.
+   ecp cleanup-queries my_index.zarr --all
+
 .. code-block:: text
 
-   Usage: ecp cleanup-queries [OPTIONS] --older-than-hours <OLDER_THAN_HOURS> <INDEX_PATH>
+   Usage: ecp cleanup-queries [OPTIONS] <INDEX_PATH>
 
    Arguments:
      <INDEX_PATH>  The index to clean up
@@ -206,6 +209,8 @@ example from a scheduled job:
    Options:
          --older-than-hours <OLDER_THAN_HOURS>
              Erase queries saved more than this many hours ago
+         --all
+             Erase every saved query
          --with-logging
              Log this run to a JSONL file
          --log-dir <LOG_DIR>

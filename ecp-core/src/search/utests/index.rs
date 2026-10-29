@@ -1,8 +1,9 @@
 use super::*;
 use crate::search::index::fixtures::{build_test_index, write_ivf_style_fixture};
 use crate::test_fixtures::{
-    as_readable_listable, as_readable_writable_listable, erase_info_field, new_memory_store,
-    write_index_info, write_index_root, write_info_u32, write_item_counts, write_rep_item_ids,
+    as_readable_listable, as_readable_writable_listable, as_store_failing_query_writes,
+    erase_info_field, new_memory_store, write_index_info, write_index_root, write_info_u32,
+    write_item_counts, write_rep_item_ids,
 };
 use ndarray::array;
 use std::collections::HashSet;
@@ -489,6 +490,136 @@ fn ended_searches_are_not_saved_when_the_query_cache_fills() {
     assert!(
         run_searches(true).is_empty(),
         "an ended query must never be saved, even when the query cache fills"
+    );
+}
+
+/// Each new_search returns item 0 and leaves item 1 in `items`.
+#[test]
+fn flush_queries_saves_every_open_query_and_empties_the_query_cache() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, first_id) = index
+        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .unwrap();
+    let (_, second_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+
+    assert_eq!(index.flush_queries(), (2, 0));
+    index.queries.run_pending_tasks();
+    assert_eq!(index.queries.entry_count(), 0);
+    for query_id in [first_id, second_id] {
+        assert!(
+            persistence::load_query(&index.store, query_id)
+                .unwrap()
+                .is_some(),
+            "query_id={query_id} must be saved"
+        );
+    }
+}
+
+#[test]
+fn a_flushed_query_resumes_and_new_searches_still_run() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index
+        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .unwrap();
+    index.flush_queries();
+
+    let next = index
+        .get_next_k_items(query_id, 1, 1, -1, &HashSet::new())
+        .unwrap();
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1],
+        "a flushed query must resume from disk"
+    );
+    let (fresh, _) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    assert_eq!(
+        fresh.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![0],
+        "the index must keep accepting searches after a flush"
+    );
+}
+
+/// Excluding every item leaves both `tree_pq` and `items` empty.
+#[test]
+fn flush_queries_leaves_a_query_with_nothing_to_save_in_memory() {
+    let index = build_test_index();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let exclude: HashSet<u32> = (0..8).collect();
+    index.new_search(query, 4, 4, -1, &exclude).unwrap();
+
+    assert_eq!(index.flush_queries(), (0, 0));
+    index.queries.run_pending_tasks();
+    assert_eq!(index.queries.entry_count(), 1);
+}
+
+#[test]
+fn a_query_that_fails_to_save_stays_in_memory() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_store_failing_query_writes(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+
+    assert_eq!(index.flush_queries(), (0, 1));
+    let next = index
+        .get_next_k_items(query_id, 1, 1, -1, &HashSet::new())
+        .unwrap();
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1],
+        "a query that failed to save must still resume from memory"
+    );
+}
+
+#[test]
+fn shutdown_returns_err_when_a_query_fails_to_save() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_store_failing_query_writes(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+
+    assert!(matches!(index.shutdown(), Err(EcpError::Store(_))));
+}
+
+#[test]
+fn cleanup_persisted_queries_erases_saved_queries_and_leaves_open_ones() {
+    let store = write_ivf_style_fixture();
+
+    let first_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, saved_id) = first_process
+        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .unwrap();
+    first_process.shutdown().unwrap();
+
+    let second_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let (_, open_id) = second_process
+        .new_search(query, 1, 1, -1, &HashSet::new())
+        .unwrap();
+
+    assert_eq!(second_process.cleanup_persisted_queries().unwrap(), 1);
+    assert!(
+        persistence::load_query(&second_process.store, saved_id)
+            .unwrap()
+            .is_none(),
+        "the saved query must be erased"
+    );
+    let next = second_process
+        .get_next_k_items(open_id, 1, 1, -1, &HashSet::new())
+        .unwrap();
+    assert_eq!(
+        next.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![1],
+        "a query in memory must survive the cleanup"
     );
 }
 

@@ -17,7 +17,9 @@ from .conftest import build_two_clusters_index
         ),
         lambda index: index.get_next_k_items(0, k=1, search_exp=1, max_increments=-1, exclude_vec=[]),
         lambda index: index.end_search(0),
+        lambda index: index.flush_queries(),
         lambda index: index.cleanup_persisted_queries_older_than(0.0),
+        lambda index: index.cleanup_persisted_queries(),
         lambda index: index.insert(embeddings=np.array([[0.0, 0.0]], dtype=np.float32)),
     ],
 )
@@ -60,6 +62,20 @@ def test_an_ended_query_is_not_saved_by_close(tmp_path):
     reloaded = ecpfs.Index(index_path)
     resumed = reloaded.get_next_k_items(query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[])
     assert resumed == [], "close must not save an ended query"
+
+
+def test_a_flushed_query_resumes_from_a_fresh_index_without_close(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    _, query_id = index.new_search(
+        query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[]
+    )
+    assert index.flush_queries() == (1, 0)
+
+    reloaded = ecpfs.Index(index_path)
+    resumed = reloaded.get_next_k_items(query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[])
+    assert [item_id for _, item_id in resumed] == [1, 2]
 
 
 def test_a_resumed_query_keeps_the_ids_excluded_by_new_search(tmp_path):
@@ -110,6 +126,21 @@ def test_cleanup_persisted_queries_older_than_erases_stale_entries(tmp_path):
     erased = reloaded.cleanup_persisted_queries_older_than(future_cutoff)
     assert erased == 1
 
+    resumed = reloaded.get_next_k_items(query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[])
+    assert resumed == [], "cleanup must have erased the query, nothing left to resume"
+
+
+def test_cleanup_persisted_queries_erases_every_saved_query(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    _, query_id = index.new_search(
+        query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[]
+    )
+    index.close()
+
+    reloaded = ecpfs.Index(index_path)
+    assert reloaded.cleanup_persisted_queries() == 1
     resumed = reloaded.get_next_k_items(query_id, k=2, search_exp=1, max_increments=-1, exclude_vec=[])
     assert resumed == [], "cleanup must have erased the query, nothing left to resume"
 

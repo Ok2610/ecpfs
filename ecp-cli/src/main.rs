@@ -446,7 +446,7 @@ fn info(args: InfoArgs) -> Result<()> {
     Ok(())
 }
 
-/// Erases saved queries older than --older-than-hours.
+/// Erases saved queries older than --older-than-hours, or all of them with --all.
 ///
 /// Without it, repeated searches keep filling the index with saved queries.
 #[derive(clap::Args)]
@@ -455,8 +455,12 @@ struct CleanupQueriesArgs {
     index_path: PathBuf,
 
     /// Erase queries saved more than this many hours ago.
+    #[arg(long, required_unless_present = "all", conflicts_with = "all")]
+    older_than_hours: Option<u64>,
+
+    /// Erase every saved query.
     #[arg(long)]
-    older_than_hours: u64,
+    all: bool,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -466,13 +470,17 @@ struct CleanupQueriesArgs {
 fn cleanup_queries(args: CleanupQueriesArgs) -> Result<()> {
     args.logging.init_if_requested()?;
     let index = Index::load(args.index_path, None)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after 1970")
-        .as_secs();
-    let cutoff = now.saturating_sub(args.older_than_hours * 3600);
-
-    let erased = index.cleanup_persisted_queries_older_than(cutoff)?;
+    // Without --older-than-hours, clap has required --all
+    let erased = match args.older_than_hours {
+        Some(hours) => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after 1970")
+                .as_secs();
+            index.cleanup_persisted_queries_older_than(now.saturating_sub(hours * 3600))?
+        }
+        None => index.cleanup_persisted_queries()?,
+    };
     println!(
         "erased {erased} persisted quer{}",
         if erased == 1 { "y" } else { "ies" }

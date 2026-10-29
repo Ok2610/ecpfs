@@ -6,9 +6,12 @@ use crate::format::FORMAT_VERSION;
 use ndarray::{Array1, Array2};
 use zarrs::array::data_type::{bool, float32, string, uint32};
 use zarrs::array::{ArrayBuilder, FillValueMetadata};
+use zarrs::storage::byte_range::ByteRangeIterator;
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{
-    ReadableListableStorage, ReadableWritableListableStorage, StorePrefix, WritableStorageTraits,
+    Bytes, ListableStorageTraits, MaybeBytesIterator, OffsetBytesIterator, ReadableListableStorage,
+    ReadableStorageTraits, ReadableWritableListableStorage, StorageError, StoreKey, StoreKeys,
+    StoreKeysPrefixes, StorePrefix, WritableStorageTraits,
 };
 
 /// Writes `children` as the node's `child_key` array (`node_ids` or `item_ids`).
@@ -172,4 +175,93 @@ pub fn as_readable_listable(store: &Arc<MemoryStore>) -> ReadableListableStorage
 /// Returns `store` as read-write zarr storage.
 pub fn as_readable_writable_listable(store: &Arc<MemoryStore>) -> ReadableWritableListableStorage {
     store.clone()
+}
+
+/// Returns `store` as read-write zarr storage whose writes under `queries/` fail.
+pub fn as_store_failing_query_writes(store: &Arc<MemoryStore>) -> ReadableWritableListableStorage {
+    Arc::new(FailingQueryWritesStore {
+        inner: store.clone(),
+    })
+}
+
+/// Passes every call to `inner`, except writes under `queries/`, which fail.
+struct FailingQueryWritesStore {
+    inner: Arc<MemoryStore>,
+}
+
+impl FailingQueryWritesStore {
+    /// Fails if `key` is under `queries/`.
+    fn refuse_query_key(key: &StoreKey) -> Result<(), StorageError> {
+        if key.as_str().starts_with("queries/") {
+            return Err(StorageError::Other(format!(
+                "refused write to {}",
+                key.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl ReadableStorageTraits for FailingQueryWritesStore {
+    fn get_partial_many<'a>(
+        &'a self,
+        key: &StoreKey,
+        byte_ranges: ByteRangeIterator<'a>,
+    ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+        self.inner.get_partial_many(key, byte_ranges)
+    }
+
+    fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+        self.inner.size_key(key)
+    }
+
+    fn supports_get_partial(&self) -> bool {
+        self.inner.supports_get_partial()
+    }
+}
+
+impl ListableStorageTraits for FailingQueryWritesStore {
+    fn list(&self) -> Result<StoreKeys, StorageError> {
+        self.inner.list()
+    }
+
+    fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
+        self.inner.list_prefix(prefix)
+    }
+
+    fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
+        self.inner.list_dir(prefix)
+    }
+
+    fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
+        self.inner.size_prefix(prefix)
+    }
+}
+
+impl WritableStorageTraits for FailingQueryWritesStore {
+    fn set(&self, key: &StoreKey, value: Bytes) -> Result<(), StorageError> {
+        Self::refuse_query_key(key)?;
+        self.inner.set(key, value)
+    }
+
+    fn set_partial_many(
+        &self,
+        key: &StoreKey,
+        offset_values: OffsetBytesIterator,
+    ) -> Result<(), StorageError> {
+        Self::refuse_query_key(key)?;
+        self.inner.set_partial_many(key, offset_values)
+    }
+
+    fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
+        self.inner.erase(key)
+    }
+
+    fn erase_prefix(&self, prefix: &StorePrefix) -> Result<(), StorageError> {
+        self.inner.erase_prefix(prefix)
+    }
+
+    fn supports_set_partial(&self) -> bool {
+        self.inner.supports_set_partial()
+    }
 }

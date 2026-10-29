@@ -62,6 +62,63 @@ fn a_tied_score_is_broken_toward_the_higher_representative_index() {
 }
 
 #[test]
+fn chunk_rows_for_covers_every_thread_but_never_drops_below_the_floor() {
+    assert_eq!(
+        chunk_rows_for(1000, 4),
+        MIN_ROWS_PER_CHUNK,
+        "250 per thread rounds up to the floor"
+    );
+    assert_eq!(
+        chunk_rows_for(10_000, 4),
+        2_500,
+        "2500 per thread clears the floor on its own"
+    );
+    assert_eq!(
+        chunk_rows_for(5, 64),
+        MIN_ROWS_PER_CHUNK,
+        "a tiny batch still gets one chunk"
+    );
+}
+
+/// `chunk_rows=2` forces 3 chunks over 5 data points, crossing a chunk
+/// boundary in the middle of representative 1's group, to check that
+/// stitching the per-chunk winners back together does not reorder or
+/// misassign anything at the seam.
+#[test]
+fn score_in_chunks_matches_the_single_chunk_result_across_chunk_boundaries() {
+    let representatives = array![[1.0f32, 0.0], [0.0, 1.0], [-1.0, 0.0]];
+    let data_points = array![
+        [1.0f32, 0.0], // rep 0
+        [0.0, 1.0],    // rep 1
+        [0.0, 2.0],    // rep 1, crosses the first chunk boundary
+        [-1.0, 0.0],   // rep 2
+        [1.0, 0.0],    // rep 0, crosses the second chunk boundary
+    ];
+
+    let chunked = score_in_chunks(&representatives, &data_points, Metric::IP, false, 2);
+    let whole = score_in_chunks(
+        &representatives,
+        &data_points,
+        Metric::IP,
+        false,
+        data_points.nrows(),
+    );
+
+    assert_eq!(chunked.to_vec(), vec![0, 1, 1, 2, 0]);
+    assert_eq!(chunked, whole);
+}
+
+#[test]
+fn score_in_chunks_handles_an_empty_batch() {
+    let representatives = array![[1.0f32, 0.0], [0.0, 1.0]];
+    let data_points = Array2::<f32>::zeros((0, 2));
+
+    let result = score_in_chunks(&representatives, &data_points, Metric::IP, false, 2);
+
+    assert_eq!(result.to_vec(), Vec::<u32>::new());
+}
+
+#[test]
 fn group_by_assignments_preserves_order_within_each_group_and_handles_empty_groups() {
     // best_ids = [0, 2, 0, 2, 2], num_reps = 3.
     //   groups (intuitive): [[0, 2], [], [1, 3, 4]]

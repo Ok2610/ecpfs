@@ -121,6 +121,16 @@ pub(super) fn cleanup_older_than(
     Ok(erased)
 }
 
+/// Erases every saved query under `/queries/`. Returns how many were erased.
+pub(super) fn erase_all(store: &ReadableWritableListableStorage) -> Result<usize> {
+    let erased = query_ids_on_disk(store)?.len();
+    let prefix = StorePrefix::new("queries/").expect("\"queries/\" is a valid prefix");
+    store
+        .erase_prefix(&prefix)
+        .store_err("failed to erase /queries")?;
+    Ok(erased)
+}
+
 /// Reads a saved query's state back. `Ok(None)` if that query was never
 /// saved, `Err` if the store or a saved value can't be read.
 pub(super) fn load_query(

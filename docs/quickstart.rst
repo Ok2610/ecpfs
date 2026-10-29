@@ -158,11 +158,23 @@ Persisting and resuming queries
 -------------------------------
 
 An ``Index`` keeps each query in flight, its position in the tree and its
-buffered results, in memory. A query reaches disk in two cases. ``close()``
-saves it, and so does evicting it from memory to stay under the memory limit.
-A query that was neither saved by ``close()`` nor evicted is lost when the
+buffered results, in memory. A query reaches disk in three cases:
+``close()``, ``flush_queries()``, and evicting it from memory to stay under
+the memory limit. A query not saved in one of these ways is lost when the
 process crashes or ``close()`` is never called. ``get_next_k_items`` then
 returns no items for its ``query_id``.
+
+End a query you will not resume with ``end_search``. It drops the query from
+memory without saving it and erases any saved copy. A program that runs many
+searches and ends none of them fills the 5% of the memory limit kept for
+queries, and from then on each new search evicts an older query and saves it
+to disk.
+
+``flush_queries`` saves every open query and drops it from memory without
+closing the index. It returns ``(flushed, failed)``, and a query that fails to
+save stays in memory. Searches keep running during a flush. If another thread
+changes a query between its save and its drop, that change is lost, and
+resuming the query may return the same items again.
 
 A saved query can be resumed from a new ``Index`` on the same path, in the
 same or another process, using the ``query_id`` the original ``new_search``
@@ -186,8 +198,9 @@ returned:
 
 A query with nothing left to explore or return is erased rather than saved,
 so finished queries do not accumulate on disk. One with results left stays
-on disk until a caller resumes it or ``cleanup_persisted_queries_older_than``
-erases it:
+on disk until a caller resumes it, or ``cleanup_persisted_queries_older_than``
+or ``cleanup_persisted_queries`` erases it. Neither touches queries still
+open in memory:
 
 .. code-block:: python
 
@@ -199,11 +212,15 @@ erases it:
        cutoff = (datetime.datetime.now() - datetime.timedelta(days=1)).timestamp()
        erased = index.cleanup_persisted_queries_older_than(cutoff)
 
+       # Erase every persisted query.
+       erased = index.cleanup_persisted_queries()
+
 The equivalent from the CLI, for a scheduled cleanup job:
 
 .. code-block:: bash
 
    ecp cleanup-queries my_index.zarr --older-than-hours 24
+   ecp cleanup-queries my_index.zarr --all
 
 Enabling logging
 ----------------

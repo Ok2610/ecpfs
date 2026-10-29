@@ -235,3 +235,15 @@ fn cleanup_older_than_erases_only_entries_older_than_the_cutoff() {
         "id=2 was persisted just now, must survive"
     );
 }
+
+#[test]
+fn erase_all_erases_every_saved_query_and_returns_the_count() {
+    let store = as_readable_writable_listable(&new_memory_store());
+    persist_query(&store, 1, &sample_state()).unwrap();
+    persist_query(&store, 2, &sample_state()).unwrap();
+
+    let erased = erase_all(&store).unwrap();
+
+    assert_eq!(erased, 2);
+    assert!(query_ids_on_disk(&store).unwrap().is_empty());
+}

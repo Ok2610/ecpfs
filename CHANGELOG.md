@@ -7,7 +7,19 @@ Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is
 described in `CONTRIBUTING.md`'s Versioning section, and does not follow
 strict semantic versioning while the project stays below `0.10.0`.
 
-## [Unreleased]
+## [0.9.100] - 2026-10-29
+
+### Added
+
+- `Index::end_search` in `ecp-core` and `end_search` in Python end a
+  search so it can't be resumed. The query leaves memory without being
+  saved, and any saved copy is erased.
+- `Index::flush_queries` in `ecp-core` and `flush_queries` in Python save
+  every open query to disk and drop it from memory, without closing the
+  index. They return `(flushed, failed)`.
+- `Index::cleanup_persisted_queries` in `ecp-core`,
+  `cleanup_persisted_queries` in Python and `ecp cleanup-queries --all`
+  erase every saved query.
 
 ### Fixed
 

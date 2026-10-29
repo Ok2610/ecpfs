@@ -123,6 +123,27 @@ impl IndexWrapper {
             .collect())
     }
 
+    /// end_search(query_id)
+    ///
+    /// Ends a search so it can't be resumed. Drops the query from memory without
+    /// saving it and erases any saved copy. A no-op for an unknown ``query_id``.
+    fn end_search(&self, py: Python<'_>, query_id: usize) -> PyResult<()> {
+        self.check_not_closed()?;
+        py.detach(|| self.inner.end_search(query_id))
+            .map_err(to_pyerr)
+    }
+
+    /// flush_queries()
+    ///
+    /// Saves every open query to disk and drops it from memory, without closing the
+    /// index. Returns ``(flushed, failed)``; a query that fails to save stays in
+    /// memory. A change another thread makes between a query's save and its drop is
+    /// lost, so a resume may repeat items.
+    fn flush_queries(&self, py: Python<'_>) -> PyResult<(usize, usize)> {
+        self.check_not_closed()?;
+        Ok(py.detach(|| self.inner.flush_queries()))
+    }
+
     /// insert(embeddings)
     ///
     /// Adds each row of ``embeddings`` to its nearest leaf and returns the new ids
@@ -153,6 +174,16 @@ impl IndexWrapper {
                 .cleanup_persisted_queries_older_than(cutoff_unix_secs as u64)
         })
         .map_err(to_pyerr)
+    }
+
+    /// cleanup_persisted_queries()
+    ///
+    /// Erases every query saved to disk. Returns how many were erased. Open queries
+    /// in memory are untouched, and are saved again on eviction or ``close``.
+    fn cleanup_persisted_queries(&self, py: Python<'_>) -> PyResult<usize> {
+        self.check_not_closed()?;
+        py.detach(|| self.inner.cleanup_persisted_queries())
+            .map_err(to_pyerr)
     }
 
     /// close()

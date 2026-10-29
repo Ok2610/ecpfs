@@ -103,3 +103,37 @@ fn chunk_sizes_are_limited_to_what_fits_in_bytes() {
         assert_eq!(err.kind(), ErrorKind::ValueValidation, "{flag}: {err}");
     }
 }
+
+/// `--all` replaces `--older-than-hours`.
+#[test]
+fn cleanup_queries_accepts_all_instead_of_older_than_hours() {
+    let cli = Cli::try_parse_from(["ecp", "cleanup-queries", "my_index.zarr", "--all"]).unwrap();
+    let Command::CleanupQueries(args) = cli.command else {
+        panic!("expected the cleanup-queries subcommand");
+    };
+    assert!(args.all);
+    assert_eq!(args.older_than_hours, None);
+}
+
+/// cleanup-queries needs exactly one of `--all` and `--older-than-hours`.
+#[test]
+fn cleanup_queries_needs_exactly_one_of_all_and_older_than_hours() {
+    let neither = Cli::try_parse_from(["ecp", "cleanup-queries", "my_index.zarr"]);
+    let Err(err) = neither else {
+        panic!("neither flag was accepted");
+    };
+    assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+
+    let both = Cli::try_parse_from([
+        "ecp",
+        "cleanup-queries",
+        "my_index.zarr",
+        "--all",
+        "--older-than-hours",
+        "24",
+    ]);
+    let Err(err) = both else {
+        panic!("both flags were accepted");
+    };
+    assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+}

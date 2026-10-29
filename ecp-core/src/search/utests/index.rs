@@ -400,6 +400,98 @@ fn repersisting_after_more_progress_reflects_the_latest_state() {
     );
 }
 
+/// new_search returns item 0 and leaves item 1 in `items`, so without
+/// end_search, `shutdown` would save the query.
+#[test]
+fn end_search_drops_the_query_without_saving_it() {
+    let store = write_ivf_style_fixture();
+
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    index.end_search(query_id).unwrap();
+
+    let next = index
+        .get_next_k_items(query_id, 1, 1, -1, &HashSet::new())
+        .unwrap();
+    assert!(next.is_empty(), "an ended query must return nothing");
+    index.shutdown().unwrap();
+    assert!(
+        persistence::load_query(&index.store, query_id)
+            .unwrap()
+            .is_none(),
+        "shutdown must not save an ended query"
+    );
+}
+
+#[test]
+fn end_search_erases_a_saved_query() {
+    let store = write_ivf_style_fixture();
+
+    let first_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    let query: Array1<f32> = array![0.0, 0.0];
+    let (_, query_id) = first_process
+        .new_search(query, 1, 1, -1, &HashSet::new())
+        .unwrap();
+    first_process.shutdown().unwrap();
+    assert!(
+        persistence::load_query(&first_process.store, query_id)
+            .unwrap()
+            .is_some(),
+        "sanity check: shutdown must save the query"
+    );
+
+    let second_process =
+        Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+    second_process.end_search(query_id).unwrap();
+
+    assert!(
+        persistence::load_query(&second_process.store, query_id)
+            .unwrap()
+            .is_none(),
+        "end_search must erase the saved query"
+    );
+}
+
+#[test]
+fn end_search_on_an_unknown_query_id_is_a_no_op() {
+    let index = build_test_index();
+
+    assert!(index.end_search(42).is_ok());
+}
+
+/// Each query's state takes 72 bytes and the query cache gets 150 (5% of
+/// 3,000), so ten searches evict and save all but two unless each is ended.
+#[test]
+fn ended_searches_are_not_saved_when_the_query_cache_fills() {
+    let query: Array1<f32> = array![0.0, 0.0];
+    let run_searches = |end_each: bool| {
+        let store = write_ivf_style_fixture();
+        let index =
+            Index::load_from_store(as_readable_writable_listable(&store), Some(3000)).unwrap();
+        for _ in 0..10 {
+            let (_, query_id) = index
+                .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+                .unwrap();
+            if end_each {
+                index.end_search(query_id).unwrap();
+            }
+        }
+        index.queries.run_pending_tasks();
+        persistence::query_ids_on_disk(&index.store).unwrap()
+    };
+
+    assert!(
+        !run_searches(false).is_empty(),
+        "sanity check: without end_search, a full query cache saves queries"
+    );
+    assert!(
+        run_searches(true).is_empty(),
+        "an ended query must never be saved, even when the query cache fills"
+    );
+}
+
 #[test]
 fn insert_invalidates_exactly_the_touched_cache_entry() {
     let index = build_test_index();

@@ -164,6 +164,12 @@ A query that was neither saved by ``close()`` nor evicted is lost when the
 process crashes or ``close()`` is never called. ``get_next_k_items`` then
 returns no items for its ``query_id``.
 
+End a query you will not resume with ``end_search``. It drops the query from
+memory without saving it and erases any saved copy. A program that runs many
+searches and ends none of them fills the 5% of the memory limit kept for
+queries, and from then on each new search evicts an older query and saves it
+to disk.
+
 A saved query can be resumed from a new ``Index`` on the same path, in the
 same or another process, using the ``query_id`` the original ``new_search``
 returned:

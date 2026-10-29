@@ -123,6 +123,16 @@ impl IndexWrapper {
             .collect())
     }
 
+    /// end_search(query_id)
+    ///
+    /// Ends a search so it can't be resumed. Drops the query from memory without
+    /// saving it and erases any saved copy. A no-op for an unknown ``query_id``.
+    fn end_search(&self, py: Python<'_>, query_id: usize) -> PyResult<()> {
+        self.check_not_closed()?;
+        py.detach(|| self.inner.end_search(query_id))
+            .map_err(to_pyerr)
+    }
+
     /// insert(embeddings)
     ///
     /// Adds each row of ``embeddings`` to its nearest leaf and returns the new ids

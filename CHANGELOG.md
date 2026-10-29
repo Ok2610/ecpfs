@@ -9,6 +9,12 @@ strict semantic versioning while the project stays below `0.10.0`.
 
 ## [Unreleased]
 
+### Added
+
+- `Index::end_search` in `ecp-core` and `end_search` in Python end a
+  search so it can't be resumed. The query leaves memory without being
+  saved, and any saved copy is erased.
+
 ### Fixed
 
 - `QueryState` now holds the exclude set, saved as `queries/Q/exclude`.

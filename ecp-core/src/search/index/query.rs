@@ -324,6 +324,13 @@ impl Index {
         );
         Ok(items)
     }
+
+    /// Ends a search so it can't be resumed. Drops the query's state from memory
+    /// without saving it and erases any saved copy. A no-op for an unknown `query_id`.
+    pub fn end_search(&self, query_id: usize) -> Result<()> {
+        self.queries.invalidate(&query_id);
+        persistence::erase_query(&self.store, query_id)
+    }
 }
 
 #[cfg(test)]

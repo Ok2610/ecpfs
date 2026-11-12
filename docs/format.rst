@@ -70,8 +70,8 @@ Level ``N`` of the tree lives under ``lvl_N/``, with one group per node.
 
 ``n`` differs from node to node, since eCP does not enforce cluster sizes. A node
 that received no children during the build is never written, so node ids on a
-level can have gaps. Its parent still lists it, so a reader skips a listed node
-that has no group on disk.
+level can have gaps. The parent's ``node_ids`` still lists such a node, so code
+that loads or searches the index skips a listed node with no group on disk.
 
 Embeddings arrays are stored as ``float32``, ``float16``, ``uint8`` or ``int8``,
 chosen at build time with ``EmbeddingDtype``. Every read widens them to

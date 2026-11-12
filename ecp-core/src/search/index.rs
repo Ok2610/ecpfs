@@ -58,9 +58,8 @@ pub struct Index {
     /// or appended to, so a search never reads a leaf in the middle of an
     /// insert's append. zarrs leaves that to its callers.
     leaf_locks: DashMap<u32, Arc<RwLock<()>>>,
-    /// `(level, node_id)` of internal nodes `insert` found never written, with
-    /// `level` 1-based. The build never adds internal nodes afterwards, so it
-    /// only grows.
+    /// Holds the `(level, node_id)` of each internal node the build never wrote,
+    /// as `insert` finds them, with `level` 1-based.
     missing_nodes: DashSet<(u32, u32)>,
     /// The id `insert` gives the next item. Only ever increases; it runs
     /// ahead of `total_items` when a crash stops an insert between taking

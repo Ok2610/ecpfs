@@ -752,8 +752,7 @@ fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
 }
 
 /// An IP index whose `lvl_1/node_1` was never written, as the build leaves it
-/// when representative 1 scores higher against representative 0 than against
-/// itself. The inserted vector scores highest against root entry 1, so it must
+/// when root entry 1 scores higher against root entry 0 than against itself. The inserted vector scores highest against root entry 1, so it must
 /// fall back to root entry 0 and land in leaf `lvl_2/node_1`.
 #[test]
 fn insert_routes_past_a_never_written_internal_node() {

@@ -89,8 +89,8 @@ pub(crate) struct BuildConfig<'a> {
     /// read the index yet, as during a build.
     pub(crate) leaf_locks: Option<&'a DashMap<u32, Arc<RwLock<()>>>>,
 
-    /// `(level, node_idx)` of nodes above the target level found never written,
-    /// so routing skips them without reading them again.
+    /// Holds the `(level, node_idx)` of each node the build never wrote.
+    /// Routing skips these without reading them again.
     pub(crate) missing: &'a DashSet<(u32, u32)>,
 }
 
@@ -112,9 +112,9 @@ where
     Ok(per_index.into_iter().flatten().collect())
 }
 
-/// `determine_node_assignments` against a parent's children, skipping any
-/// child never written. Above the target level, each child given vectors is
-/// read first; one never written is recorded, masked and the batch scored again.
+/// Assigns each data vector to its nearest child, masking any the build never
+/// wrote and scoring the batch again. Children on the level being written are
+/// not checked, since the write creates them.
 fn assign_to_written_children(
     config: &BuildConfig,
     parent: &str,
@@ -151,7 +151,7 @@ fn assign_to_written_children(
             return Ok((offsets, assignment));
         }
 
-        // Read each child given vectors, keeping the never-written ones
+        // Read each child assigned vectors, keeping the never-written ones
         let is_missing = |child: usize| -> Result<Option<usize>> {
             if offsets[child] == offsets[child + 1] {
                 return Ok(None);
@@ -227,7 +227,6 @@ fn route_batch_to_node(
     }
 
     // Above the target level, split the batch by nearest child and recurse into each
-    // (its parent's assign_to_written_children already found it written)
     let entry = config
         .node_cache
         .get_or_read(config.store, &group_path)?

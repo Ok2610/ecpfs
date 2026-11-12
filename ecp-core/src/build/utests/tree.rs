@@ -134,9 +134,9 @@ fn leaf_item_ids(store: &ReadableWritableListableStorage, level: u32, node_count
     ids
 }
 
-/// Under IP, representative 1 scores higher against representative 0 than
-/// against itself, so `lvl_1/node_1` is never written. Item 0 still scores
-/// highest against root entry 1 and must fall back to root entry 0.
+/// Under IP, root entry 1 scores higher against root entry 0 than against
+/// itself, so `lvl_1/node_1` is never written. Item 0 still scores highest
+/// against root entry 1 and must fall back to root entry 0.
 #[test]
 fn build_tree_routes_past_a_never_written_internal_node() {
     let store = new_memory_store();
@@ -149,10 +149,10 @@ fn build_tree_routes_past_a_never_written_internal_node() {
     assert_eq!(leaf_item_ids(&store, 2, 4), vec![0, 1]);
 }
 
-/// The never-written nodes sit on level 2 of 3: representatives 2 and 3 are
-/// children of `lvl_1/node_0`, but no level-2 vector scores highest against
-/// either. Item 0 scores highest against representative 2, then 3, so it
-/// must fall back twice before reaching `lvl_2/node_0`.
+/// Representatives 2 and 3 are children of `lvl_1/node_0`, but no level-2
+/// vector scores highest against either, so `lvl_2/node_2` and `lvl_2/node_3`
+/// are never written. Item 0 scores highest against representative 2, then 3,
+/// so it must fall back twice before reaching `lvl_2/node_0`.
 #[test]
 fn build_tree_falls_back_past_never_written_nodes_below_level_one() {
     let store = new_memory_store();

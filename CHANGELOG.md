@@ -7,6 +7,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is
 described in `CONTRIBUTING.md`'s Versioning section, and does not follow
 strict semantic versioning while the project stays below `0.10.0`.
 
+## [0.9.101] - 2026-11-12
+
+### Fixed
+
+- `Builder.build()` and `insert` no longer fail with "has no embeddings
+  or children on disk" on IP indexes over unnormalized vectors. Such a
+  representative can score higher against another root entry than its
+  own, so its node is never written while its parent still lists it.
+  Routing now skips a child that was never written and sends its
+  vectors to the best child that was.
+- Search logs a skipped, never-written node at DEBUG instead of WARN.
+
 ## [0.9.100] - 2026-10-29
 
 ### Added

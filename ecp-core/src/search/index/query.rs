@@ -206,7 +206,7 @@ impl Index {
                 let embeddings_f32: &Array2<f32> = match node.embeddings()? {
                     Some(embs) => embs,
                     None => {
-                        log::warn!("lvl={lvl} node={node_id} has no embeddings on disk, skipping");
+                        log::debug!("lvl={lvl} node={node_id} has no embeddings on disk, skipping");
                         continue;
                     }
                 };

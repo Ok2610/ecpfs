@@ -3,7 +3,7 @@ use crate::search::index::fixtures::{build_test_index, write_ivf_style_fixture};
 use crate::test_fixtures::{
     as_readable_listable, as_readable_writable_listable, as_store_failing_query_writes,
     erase_info_field, new_memory_store, write_index_info, write_index_root, write_info_u32,
-    write_item_counts, write_rep_item_ids,
+    write_item_counts, write_node, write_rep_item_ids,
 };
 use ndarray::array;
 use std::collections::HashSet;
@@ -749,4 +749,43 @@ fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
             "every concurrently inserted item plus the original leaf contents must be present, with no duplicates or losses"
         );
     }
+}
+
+/// An IP index whose `lvl_1/node_1` was never written, as the build leaves it
+/// when root entry 1 scores higher against root entry 0 than against itself. The inserted vector scores highest against root entry 1, so it must
+/// fall back to root entry 0 and land in leaf `lvl_2/node_1`.
+#[test]
+fn insert_routes_past_a_never_written_internal_node() {
+    let store = new_memory_store();
+    write_index_info(&store, 2, "IP", false);
+    write_item_counts(&store, 2);
+    write_index_root(&store, &array![[10.0f32, 0.0], [1.0, 0.1]]);
+    write_node(
+        &store,
+        "/lvl_1/node_0",
+        &array![[10.0f32, 0.0], [1.0, 0.1], [5.0, 1.0], [2.0, 1.0]],
+        "node_ids",
+        &array![0u32, 1, 2, 3],
+    );
+    write_node(
+        &store,
+        "/lvl_2/node_0",
+        &array![[10.0f32, 0.0]],
+        "item_ids",
+        &array![0u32],
+    );
+    write_node(
+        &store,
+        "/lvl_2/node_2",
+        &array![[5.0f32, 1.0]],
+        "item_ids",
+        &array![1u32],
+    );
+    let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
+
+    let ids = index.insert(array![[-1.0f32, 1.0]]).unwrap();
+
+    assert_eq!(ids, 2..3);
+    let leaf = index.node_at(1, 1);
+    assert_eq!(leaf.children().unwrap().unwrap().to_vec(), vec![2]);
 }

@@ -19,13 +19,21 @@ fn chunk_rows_for(num_rows: usize, num_threads: usize) -> usize {
 /// Decides which node each data vector belongs to. Finds the nearest row of
 /// `node_embeddings` for each row of `data_embeddings`, then groups the rows by
 /// node into `(offsets, data)`. Node `n`'s rows are `data[offsets[n]..offsets[n+1]]`.
+/// Rows of `node_embeddings` listed in `masked` are never picked.
 pub fn determine_node_assignments(
     node_embeddings: &Array2<f32>,
     data_embeddings: &Array2<f32>,
     metric: Metric,
     is_normalized: bool,
+    masked: &[usize],
 ) -> (Array1<u32>, Array1<u32>) {
-    let best_ids = assign_to_nearest(node_embeddings, data_embeddings, metric, is_normalized);
+    let best_ids = assign_to_nearest(
+        node_embeddings,
+        data_embeddings,
+        metric,
+        is_normalized,
+        masked,
+    );
     group_by_assignments(node_embeddings.nrows(), &best_ids)
 }
 
@@ -37,6 +45,7 @@ fn assign_to_nearest(
     data_embeddings: &Array2<f32>,
     metric: Metric,
     is_normalized: bool,
+    masked: &[usize],
 ) -> Array1<u32> {
     let chunk_rows = chunk_rows_for(data_embeddings.nrows(), rayon::current_num_threads());
     score_in_chunks(
@@ -44,6 +53,7 @@ fn assign_to_nearest(
         data_embeddings,
         metric,
         is_normalized,
+        masked,
         chunk_rows,
     )
 }
@@ -57,13 +67,14 @@ fn score_in_chunks(
     data_embeddings: &Array2<f32>,
     metric: Metric,
     is_normalized: bool,
+    masked: &[usize],
     chunk_rows: usize,
 ) -> Array1<u32> {
     let chunk_results: Vec<Array1<u32>> = data_embeddings
         .axis_chunks_iter(Axis(0), chunk_rows)
         .collect::<Vec<_>>()
         .into_par_iter()
-        .map(|chunk| score_chunk(node_embeddings, chunk, metric, is_normalized))
+        .map(|chunk| score_chunk(node_embeddings, chunk, metric, is_normalized, masked))
         .collect();
 
     Array1::from_iter(chunk_results.into_iter().flatten())
@@ -76,13 +87,17 @@ fn score_chunk(
     data_chunk: ArrayView2<f32>,
     metric: Metric,
     is_normalized: bool,
+    masked: &[usize],
 ) -> Array1<u32> {
-    let scores: Array2<f32> = match metric {
+    let mut scores: Array2<f32> = match metric {
         Metric::IP => node_embeddings.dot(&data_chunk.t()),
         // For unit vectors, nearest-by-L2 and highest-by-dot-product agree.
         Metric::L2 if is_normalized => node_embeddings.dot(&data_chunk.t()),
         Metric::L2 => negative_squared_distances(node_embeddings, &data_chunk.to_owned()),
     };
+    for &row in masked {
+        scores.row_mut(row).fill(f32::NEG_INFINITY);
+    }
     argmax_axis0(&scores)
 }
 

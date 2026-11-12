@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use ndarray::Array1;
 use ndarray::Array2;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use moka::sync::Cache;
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
@@ -58,6 +58,10 @@ pub struct Index {
     /// or appended to, so a search never reads a leaf in the middle of an
     /// insert's append. zarrs leaves that to its callers.
     leaf_locks: DashMap<u32, Arc<RwLock<()>>>,
+    /// `(level, node_id)` of internal nodes `insert` found never written, with
+    /// `level` 1-based. The build never adds internal nodes afterwards, so it
+    /// only grows.
+    missing_nodes: DashSet<(u32, u32)>,
     /// The id `insert` gives the next item. Only ever increases; it runs
     /// ahead of `total_items` when a crash stops an insert between taking
     /// ids and writing the items.
@@ -143,6 +147,7 @@ impl Index {
             memory_limit_bytes,
             accepting: AtomicBool::new(true),
             leaf_locks: DashMap::new(),
+            missing_nodes: DashSet::new(),
             next_item_id: Mutex::new(next_item_id),
             total_items: Mutex::new(total_items),
         })
@@ -417,6 +422,7 @@ impl Index {
             chunk_shape: &chunk_shape,
             embedding_dtype,
             leaf_locks: Some(&self.leaf_locks),
+            missing: &self.missing_nodes,
         };
 
         // Take the next ids and save the new next_item_id under one lock, so

@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use moka::sync::Cache;
 use ndarray::{Array1, Array2, Axis, s};
 use rayon::prelude::*;
@@ -42,27 +42,34 @@ impl NodeCache {
     }
 
     /// Gets a node's representatives and children, reading from disk only on a cache miss.
+    /// `Ok(None)` if the node was never written.
     fn get_or_read(
         &self,
         store: &ReadableWritableListableStorage,
         group_path: &str,
-    ) -> Result<CachedNode> {
-        self.cache
-            .try_get_with(group_path.to_string(), || {
+    ) -> Result<Option<CachedNode>> {
+        // `Err(None)` carries a never-written node out, since only successes are cached
+        let read: std::result::Result<CachedNode, Arc<Option<EcpError>>> =
+            self.cache.try_get_with(group_path.to_string(), || {
                 let read_store: ReadableListableStorage = store.clone().readable_listable();
                 let node = Node::new(read_store, group_path.to_string(), "node_ids".to_string());
-                // Either the build never wrote this node, or an insert routed
-                // into a branch the build left empty.
-                let missing = || {
-                    EcpError::Corrupt(format!(
-                        "{group_path} has no embeddings or children on disk"
-                    ))
+                let Some(representatives) = node.embeddings().map_err(Some)? else {
+                    return Err(None);
                 };
-                let representatives = node.embeddings()?.ok_or_else(missing)?.clone();
-                let child_ids = node.children()?.ok_or_else(missing)?.clone();
-                Ok::<CachedNode, EcpError>(Arc::new((representatives, child_ids)))
-            })
-            .map_err(|e: Arc<EcpError>| (*e).clone())
+                let child_ids = node.children().map_err(Some)?.ok_or_else(|| {
+                    Some(EcpError::Corrupt(format!(
+                        "{group_path} has embeddings but no children, likely an interrupted write"
+                    )))
+                })?;
+                Ok(Arc::new((representatives.clone(), child_ids.clone())))
+            });
+        match read {
+            Ok(entry) => Ok(Some(entry)),
+            Err(e) => match &*e {
+                None => Ok(None),
+                Some(err) => Err(err.clone()),
+            },
+        }
     }
 }
 
@@ -81,6 +88,10 @@ pub(crate) struct BuildConfig<'a> {
     /// Per-leaf locks, taken around each write. `None` when nothing else can
     /// read the index yet, as during a build.
     pub(crate) leaf_locks: Option<&'a DashMap<u32, Arc<RwLock<()>>>>,
+
+    /// `(level, node_idx)` of nodes above the target level found never written,
+    /// so routing skips them without reading them again.
+    pub(crate) missing: &'a DashSet<(u32, u32)>,
 }
 
 /// Calls `process(i)` for each `i` in `0..count` in parallel and collects the results.
@@ -99,6 +110,76 @@ where
             .collect::<Result<_>>()?
     };
     Ok(per_index.into_iter().flatten().collect())
+}
+
+/// `determine_node_assignments` against a parent's children, skipping any
+/// child never written. Above the target level, each child given vectors is
+/// read first; one never written is recorded, masked and the batch scored again.
+fn assign_to_written_children(
+    config: &BuildConfig,
+    parent: &str,
+    child_level: u32,
+    representatives: &Array2<f32>,
+    child_id: impl Fn(usize) -> u32 + Sync,
+    data_embeddings: &Array2<f32>,
+) -> Result<(Array1<u32>, Array1<u32>)> {
+    let checks_children = child_level < config.target_level;
+
+    // Mask children already known to be never written
+    let mut masked: Vec<usize> = if checks_children && !config.missing.is_empty() {
+        (0..representatives.nrows())
+            .filter(|&child| config.missing.contains(&(child_level, child_id(child))))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    loop {
+        if masked.len() == representatives.nrows() {
+            return Err(EcpError::Corrupt(format!(
+                "{parent} has no child written on disk"
+            )));
+        }
+        let (offsets, assignment) = determine_node_assignments(
+            representatives,
+            data_embeddings,
+            config.metric,
+            config.is_normalized,
+            &masked,
+        );
+        if !checks_children {
+            return Ok((offsets, assignment));
+        }
+
+        // Read each child given vectors, keeping the never-written ones
+        let is_missing = |child: usize| -> Result<Option<usize>> {
+            if offsets[child] == offsets[child + 1] {
+                return Ok(None);
+            }
+            let path = format!("/lvl_{child_level}/node_{}", child_id(child));
+            let node = config.node_cache.get_or_read(config.store, &path)?;
+            Ok(node.is_none().then_some(child))
+        };
+        let children = 0..representatives.nrows();
+        let found: Vec<Option<usize>> = if config.leaf_locks.is_some() {
+            children.map(is_missing).collect::<Result<_>>()?
+        } else {
+            children
+                .into_par_iter()
+                .map(is_missing)
+                .collect::<Result<_>>()?
+        };
+        let newly_missing: Vec<usize> = found.into_iter().flatten().collect();
+        if newly_missing.is_empty() {
+            return Ok((offsets, assignment));
+        }
+
+        // Record and mask them, then score again
+        for &child in &newly_missing {
+            config.missing.insert((child_level, child_id(child)));
+        }
+        masked.extend(newly_missing);
+    }
 }
 
 /// Routes a batch of vectors that belong under node `node_idx` at `level` down
@@ -146,15 +227,21 @@ fn route_batch_to_node(
     }
 
     // Above the target level, split the batch by nearest child and recurse into each
-    let entry = config.node_cache.get_or_read(config.store, &group_path)?;
+    // (its parent's assign_to_written_children already found it written)
+    let entry = config
+        .node_cache
+        .get_or_read(config.store, &group_path)?
+        .ok_or_else(|| EcpError::Corrupt(format!("{group_path} has no embeddings on disk")))?;
     let (representatives, child_ids) = (&entry.0, &entry.1);
 
-    let (offsets, assignment) = determine_node_assignments(
+    let (offsets, assignment) = assign_to_written_children(
+        config,
+        &group_path,
+        level + 1,
         representatives,
+        |child| child_ids[child],
         data_embeddings,
-        config.metric,
-        config.is_normalized,
-    );
+    )?;
 
     fan_out(
         representatives.nrows(),
@@ -192,12 +279,15 @@ pub(crate) fn add_data(
     data_embeddings: &Array2<f32>,
     data_ids: &Array1<u32>,
 ) -> Result<Vec<(u32, u32)>> {
-    let (offsets, assignment) = determine_node_assignments(
+    // Root entry `i` leads to `/lvl_1/node_i`
+    let (offsets, assignment) = assign_to_written_children(
+        config,
+        "/index_root",
+        1,
         root_embeddings,
+        |child| child as u32,
         data_embeddings,
-        config.metric,
-        config.is_normalized,
-    );
+    )?;
 
     fan_out(
         root_embeddings.nrows(),
@@ -288,6 +378,7 @@ pub fn build_tree(args: &BuildTreeArgs) -> Result<()> {
     }
     let memory_floor_vecs = (batch_share / bytes_per_vec).max(1);
     let node_cache = NodeCache::new(cache_capacity as u64);
+    let missing = DashSet::new();
 
     for target_level in 1..=total_levels {
         build_group(store, &format!("/lvl_{target_level}"))?;
@@ -316,6 +407,7 @@ pub fn build_tree(args: &BuildTreeArgs) -> Result<()> {
             chunk_shape,
             embedding_dtype,
             leaf_locks: None,
+            missing: &missing,
         };
 
         // Row indices are item ids on the leaf level, and representative ids

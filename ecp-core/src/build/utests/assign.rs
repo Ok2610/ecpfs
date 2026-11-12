@@ -8,7 +8,7 @@ fn ip_assigns_each_data_point_to_the_highest_dot_product_representative() {
     let data_points = array![[2.0f32, 0.0], [0.0, 3.0], [0.9, 1.1]];
 
     let (offsets, data) =
-        determine_node_assignments(&representatives, &data_points, Metric::IP, false);
+        determine_node_assignments(&representatives, &data_points, Metric::IP, false, &[]);
 
     assert_eq!(offsets.to_vec(), vec![0, 1, 3]);
     assert_eq!(data.to_vec(), vec![0, 1, 2]);
@@ -21,7 +21,7 @@ fn l2_assigns_each_data_point_to_the_nearest_representative_by_distance() {
     let data_points = array![[0.0f32, 1.0], [1.0, 0.0], [9.0, 9.0], [11.0, 11.0]];
 
     let (offsets, data) =
-        determine_node_assignments(&representatives, &data_points, Metric::L2, false);
+        determine_node_assignments(&representatives, &data_points, Metric::L2, false, &[]);
 
     // representative 0 gets data points 0,1; representative 1 gets 2,3
     assert_eq!(offsets.to_vec(), vec![0, 2, 4]);
@@ -36,8 +36,10 @@ fn l2_with_is_normalized_true_matches_general_path_on_unit_vectors() {
     let representatives = array![[1.0f32, 0.0], [0.0, 1.0]];
     let data_points = array![[1.0f32, 0.0], [0.6, 0.8], [0.0, 1.0]];
 
-    let general = determine_node_assignments(&representatives, &data_points, Metric::L2, false);
-    let fast_path = determine_node_assignments(&representatives, &data_points, Metric::L2, true);
+    let general =
+        determine_node_assignments(&representatives, &data_points, Metric::L2, false, &[]);
+    let fast_path =
+        determine_node_assignments(&representatives, &data_points, Metric::L2, true, &[]);
 
     assert_eq!(general, fast_path);
 }
@@ -51,7 +53,7 @@ fn a_tied_score_is_broken_toward_the_higher_representative_index() {
     let data_points = array![[1.0f32, 0.0]];
 
     let (offsets, data) =
-        determine_node_assignments(&representatives, &data_points, Metric::IP, false);
+        determine_node_assignments(&representatives, &data_points, Metric::IP, false, &[]);
 
     assert_eq!(
         offsets.to_vec(),
@@ -59,6 +61,20 @@ fn a_tied_score_is_broken_toward_the_higher_representative_index() {
         "the tie must resolve to representative 1, not 0"
     );
     assert_eq!(data.to_vec(), vec![0]);
+}
+
+/// Every data point scores highest against representative 1, which is
+/// masked, so each goes to the next best.
+#[test]
+fn a_masked_representative_is_never_picked() {
+    let representatives = array![[1.0f32, 0.0], [10.0, 0.0], [0.0, 1.0]];
+    let data_points = array![[1.0f32, 0.1], [0.1, 1.0]];
+
+    let (offsets, data) =
+        determine_node_assignments(&representatives, &data_points, Metric::IP, false, &[1]);
+
+    assert_eq!(offsets.to_vec(), vec![0, 1, 1, 2]);
+    assert_eq!(data.to_vec(), vec![0, 1]);
 }
 
 #[test]
@@ -95,12 +111,13 @@ fn score_in_chunks_matches_the_single_chunk_result_across_chunk_boundaries() {
         [1.0, 0.0],    // rep 0, crosses the second chunk boundary
     ];
 
-    let chunked = score_in_chunks(&representatives, &data_points, Metric::IP, false, 2);
+    let chunked = score_in_chunks(&representatives, &data_points, Metric::IP, false, &[], 2);
     let whole = score_in_chunks(
         &representatives,
         &data_points,
         Metric::IP,
         false,
+        &[],
         data_points.nrows(),
     );
 
@@ -113,7 +130,7 @@ fn score_in_chunks_handles_an_empty_batch() {
     let representatives = array![[1.0f32, 0.0], [0.0, 1.0]];
     let data_points = Array2::<f32>::zeros((0, 2));
 
-    let result = score_in_chunks(&representatives, &data_points, Metric::IP, false, 2);
+    let result = score_in_chunks(&representatives, &data_points, Metric::IP, false, &[], 2);
 
     assert_eq!(result.to_vec(), Vec::<u32>::new());
 }

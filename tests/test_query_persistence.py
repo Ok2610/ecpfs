@@ -2,6 +2,7 @@ import datetime
 
 import numpy as np
 import pytest
+import zarr
 
 import ecpfs
 
@@ -168,3 +169,19 @@ def test_context_manager_closes_even_when_the_block_raises(tmp_path):
 
     with pytest.raises(ValueError, match="closed"):
         index.set_memory_limit_bytes(1024)
+
+
+@pytest.mark.parametrize(
+    "kwargs, saved",
+    [({}, "level_beam"), ({"strategy": "level_beam"}, "level_beam"), ({"strategy": "best_first"}, "best_first")],
+)
+def test_a_saved_query_records_its_strategy_which_defaults_to_level_beam(tmp_path, kwargs, saved):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+    _, query_id = index.new_search(
+        query=np.array([0.0, 0.0], dtype=np.float32), k=1, search_exp=1, max_increments=-1, exclude_vec=[], **kwargs
+    )
+    index.close()
+
+    strategy = zarr.open_array(index_path / "queries" / str(query_id) / "strategy", mode="r")[()]
+    assert strategy == saved

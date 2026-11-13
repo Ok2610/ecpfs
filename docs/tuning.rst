@@ -5,7 +5,7 @@ Building an index and running it well both involve choices, not just
 defaults to accept blindly. This page covers the ones that matter most:
 sizing the tree, storage tradeoffs, a correctness trap, and memory
 budgeting. For query-time tuning (``k``, ``search_exp``,
-``max_increments``), see :doc:`search-parameters` instead.
+``max_increments``, ``strategy``), see :doc:`search-parameters` instead.
 
 ``levels`` and ``target_cluster_items``
 ---------------------------------------

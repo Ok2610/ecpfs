@@ -99,6 +99,9 @@ Saved queries
 written by ``close()`` or when the query is evicted from memory.
 
 - ``query``, shape ``(dim,)``, float32: the query vector.
+- ``strategy`` (string, optional): the query's search strategy,
+  ``"best_first"`` or ``"level_beam"``. A query saved without it is resumed as
+  ``"best_first"``.
 - ``tree_pq_score`` (float32), ``tree_pq_is_leaf`` (int32), ``tree_pq_level``
   and ``tree_pq_node_id`` (uint32), each shape ``(n,)``: the queue of nodes
   still to visit, split into one array per field.

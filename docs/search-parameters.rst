@@ -2,18 +2,33 @@ Search Parameters
 =================
 
 ``new_search`` and ``get_next_k_items`` share four arguments, ``k``,
-``search_exp``, ``max_increments`` and ``exclude_vec``. This page explains how
-they work together.
+``search_exp``, ``max_increments`` and ``exclude_vec``. ``new_search`` also
+takes ``strategy``, which sets the order the tree's nodes are visited in. This
+page explains how they work together.
 
 How a search runs
 -----------------
 
-The index is a tree. A search keeps a queue of nodes to visit, ordered by how
-close each node's representative is to the query, and always visits the closest
-one next. Visiting a leaf node scores every item in it and adds the items to the
-query's buffer. The search stops scanning leaf nodes at the limits below, sorts the
-buffer, and returns the best ``k`` items. The rest stay buffered for
-``get_next_k_items``.
+The index is a tree. Visiting a node scores its children against the query.
+Visiting a leaf node scores every item in it and adds the items to the query's
+buffer. ``strategy`` decides which nodes are visited.
+
+``"level_beam"`` (the default)
+   The search visits the ``search_exp`` best nodes on each level, from the root
+   down to the leaf nodes. A later call starts at the deepest level that still
+   holds ``search_exp`` nodes waiting to be visited.
+
+``"best_first"``
+   The search keeps one queue of nodes from every level, ordered by how close
+   each node's representative is to the query, and always visits the closest
+   one next.
+
+``level_beam`` usually reaches the same recall faster. On an index with very
+uneven clusters the two are close. A query keeps the strategy it was started
+with.
+
+The search stops scanning leaf nodes at the limits below, sorts the buffer, and
+returns the best ``k`` items. The rest stay buffered for ``get_next_k_items``.
 
 ``k``
    How many ``(score, item_id)`` pairs to return. Fewer come back when the
@@ -21,9 +36,11 @@ buffer, and returns the best ``k`` items. The rest stay buffered for
    scanned or because ``exclude_vec`` filtered some out.
 
 ``search_exp``
-   How many leaf nodes to scan in this call. More leaf nodes give better results
-   and a slower search. Results are exact within the scanned leaf nodes, so a
-   closer item in a leaf node that wasn't scanned is missed.
+   How many leaf nodes to scan in this call. With ``level_beam`` it is also how
+   many nodes to visit on every level above them. More leaf nodes give better
+   results and a slower search. Results are exact within the scanned leaf nodes,
+   so a closer item in a leaf node that wasn't scanned is missed. Must be at
+   least 1.
 
 ``max_increments``
    What to do when ``search_exp`` leaf nodes gave fewer than ``k`` items. The
@@ -42,8 +59,10 @@ Example
 
 With ``k=10``, ``search_exp=4`` and ``max_increments=2``, the search scans 4
 leaf nodes. If they hold 10 or more items, it stops there. Otherwise it doubles
-to 8 leaf nodes in total, then 16, and stops after that even if it still has
-fewer than 10 items.
+``search_exp`` twice at most and stops after that even if it still has fewer
+than 10 items. ``best_first`` counts leaf nodes across the call, so it scans up
+to 8 in total, then 16. ``level_beam`` descends again after each doubling, so it
+scans up to 8 more, then 16 more.
 
 Scores
 ------

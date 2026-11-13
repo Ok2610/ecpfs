@@ -33,10 +33,11 @@ ecpfs implements the eCP pipeline as a disk-based library: a Rust core
 "fs" in the name reflects that an index is disk-backed and lazily loaded
 rather than held entirely in memory. Nodes are read as a search visits
 them, and a cache capped by a memory limit decides which stay resident.
-The search is best-first across the tree, regardless of level, and
-each opened leaf contributes all of its items as candidates rather than
-being searched further. This differs from the original eCP algorithm,
-which expanded the search breadth-first at every level instead.
+By default the search visits the best few nodes on each level, from the
+root down, like the original eCP algorithm's level-by-level expansion. It
+can instead run best-first across the tree, regardless of level. Either
+way, each opened leaf contributes all of its items as candidates rather
+than being searched further.
 It also supports incremental search, which pulls further results for an
 already-run query without restarting it.
 
@@ -56,8 +57,8 @@ planned for cases that do not need that extensibility.
 The site is at https://ok2610.github.io/ecpfs/ and covers:
 
 - Quickstart: installation and a build/search walkthrough
-- Search parameters: how `k`, `search_exp`, `max_increments` and `exclude`
-  work together
+- Search parameters: how `k`, `search_exp`, `max_increments`, `exclude`
+  and the search strategy work together
 - Logging: the level policy, the JSONL record format, and where the file goes
 - Python API reference, with the Rust API reference under `/rust/`
 - CLI reference for `ecp`

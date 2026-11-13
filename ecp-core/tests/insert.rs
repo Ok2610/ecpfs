@@ -12,7 +12,7 @@ use zarrs::filesystem::FilesystemStore;
 use common::{build_index, two_clusters, write_embeddings};
 use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::source::EmbeddingsSource;
-use ecp_core::search::{Index, IndexInfo};
+use ecp_core::search::{Index, IndexInfo, SearchStrategy};
 use ecp_core::utils::Metric;
 
 #[test]
@@ -23,7 +23,14 @@ fn insert_is_found_in_the_same_process_and_after_a_reload() {
 
     // Search once so the leaf covering this region is cached
     let (items, _) = index
-        .new_search(query.clone(), 4, 4, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            4,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     assert!(!items.iter().any(|(_, id)| *id == 8));
 
@@ -32,7 +39,14 @@ fn insert_is_found_in_the_same_process_and_after_a_reload() {
     assert_eq!(assigned, 8..9, "the index already has items 0..7");
 
     let (items, _) = index
-        .new_search(query.clone(), 9, 4, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            9,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     assert!(
         items.iter().any(|(_, id)| *id == 8),
@@ -42,7 +56,7 @@ fn insert_is_found_in_the_same_process_and_after_a_reload() {
 
     let reloaded = Index::load(index_path, None).unwrap();
     let (items, _) = reloaded
-        .new_search(query, 9, 4, -1, &HashSet::new())
+        .new_search(query, 9, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
     assert!(
         items.iter().any(|(_, id)| *id == 8),
@@ -131,12 +145,26 @@ fn insert_a_batch_routes_each_point_to_its_own_leaf() {
     assert_eq!(assigned, 8..10);
 
     let (near_origin, _) = index
-        .new_search(array![0.0f32, 0.0], 9, 4, -1, &HashSet::new())
+        .new_search(
+            array![0.0f32, 0.0],
+            9,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     assert!(near_origin.iter().any(|(_, id)| *id == 8));
 
     let (near_far_cluster, _) = index
-        .new_search(array![10.0f32, 10.0], 9, 4, -1, &HashSet::new())
+        .new_search(
+            array![10.0f32, 10.0],
+            9,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     assert!(near_far_cluster.iter().any(|(_, id)| *id == 9));
 }
@@ -181,7 +209,14 @@ fn insert_into_a_previously_empty_leaf_creates_it_on_disk() {
     assert_eq!(assigned, 4..5, "the index already has items 0..3");
 
     let (items, _) = index
-        .new_search(array![999.0f32], 1, 4, -1, &HashSet::new())
+        .new_search(
+            array![999.0f32],
+            1,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     assert_eq!(
         items.iter().map(|(_, id)| *id).collect::<Vec<_>>(),

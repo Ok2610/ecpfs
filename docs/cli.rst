@@ -145,9 +145,11 @@ continue the same query without starting over. :doc:`search-parameters` explains
          --k <K>
              Number of items to return [default: 10]
          --search-exp <SEARCH_EXP>
-             How many leaf nodes to scan. More gives better results but a slower search [default: 4]
+             How many nodes to visit on each level (level-beam) or how many leaf nodes to scan (best-first). More gives better results but a slower search [default: 4]
          --max-increments <MAX_INCREMENTS>
              How many times to double --search-exp while fewer than --k items are found. -1 for no limit [default: -1]
+         --strategy <STRATEGY>
+             The order the search visits nodes in. A resumed query keeps the strategy it was started with [default: level-beam] [possible values: best-first, level-beam]
          --exclude <EXCLUDE>
              Item ids to leave out, comma-separated. With --resume, they are added to the query's exclude set
          --memory-limit-gb <MEMORY_LIMIT_GB>

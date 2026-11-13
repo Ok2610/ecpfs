@@ -137,3 +137,41 @@ fn cleanup_queries_needs_exactly_one_of_all_and_older_than_hours() {
     };
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
 }
+
+/// `--strategy` defaults to level-beam and takes best-first.
+#[test]
+fn search_strategy_defaults_to_level_beam() {
+    let strategy = |flags: &[&str]| {
+        let mut argv = vec!["ecp", "search", "my_index.zarr", "queries.h5"];
+        argv.extend_from_slice(flags);
+        let cli = Cli::try_parse_from(argv).unwrap();
+        let Command::Search(args) = cli.command else {
+            panic!("expected the search subcommand");
+        };
+        SearchStrategy::from(args.strategy)
+    };
+
+    assert_eq!(strategy(&[]), SearchStrategy::LevelBeam);
+    assert_eq!(
+        strategy(&["--strategy", "best-first"]),
+        SearchStrategy::BestFirst
+    );
+}
+
+/// A resumed query keeps the strategy it was saved with.
+#[test]
+fn search_strategy_conflicts_with_resume() {
+    let result = Cli::try_parse_from([
+        "ecp",
+        "search",
+        "my_index.zarr",
+        "--resume",
+        "5",
+        "--strategy",
+        "best-first",
+    ]);
+    let Err(err) = result else {
+        panic!("--strategy was accepted with --resume");
+    };
+    assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+}

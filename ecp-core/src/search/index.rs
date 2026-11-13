@@ -24,6 +24,7 @@ use crate::search::node::Node;
 
 mod persistence;
 mod query;
+pub use query::SearchStrategy;
 
 use query::{HeapEntry, QueryState};
 
@@ -180,7 +181,7 @@ impl Index {
                 |_key: &usize, state: &Arc<Mutex<QueryState>>| {
                     let state = state.lock().unwrap();
                     (state.query.len() * size_of::<f32>()
-                        + state.tree_pq.len() * size_of::<HeapEntry>()
+                        + state.frontier.len() * size_of::<HeapEntry>()
                         + state.items.len() * size_of::<(NotNan<f32>, u32)>()
                         + state.exclude.len() * size_of::<u32>()) as u32
                 },
@@ -347,7 +348,7 @@ impl Index {
             // such as a new_search that has not searched yet
             {
                 let state = state_arc.lock().unwrap();
-                if state.tree_pq.is_empty() && state.items.is_empty() {
+                if state.frontier.is_empty() && state.items.is_empty() {
                     continue;
                 }
                 if let Err(e) = persistence::persist_query(&self.store, query_id, &state) {

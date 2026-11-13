@@ -85,7 +85,7 @@ Searching an index
            exclude_vec=[],
        )
        # items: list[(score, item_id)], lower score is a better match.
-       # See the search parameters page for k, search_exp and max_increments.
+       # See the search parameters page for k, search_exp, max_increments and strategy.
 
        # Pull further results for the same query without re-searching from the root:
        more_items = index.get_next_k_items(

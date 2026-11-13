@@ -15,7 +15,7 @@ use common::{build_index, two_clusters, write_embeddings};
 use ecp_core::build::builder::{Builder, ChunkSizes};
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
-use ecp_core::search::Index;
+use ecp_core::search::{Index, SearchStrategy};
 use ecp_core::utils::{EmbeddingDtype, Metric};
 
 /// Counts the nodes on one level (`/lvl_N/`) and their children in total,
@@ -76,7 +76,9 @@ fn builder_produces_a_structure_that_searches_correctly() {
 
     let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 8, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
@@ -149,7 +151,9 @@ fn three_level_build_produces_the_right_node_count_per_level_and_searches_to_the
 
     let index = Index::load(index_path, None).unwrap();
     let query = array![80.0f32];
-    let (items, _query_id) = index.new_search(query, 10, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 10, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     assert!(
         items.iter().any(|(_, id)| *id >= r as u32),
@@ -230,7 +234,9 @@ fn a_node_left_empty_by_tied_scores_loses_no_items_on_disk_or_in_search() {
 
     let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 8, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     ids.sort_unstable();
@@ -282,7 +288,9 @@ fn ip_metric_builds_and_searches_correctly_even_with_magnitude_skewed_embeddings
 
     let index = Index::load(index_path, None).unwrap();
     let query = array![1.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 8, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     ids.sort_unstable();
@@ -337,7 +345,9 @@ fn native_dtype_default_writes_f16_when_the_source_is_f16() {
 
     let index = Index::load(index_path, None).unwrap();
     let query = array![0.0f32, 0.0];
-    let (items, _query_id) = index.new_search(query, 8, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 8, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
@@ -372,11 +382,18 @@ fn a_uint8_build_searches_identically_to_the_same_vectors_as_f32() {
     let query = array![1.0f32, 1.0];
     let (uint8_items, _) = Index::load(uint8_path, None)
         .unwrap()
-        .new_search(query.clone(), 8, 4, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            8,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     let (f32_items, _) = Index::load(f32_path, None)
         .unwrap()
-        .new_search(query, 8, 4, -1, &HashSet::new())
+        .new_search(query, 8, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
 
     assert_eq!(

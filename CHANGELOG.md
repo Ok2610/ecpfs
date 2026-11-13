@@ -7,6 +7,28 @@ Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is
 described in `CONTRIBUTING.md`'s Versioning section, and does not follow
 strict semantic versioning while the project stays below `0.10.0`.
 
+## [Unreleased]
+
+### Added
+
+- A level-beam search strategy, which visits the `search_exp` best nodes
+  on each level from the root down. `new_search` in Python takes
+  `strategy="level_beam"` or `"best_first"`, `ecp search` takes
+  `--strategy level-beam` or `best-first`, and `Index::new_search` in
+  `ecp-core` takes a `SearchStrategy`.
+- A saved query stores its strategy as `queries/Q/strategy`. A query
+  saved without one resumes as `"best_first"`. Older versions ignore it
+  and resume a saved `"level_beam"` query as best-first.
+
+### Changed
+
+- **Breaking:** `"level_beam"` is the default strategy. At the same
+  `search_exp` it finds more of the true nearest items and answers fewer
+  queries per second. Pass `strategy="best_first"` for the previous
+  search.
+- **Breaking:** `search_exp=0` is rejected with `ValueError` in Python
+  and `EcpError::InvalidInput` in `ecp-core`.
+
 ## [0.9.101] - 2026-11-12
 
 ### Fixed

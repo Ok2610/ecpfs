@@ -12,7 +12,7 @@ use ecp_core::build::builder::{
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
-use ecp_core::search::{Index, IndexInfo};
+use ecp_core::search::{Index, IndexInfo, SearchStrategy};
 use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
 
 /// Largest --rep-chunk-mb whose size in bytes still fits in a `usize`.
@@ -72,6 +72,23 @@ impl From<RepSelectionArg> for RepresentativeStrategy {
         match strategy {
             RepSelectionArg::Offset => RepresentativeStrategy::Offset,
             RepSelectionArg::Random => RepresentativeStrategy::Random,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SearchStrategyArg {
+    /// The best-scoring node next, whatever its level
+    BestFirst,
+    /// The --search-exp best nodes on each level, from the root down
+    LevelBeam,
+}
+
+impl From<SearchStrategyArg> for SearchStrategy {
+    fn from(strategy: SearchStrategyArg) -> Self {
+        match strategy {
+            SearchStrategyArg::BestFirst => SearchStrategy::BestFirst,
+            SearchStrategyArg::LevelBeam => SearchStrategy::LevelBeam,
         }
     }
 }
@@ -342,7 +359,8 @@ struct SearchArgs {
     #[arg(long, default_value_t = 10)]
     k: usize,
 
-    /// How many leaf nodes to scan. More gives better results but a slower search.
+    /// How many nodes to visit on each level (level-beam) or how many leaf nodes to
+    /// scan (best-first). More gives better results but a slower search.
     #[arg(long, default_value_t = 4)]
     search_exp: u32,
 
@@ -350,6 +368,11 @@ struct SearchArgs {
     /// found. -1 for no limit.
     #[arg(long, default_value_t = -1)]
     max_increments: i32,
+
+    /// The order the search visits nodes in. A resumed query keeps the strategy
+    /// it was started with.
+    #[arg(long, value_enum, default_value_t = SearchStrategyArg::LevelBeam, conflicts_with = "resume")]
+    strategy: SearchStrategyArg,
 
     /// Item ids to leave out, comma-separated. With --resume, they are added to
     /// the query's exclude set.
@@ -400,6 +423,7 @@ fn search(args: SearchArgs) -> Result<()> {
             args.search_exp,
             args.max_increments,
             &exclude,
+            args.strategy.into(),
         )?
     };
 

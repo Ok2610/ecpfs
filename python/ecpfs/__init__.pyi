@@ -1,7 +1,7 @@
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
-from typing import Sequence
+from typing import Literal, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,6 +28,7 @@ class Index:
         search_exp: int,
         max_increments: int,
         exclude_vec: Sequence[int],
+        strategy: Literal["best_first", "level_beam"] = "level_beam",
     ) -> tuple[list[tuple[float, int]], int]: ...
 
     def get_next_k_items(

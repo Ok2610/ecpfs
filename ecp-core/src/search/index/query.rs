@@ -19,10 +19,10 @@ pub type ScoredItems = Vec<(NotNan<f32>, u32)>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SearchStrategy {
     /// Visits the best-scoring queued node next, whatever its level.
-    #[default]
     BestFirst,
     /// Visits the `search_exp` best nodes on each level, from the root down. A resumed
     /// search starts at the deepest level holding that many nodes.
+    #[default]
     LevelBeam,
 }
 

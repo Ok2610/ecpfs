@@ -59,12 +59,14 @@ impl IndexWrapper {
         Ok(())
     }
 
-    /// new_search(query, k, search_exp, max_increments, exclude_vec)
+    /// new_search(query, k, search_exp, max_increments, exclude_vec, strategy="level_beam")
     ///
     /// Searches for ``query`` and returns ``(items, query_id)``, where ``items`` are
     /// the ``k`` best ``(score, item_id)`` pairs, lowest score first. Pass
     /// ``query_id`` to ``get_next_k_items`` for more. See :doc:`search-parameters`
     /// for the arguments and what a score means.
+    #[pyo3(signature = (query, k, search_exp, max_increments, exclude_vec, strategy="level_beam"))]
+    #[allow(clippy::too_many_arguments)]
     fn new_search(
         &self,
         py: Python<'_>,
@@ -73,21 +75,21 @@ impl IndexWrapper {
         search_exp: u32,
         max_increments: i32,
         exclude_vec: Vec<u32>,
+        strategy: &str,
     ) -> PyResult<(Vec<(f32, u32)>, usize)> {
         self.check_not_closed()?;
+        let strategy = SearchStrategy::from_name(strategy).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "unknown search strategy {strategy:?} (use \"best_first\" or \"level_beam\")"
+            ))
+        })?;
         let query: Array1<f32> = query.to_owned_array();
         let exclude_set: HashSet<u32> = exclude_vec.into_iter().collect();
 
         let (results, query_id): (Vec<(NotNan<f32>, u32)>, usize) = py
             .detach(|| {
-                self.inner.new_search(
-                    query,
-                    k,
-                    search_exp,
-                    max_increments,
-                    &exclude_set,
-                    SearchStrategy::BestFirst,
-                )
+                self.inner
+                    .new_search(query, k, search_exp, max_increments, &exclude_set, strategy)
             })
             .map_err(to_pyerr)?;
 

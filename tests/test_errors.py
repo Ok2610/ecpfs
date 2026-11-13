@@ -80,6 +80,35 @@ def test_new_search_rejects_a_query_of_the_wrong_dimension(tmp_path):
         )
 
 
+def test_new_search_rejects_an_unknown_strategy(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    with pytest.raises(ValueError, match="unknown search strategy"):
+        index.new_search(
+            query=np.array([0.0, 0.0], dtype=np.float32),
+            k=4,
+            search_exp=4,
+            max_increments=-1,
+            exclude_vec=[],
+            strategy="depth_first",
+        )
+
+
+def test_new_search_rejects_a_search_exp_of_0(tmp_path):
+    index_path = build_two_clusters_index(tmp_path)
+    index = ecpfs.Index(index_path)
+
+    with pytest.raises(ValueError, match="search_exp"):
+        index.new_search(
+            query=np.array([0.0, 0.0], dtype=np.float32),
+            k=4,
+            search_exp=0,
+            max_increments=-1,
+            exclude_vec=[],
+        )
+
+
 def test_builder_rejects_zero_levels(tmp_path):
     with pytest.raises(ValueError, match="levels"):
         ecpfs.Builder(tmp_path / "index.zarr", levels=0, metric=ecpfs.Metric.L2)

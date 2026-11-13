@@ -139,10 +139,15 @@ leaf node, and a search may briefly see pre-insert (stale) data for a
 leaf node an insert is concurrently touching rather than wait for it.
 This holds
 across Python threads too, because ecpfs releases the GIL during search and
-insert. It does not extend across separate processes. Two
-independent processes (or two separate ``Index(...)`` handles anywhere)
-writing to the same index path can race and corrupt data, so the caller
-must ensure only one writer touches a given path at a time.
+insert. On free-threaded Python (3.14t) ecpfs keeps the GIL disabled, so
+those threads run fully in parallel. There, don't change an array from
+another thread while it's being passed to ``new_search`` or ``insert``,
+since ecpfs copies it as the call starts and the copy can mix old and new
+values. The safety of concurrent inserts and searches does not extend
+across separate processes. Two independent processes (or two separate
+``Index(...)`` handles anywhere) writing to the same index path can race 
+and corrupt data, so the caller must ensure only one writer touches a given 
+path at a time.
 
 The caller is responsible for new embeddings already matching the
 index's ``metric``/``is_normalized``/dtype convention.

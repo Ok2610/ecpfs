@@ -19,6 +19,10 @@ strict semantic versioning while the project stays below `0.10.0`.
 - A saved query stores its strategy as `queries/Q/strategy`. A query
   saved without one resumes as `"best_first"`. Older versions ignore it
   and resume a saved `"level_beam"` query as best-first.
+- Support for free-threaded Python 3.14 (3.14t). The extension no longer
+  turns the GIL back on when imported, and wheels are built for both
+  `cp314` and `cp314t`, replacing the interpreter-discovery build that
+  also produced untested 3.15 pre-release wheels.
 
 ### Changed
 

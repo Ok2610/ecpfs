@@ -2,6 +2,9 @@ use super::*;
 use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
 use ndarray::array;
 
+/// Levels of the index the saved states here belong to.
+const LEVELS: usize = 3;
+
 /// Returns the frontier's entries as sorted tuples, so two frontiers can be compared.
 fn frontier_entries_sorted(frontier: &Frontier) -> Vec<(f32, i32, u32, u32)> {
     let mut entries: Vec<_> = frontier
@@ -53,7 +56,7 @@ fn round_trip_preserves_non_empty_state() {
     let original = sample_state();
 
     persist_query(&store, 5, &original).unwrap();
-    let loaded = load_query(&store, 5)
+    let loaded = load_query(&store, 5, LEVELS)
         .unwrap()
         .expect("just-persisted query must load");
 
@@ -87,7 +90,7 @@ fn empty_exclude_set_writes_no_array_and_loads_back_empty() {
         Array::open(store.clone(), "/queries/5/exclude"),
         Err(ArrayCreateError::MissingMetadata)
     ));
-    let loaded = load_query(&store, 5)
+    let loaded = load_query(&store, 5, LEVELS)
         .unwrap()
         .expect("just-persisted query must load");
     assert!(loaded.exclude.is_empty());
@@ -104,7 +107,7 @@ fn round_trip_preserves_items_only_state() {
     };
 
     persist_query(&store, 2, &original).unwrap();
-    let loaded = load_query(&store, 2)
+    let loaded = load_query(&store, 2, LEVELS)
         .unwrap()
         .expect("just-persisted query must load");
 
@@ -137,7 +140,7 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
         "re-persisting must leave no stale chunks from the bigger state behind"
     );
 
-    let loaded = load_query(&store, 9)
+    let loaded = load_query(&store, 9, LEVELS)
         .unwrap()
         .expect("just-persisted query must load");
     assert_eq!(loaded.query, smaller.query);
@@ -148,14 +151,14 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
 #[test]
 fn loading_a_query_with_no_persisted_group_returns_none() {
     let store = as_readable_writable_listable(&new_memory_store());
-    assert!(load_query(&store, 123).unwrap().is_none());
+    assert!(load_query(&store, 123, LEVELS).unwrap().is_none());
 }
 
 #[test]
 fn persist_or_erase_erases_an_empty_state() {
     let store = as_readable_writable_listable(&new_memory_store());
     persist_query(&store, 6, &sample_state()).unwrap();
-    assert!(load_query(&store, 6).unwrap().is_some());
+    assert!(load_query(&store, 6, LEVELS).unwrap().is_some());
 
     let empty = QueryState {
         query: array![0.0f32],
@@ -165,7 +168,7 @@ fn persist_or_erase_erases_an_empty_state() {
     };
     persist_or_erase(&store, 6, &empty).unwrap();
 
-    assert!(load_query(&store, 6).unwrap().is_none());
+    assert!(load_query(&store, 6, LEVELS).unwrap().is_none());
 }
 
 #[test]
@@ -175,7 +178,7 @@ fn persist_or_erase_persists_a_non_empty_state() {
 
     persist_or_erase(&store, 6, &state).unwrap();
 
-    let loaded = load_query(&store, 6)
+    let loaded = load_query(&store, 6, LEVELS)
         .unwrap()
         .expect("non-empty state must be persisted, not erased");
     assert_eq!(loaded.items, state.items);
@@ -209,8 +212,8 @@ fn cleanup_older_than_leaves_everything_when_the_cutoff_is_in_the_past() {
     let erased = cleanup_older_than(&store, 0).unwrap();
 
     assert_eq!(erased, 0);
-    assert!(load_query(&store, 1).unwrap().is_some());
-    assert!(load_query(&store, 2).unwrap().is_some());
+    assert!(load_query(&store, 1, LEVELS).unwrap().is_some());
+    assert!(load_query(&store, 2, LEVELS).unwrap().is_some());
 }
 
 #[test]
@@ -227,11 +230,11 @@ fn cleanup_older_than_erases_only_entries_older_than_the_cutoff() {
 
     assert_eq!(erased, 1);
     assert!(
-        load_query(&store, 1).unwrap().is_none(),
+        load_query(&store, 1, LEVELS).unwrap().is_none(),
         "id=1 was backdated before the cutoff, must be erased"
     );
     assert!(
-        load_query(&store, 2).unwrap().is_some(),
+        load_query(&store, 2, LEVELS).unwrap().is_some(),
         "id=2 was persisted just now, must survive"
     );
 }
@@ -246,4 +249,123 @@ fn erase_all_erases_every_saved_query_and_returns_the_count() {
 
     assert_eq!(erased, 2);
     assert!(query_ids_on_disk(&store).unwrap().is_empty());
+}
+
+/// Builds a LevelBeam state for a 3-level index with nodes queued on levels 0 and 1
+/// and an empty leaf heap.
+fn level_beam_state() -> QueryState {
+    let entry = |score: f32, level: u32, node_id: u32| HeapEntry {
+        score: NotNan::new(score).unwrap(),
+        is_leaf: (level == 2) as i32,
+        level,
+        node_id,
+    };
+    QueryState {
+        query: array![1.0f32, 2.0],
+        frontier: Frontier::LevelBeam(vec![
+            BinaryHeap::from(vec![entry(0.5, 0, 1)]),
+            BinaryHeap::from(vec![entry(0.25, 1, 4), entry(-1.0, 1, 5)]),
+            BinaryHeap::new(),
+        ]),
+        items: vec![(NotNan::new(0.1).unwrap(), 42)],
+        exclude: HashSet::new(),
+    }
+}
+
+/// Returns each level heap's entries as sorted tuples.
+fn level_entries_sorted(frontier: &Frontier) -> Vec<Vec<(f32, i32, u32, u32)>> {
+    let Frontier::LevelBeam(heaps) = frontier else {
+        panic!("not a LevelBeam frontier");
+    };
+    heaps
+        .iter()
+        .map(|heap| {
+            let mut entries: Vec<_> = heap
+                .iter()
+                .map(|e| (e.score.into_inner(), e.is_leaf, e.level, e.node_id))
+                .collect();
+            entries.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            entries
+        })
+        .collect()
+}
+
+/// Every entry loads back onto its own level's heap, and the empty leaf heap loads back too.
+#[test]
+fn level_beam_round_trip_keeps_each_entry_on_its_level() {
+    let store = as_readable_writable_listable(&new_memory_store());
+    let original = level_beam_state();
+
+    persist_query(&store, 5, &original).unwrap();
+    let loaded = load_query(&store, 5, LEVELS)
+        .unwrap()
+        .expect("just-persisted query must load");
+
+    assert_eq!(
+        level_entries_sorted(&loaded.frontier),
+        level_entries_sorted(&original.frontier)
+    );
+}
+
+#[test]
+fn strategy_is_saved_as_a_string_scalar() {
+    let store = as_readable_writable_listable(&new_memory_store());
+
+    persist_query(&store, 5, &level_beam_state()).unwrap();
+    persist_query(&store, 6, &sample_state()).unwrap();
+
+    assert_eq!(
+        read_string_scalar(&store, "/queries/5/strategy").unwrap(),
+        "level_beam"
+    );
+    assert_eq!(
+        read_string_scalar(&store, "/queries/6/strategy").unwrap(),
+        "best_first"
+    );
+}
+
+/// A query saved before search strategies existed has no strategy array.
+#[test]
+fn a_query_saved_without_a_strategy_loads_as_best_first() {
+    let store = as_readable_writable_listable(&new_memory_store());
+    let original = sample_state();
+    persist_query(&store, 5, &original).unwrap();
+    store
+        .erase_prefix(&StorePrefix::new("queries/5/strategy/").unwrap())
+        .unwrap();
+
+    let loaded = load_query(&store, 5, LEVELS)
+        .unwrap()
+        .expect("just-persisted query must load");
+
+    assert!(matches!(loaded.frontier, Frontier::BestFirst(_)));
+    assert_eq!(
+        frontier_entries_sorted(&loaded.frontier),
+        frontier_entries_sorted(&original.frontier)
+    );
+}
+
+/// A strategy this build doesn't know, such as one saved by a newer ecpfs.
+#[test]
+fn an_unknown_strategy_is_an_unsupported_version() {
+    let store = as_readable_writable_listable(&new_memory_store());
+    persist_query(&store, 5, &sample_state()).unwrap();
+    write_string_scalar(&store, "/queries/5/strategy", "leaves").unwrap();
+
+    assert!(matches!(
+        load_query(&store, 5, LEVELS),
+        Err(EcpError::UnsupportedVersion(_))
+    ));
+}
+
+/// level_beam_state has entries on level 1, which a 1-level index doesn't have.
+#[test]
+fn a_level_beam_entry_past_the_last_level_is_corrupt() {
+    let store = as_readable_writable_listable(&new_memory_store());
+    persist_query(&store, 5, &level_beam_state()).unwrap();
+
+    assert!(matches!(
+        load_query(&store, 5, 1),
+        Err(EcpError::Corrupt(_))
+    ));
 }

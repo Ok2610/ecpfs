@@ -26,6 +26,25 @@ pub enum SearchStrategy {
     LevelBeam,
 }
 
+impl SearchStrategy {
+    /// Returns the strategy's name, `"best_first"` or `"level_beam"`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SearchStrategy::BestFirst => "best_first",
+            SearchStrategy::LevelBeam => "level_beam",
+        }
+    }
+
+    /// Returns the strategy named `name`, or `None` for a name [`Self::as_str`] never returns.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "best_first" => Some(SearchStrategy::BestFirst),
+            "level_beam" => Some(SearchStrategy::LevelBeam),
+            _ => None,
+        }
+    }
+}
+
 /// One open query's search state.
 pub(super) struct QueryState {
     pub(super) query: Array1<f32>,
@@ -51,6 +70,14 @@ impl Frontier {
         match strategy {
             SearchStrategy::BestFirst => Frontier::BestFirst(BinaryHeap::new()),
             SearchStrategy::LevelBeam => Frontier::LevelBeam(vec![BinaryHeap::new(); levels]),
+        }
+    }
+
+    /// Returns the search strategy this frontier serves.
+    pub(super) fn strategy(&self) -> SearchStrategy {
+        match self {
+            Frontier::BestFirst(_) => SearchStrategy::BestFirst,
+            Frontier::LevelBeam(_) => SearchStrategy::LevelBeam,
         }
     }
 
@@ -153,7 +180,7 @@ impl Index {
         match self.queries.try_get_with(query_id, || {
             // moka can only say "here it is" or "something failed," so a
             // clean "not found" is faked as this one error and unpacked below.
-            persistence::load_query(&self.store, query_id)?
+            persistence::load_query(&self.store, query_id, self.levels as usize)?
                 .map(|state| Arc::new(Mutex::new(state)))
                 .ok_or_else(|| EcpError::NotFound(QUERY_NEVER_PERSISTED.to_string()))
         }) {

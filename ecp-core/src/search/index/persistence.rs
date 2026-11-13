@@ -3,13 +3,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ndarray::Array1;
 use ordered_float::NotNan;
-use zarrs::array::data_type::{float32, int32, uint32, uint64};
+use zarrs::array::data_type::{float32, int32, string, uint32, uint64};
 use zarrs::array::{Array, ArrayBuilder, ArrayCreateError};
 use zarrs::storage::{
     ReadableWritableListableStorage, StorePrefix, WritableStorageTraits, discover_children,
 };
 
-use super::query::{Frontier, HeapEntry, QueryState};
+use super::query::{Frontier, HeapEntry, QueryState, SearchStrategy};
 use crate::error::{EcpError, Result, ResultExt};
 
 /// Returns the store path that query `query_id` is saved under.
@@ -28,6 +28,11 @@ pub(super) fn persist_query(
     let base = group_path(query_id);
 
     write_f32_array(store, &format!("{base}/query"), state.query.to_vec())?;
+    write_string_scalar(
+        store,
+        &format!("{base}/strategy"),
+        state.frontier.strategy().as_str(),
+    )?;
 
     // One array per HeapEntry field, and per items tuple field
     let mut tree_pq_score = Vec::with_capacity(state.frontier.len());
@@ -131,11 +136,12 @@ pub(super) fn erase_all(store: &ReadableWritableListableStorage) -> Result<usize
     Ok(erased)
 }
 
-/// Reads a saved query's state back. `Ok(None)` if that query was never
-/// saved, `Err` if the store or a saved value can't be read.
+/// Reads a saved query's state back, for an index with `levels` levels. `Ok(None)` if that
+/// query was never saved, `Err` if the store or a saved value can't be read.
 pub(super) fn load_query(
     store: &ReadableWritableListableStorage,
     query_id: usize,
+    levels: usize,
 ) -> Result<Option<QueryState>> {
     let base = group_path(query_id);
     let query_path = format!("{base}/query");
@@ -147,11 +153,30 @@ pub(super) fn load_query(
 
     let query = Array1::from_vec(read_f32_array(store, &query_path)?);
 
+    // A query saved before search strategies existed has no strategy array
+    let strategy_path = format!("{base}/strategy");
+    let strategy = match Array::open(store.clone(), &strategy_path) {
+        Ok(_) => {
+            let name = read_string_scalar(store, &strategy_path)?;
+            SearchStrategy::from_name(&name).ok_or_else(|| {
+                EcpError::UnsupportedVersion(format!(
+                    "{strategy_path} holds search strategy {name:?}, which this build doesn't know"
+                ))
+            })?
+        }
+        Err(ArrayCreateError::MissingMetadata) => SearchStrategy::BestFirst,
+        Err(e) => {
+            return Err(EcpError::Store(format!(
+                "failed to open {strategy_path}: {e}"
+            )));
+        }
+    };
+
     let scores = read_f32_array(store, &format!("{base}/tree_pq_score"))?;
     let is_leaf = read_i32_array(store, &format!("{base}/tree_pq_is_leaf"))?;
     let level = read_u32_array(store, &format!("{base}/tree_pq_level"))?;
     let node_id = read_u32_array(store, &format!("{base}/tree_pq_node_id"))?;
-    let tree_pq: BinaryHeap<HeapEntry> = scores
+    let entries: Vec<HeapEntry> = scores
         .into_iter()
         .zip(is_leaf)
         .zip(level)
@@ -166,6 +191,24 @@ pub(super) fn load_query(
             })
         })
         .collect::<Result<_>>()?;
+
+    // Rebuild one heap, or one heap per level
+    let frontier = match strategy {
+        SearchStrategy::BestFirst => Frontier::BestFirst(BinaryHeap::from(entries)),
+        SearchStrategy::LevelBeam => {
+            let mut heaps = vec![BinaryHeap::new(); levels];
+            for entry in entries {
+                let heap = heaps.get_mut(entry.level as usize).ok_or_else(|| {
+                    EcpError::Corrupt(format!(
+                        "{base}: saved node on level {} of a {levels}-level index",
+                        entry.level
+                    ))
+                })?;
+                heap.push(entry);
+            }
+            Frontier::LevelBeam(heaps)
+        }
+    };
 
     let items_score = read_f32_array(store, &format!("{base}/items_score"))?;
     let items_id = read_u32_array(store, &format!("{base}/items_id"))?;
@@ -193,7 +236,7 @@ pub(super) fn load_query(
 
     Ok(Some(QueryState {
         query,
-        frontier: Frontier::BestFirst(tree_pq),
+        frontier,
         items,
         exclude,
     }))
@@ -309,6 +352,33 @@ fn read_persisted_at(store: &ReadableWritableListableStorage, path: &str) -> Res
     Ok(array
         .retrieve_array_subset::<Vec<u64>>(&array.subset_all())
         .store_err("failed to retrieve array")?[0])
+}
+
+/// Writes `value` as a string scalar at `path`.
+fn write_string_scalar(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    value: &str,
+) -> Result<()> {
+    let shape: Vec<u64> = vec![];
+    let array = ArrayBuilder::new(shape.clone(), shape, string(), "")
+        .build(store.clone(), path)
+        .store_err("failed to build array")?;
+    array
+        .store_metadata()
+        .store_err("failed to store array metadata")?;
+    array
+        .store_chunk(&[], vec![value.to_string()])
+        .store_err("failed to store array")
+}
+
+/// Reads back a string written by `write_string_scalar`.
+fn read_string_scalar(store: &ReadableWritableListableStorage, path: &str) -> Result<String> {
+    let array = Array::open(store.clone(), path).store_err("failed to open array")?;
+    let mut values = array
+        .retrieve_array_subset::<Vec<String>>(&array.subset_all())
+        .store_err("failed to retrieve array")?;
+    Ok(values.remove(0))
 }
 
 #[cfg(test)]

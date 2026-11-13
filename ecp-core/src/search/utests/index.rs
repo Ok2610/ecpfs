@@ -274,7 +274,7 @@ fn exhausted_query_is_erased_not_persisted() {
     index.shutdown().unwrap();
 
     assert!(
-        persistence::load_query(&index.store, query_id)
+        persistence::load_query(&index.store, query_id, index.levels as usize)
             .unwrap()
             .is_none(),
         "an exhausted query must have been erased, not persisted"
@@ -297,7 +297,7 @@ fn a_search_alone_does_not_save_its_query_to_disk() {
     index.queries.run_pending_tasks();
 
     assert!(
-        persistence::load_query(&index.store, query_id)
+        persistence::load_query(&index.store, query_id, index.levels as usize)
             .unwrap()
             .is_none(),
         "a search must not save its query; only eviction or shutdown does"
@@ -324,7 +324,7 @@ fn a_query_evicted_during_a_search_is_saved_to_disk() {
         "sanity check: the query must be evicted"
     );
     assert!(
-        persistence::load_query(&index.store, query_id)
+        persistence::load_query(&index.store, query_id, index.levels as usize)
             .unwrap()
             .is_some(),
         "an evicted query must be saved so it can be resumed"
@@ -390,7 +390,9 @@ fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
     }
 
     for query_id in 0..(THREADS * SEARCHES_PER_THREAD) {
-        if let Some(state) = persistence::load_query(&index.store, query_id).unwrap() {
+        if let Some(state) =
+            persistence::load_query(&index.store, query_id, index.levels as usize).unwrap()
+        {
             let scores: Vec<f32> = state.items.iter().map(|(s, _)| s.into_inner()).collect();
             assert!(
                 scores.windows(2).all(|w| w[0] <= w[1]),
@@ -461,7 +463,7 @@ fn end_search_drops_the_query_without_saving_it() {
     assert!(next.is_empty(), "an ended query must return nothing");
     index.shutdown().unwrap();
     assert!(
-        persistence::load_query(&index.store, query_id)
+        persistence::load_query(&index.store, query_id, index.levels as usize)
             .unwrap()
             .is_none(),
         "shutdown must not save an ended query"
@@ -480,9 +482,13 @@ fn end_search_erases_a_saved_query() {
         .unwrap();
     first_process.shutdown().unwrap();
     assert!(
-        persistence::load_query(&first_process.store, query_id)
-            .unwrap()
-            .is_some(),
+        persistence::load_query(
+            &first_process.store,
+            query_id,
+            first_process.levels as usize
+        )
+        .unwrap()
+        .is_some(),
         "sanity check: shutdown must save the query"
     );
 
@@ -491,9 +497,13 @@ fn end_search_erases_a_saved_query() {
     second_process.end_search(query_id).unwrap();
 
     assert!(
-        persistence::load_query(&second_process.store, query_id)
-            .unwrap()
-            .is_none(),
+        persistence::load_query(
+            &second_process.store,
+            query_id,
+            second_process.levels as usize
+        )
+        .unwrap()
+        .is_none(),
         "end_search must erase the saved query"
     );
 }
@@ -569,7 +579,7 @@ fn flush_queries_saves_every_open_query_and_empties_the_query_cache() {
     assert_eq!(index.queries.entry_count(), 0);
     for query_id in [first_id, second_id] {
         assert!(
-            persistence::load_query(&index.store, query_id)
+            persistence::load_query(&index.store, query_id, index.levels as usize)
                 .unwrap()
                 .is_some(),
             "query_id={query_id} must be saved"
@@ -689,9 +699,13 @@ fn cleanup_persisted_queries_erases_saved_queries_and_leaves_open_ones() {
 
     assert_eq!(second_process.cleanup_persisted_queries().unwrap(), 1);
     assert!(
-        persistence::load_query(&second_process.store, saved_id)
-            .unwrap()
-            .is_none(),
+        persistence::load_query(
+            &second_process.store,
+            saved_id,
+            second_process.levels as usize
+        )
+        .unwrap()
+        .is_none(),
         "the saved query must be erased"
     );
     let next = second_process

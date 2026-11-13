@@ -9,7 +9,7 @@ use zarrs::storage::{
     ReadableWritableListableStorage, StorePrefix, WritableStorageTraits, discover_children,
 };
 
-use super::query::{HeapEntry, QueryState};
+use super::query::{Frontier, HeapEntry, QueryState};
 use crate::error::{EcpError, Result, ResultExt};
 
 /// Returns the store path that query `query_id` is saved under.
@@ -30,11 +30,11 @@ pub(super) fn persist_query(
     write_f32_array(store, &format!("{base}/query"), state.query.to_vec())?;
 
     // One array per HeapEntry field, and per items tuple field
-    let mut tree_pq_score = Vec::with_capacity(state.tree_pq.len());
-    let mut tree_pq_is_leaf = Vec::with_capacity(state.tree_pq.len());
-    let mut tree_pq_level = Vec::with_capacity(state.tree_pq.len());
-    let mut tree_pq_node_id = Vec::with_capacity(state.tree_pq.len());
-    for entry in &state.tree_pq {
+    let mut tree_pq_score = Vec::with_capacity(state.frontier.len());
+    let mut tree_pq_is_leaf = Vec::with_capacity(state.frontier.len());
+    let mut tree_pq_level = Vec::with_capacity(state.frontier.len());
+    let mut tree_pq_node_id = Vec::with_capacity(state.frontier.len());
+    for entry in state.frontier.iter() {
         tree_pq_score.push(entry.score.into_inner());
         tree_pq_is_leaf.push(entry.is_leaf);
         tree_pq_level.push(entry.level);
@@ -78,7 +78,7 @@ pub(super) fn persist_or_erase(
     query_id: usize,
     state: &QueryState,
 ) -> Result<()> {
-    if state.tree_pq.is_empty() && state.items.is_empty() {
+    if state.frontier.is_empty() && state.items.is_empty() {
         erase_query(store, query_id)
     } else {
         persist_query(store, query_id, state)
@@ -193,7 +193,7 @@ pub(super) fn load_query(
 
     Ok(Some(QueryState {
         query,
-        tree_pq,
+        frontier: Frontier::BestFirst(tree_pq),
         items,
         exclude,
     }))

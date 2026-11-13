@@ -231,7 +231,7 @@ fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
     );
 }
 
-/// Excluding every item leaves both `tree_pq` and `items` empty once the
+/// Excluding every item leaves both `frontier` and `items` empty once the
 /// search ends, so `shutdown` must erase the query.
 #[test]
 fn exhausted_query_is_erased_not_persisted() {
@@ -545,7 +545,7 @@ fn a_flushed_query_resumes_and_new_searches_still_run() {
     );
 }
 
-/// Excluding every item leaves both `tree_pq` and `items` empty.
+/// Excluding every item leaves both `frontier` and `items` empty.
 #[test]
 fn flush_queries_leaves_a_query_with_nothing_to_save_in_memory() {
     let index = build_test_index();

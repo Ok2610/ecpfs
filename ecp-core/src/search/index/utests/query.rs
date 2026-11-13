@@ -22,7 +22,7 @@ fn l2_search_returns_nearest_items_in_order() {
     );
 }
 
-/// A search that ends by running `tree_pq` dry, before `search_exp` leaves
+/// A search that ends by running `frontier` dry, before `search_exp` leaves
 /// are explored, must still return sorted items. `search_exp=100` against a
 /// 4-leaf tree forces that exit.
 #[test]
@@ -274,7 +274,7 @@ fn incremental_search_returns_how_many_leaves_it_visited() {
         query_id,
         Arc::new(Mutex::new(QueryState {
             query: array![0.0, 0.0],
-            tree_pq: BinaryHeap::new(),
+            frontier: Frontier::BestFirst(BinaryHeap::new()),
             items: Vec::new(),
             exclude: HashSet::new(),
         })),

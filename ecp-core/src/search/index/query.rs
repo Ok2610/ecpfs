@@ -9,18 +9,47 @@ use super::{Index, persistence};
 use crate::error::{EcpError, Result};
 use crate::metric::{Metric, calculate_distances};
 
+mod best_first;
+
 /// Items a search found, as `(score, item_id)` pairs.
 pub type ScoredItems = Vec<(NotNan<f32>, u32)>;
 
 /// One open query's search state.
 pub(super) struct QueryState {
     pub(super) query: Array1<f32>,
-    /// Nodes still to explore, best score first.
-    pub(super) tree_pq: BinaryHeap<HeapEntry>,
+    /// Nodes still to explore.
+    pub(super) frontier: Frontier,
     /// Items found but not yet returned, as `(score, item_id)`, best first.
     pub(super) items: ScoredItems,
     /// Item ids left out of every result, the union of each call's `exclude`.
     pub(super) exclude: HashSet<u32>,
+}
+
+/// The nodes a query has queued but not yet visited, held the way its search strategy needs.
+pub(super) enum Frontier {
+    /// One heap across every level, best score first.
+    BestFirst(BinaryHeap<HeapEntry>),
+}
+
+impl Frontier {
+    /// Number of queued nodes.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Frontier::BestFirst(heap) => heap.len(),
+        }
+    }
+
+    /// True when no node is queued.
+    pub(super) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Iterates over the queued nodes in no particular order.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &HeapEntry> {
+        match self {
+            Frontier::BestFirst(heap) => heap.iter(),
+        }
+    }
 }
 
 impl QueryState {
@@ -66,6 +95,21 @@ impl Ord for HeapEntry {
     }
 }
 
+/// The parts of a query's state that visiting a node reads or fills.
+struct Visit<'a> {
+    query: &'a Array1<f32>,
+    items: &'a mut ScoredItems,
+    exclude: &'a HashSet<u32>,
+}
+
+/// What [`Index::visit_node`] found at a node.
+enum Visited {
+    /// The build never wrote the node.
+    Unwritten,
+    Leaf,
+    Internal,
+}
+
 const QUERY_NEVER_PERSISTED: &str = "query was never persisted";
 
 impl Index {
@@ -100,6 +144,111 @@ impl Index {
         }
     }
 
+    /// Returns the factor that turns a distance into a heap score, where higher is closer.
+    fn score_sign(&self) -> f32 {
+        // BinaryHeap pops the largest score first, so negate L2's distance
+        // to make the nearest node the largest.
+        match self.metric {
+            Metric::L2 => -1.0,
+            Metric::IP => 1.0,
+        }
+    }
+
+    /// Scores every root entry against `query` and pushes it onto `heap`.
+    fn queue_root(&self, query: &Array1<f32>, heap: &mut BinaryHeap<HeapEntry>) -> Result<()> {
+        let sign = self.score_sign();
+        let root_distances: Array1<f32> =
+            calculate_distances(&self.root, query, &self.metric, self.is_normalized)?;
+        // In a 1-level index, root's entries point straight at leaves.
+        let is_root_leaf = self.levels == 1;
+        for i in 0..root_distances.len() {
+            heap.push(HeapEntry {
+                score: NotNan::new(sign * root_distances[i]).unwrap(),
+                is_leaf: is_root_leaf as i32,
+                level: 0,
+                node_id: i as u32,
+            });
+        }
+        Ok(())
+    }
+
+    /// Scores the node `entry` names against the query. A leaf adds its items to `items`,
+    /// except the exclude set; an internal node pushes its children onto `children_into`.
+    fn visit_node(
+        &self,
+        entry: &HeapEntry,
+        visit: &mut Visit,
+        children_into: &mut BinaryHeap<HeapEntry>,
+    ) -> Result<Visited> {
+        let &HeapEntry {
+            is_leaf,
+            level,
+            node_id,
+            ..
+        } = entry;
+        let lvl = level as usize;
+        let sign = self.score_sign();
+        log::trace!("visiting node lvl={lvl} node={node_id} is_leaf={is_leaf}");
+        let node = self.node_at(lvl, node_id);
+        // Skip an id that was never written to disk
+        let embeddings_f32: &Array2<f32> = match node.embeddings()? {
+            Some(embs) => embs,
+            None => {
+                log::debug!("lvl={lvl} node={node_id} has no embeddings on disk, skipping");
+                return Ok(Visited::Unwritten);
+            }
+        };
+
+        let distances: Array1<f32> = calculate_distances(
+            embeddings_f32,
+            visit.query,
+            &self.metric,
+            self.is_normalized,
+        )?;
+        let children = node.children()?.ok_or_else(|| {
+            EcpError::Corrupt(format!(
+                "{} has embeddings but no children, likely an interrupted write",
+                node.group_path
+            ))
+        })?;
+        let visited = if is_leaf == 1 {
+            // For a leaf, collect its items. items sorts ascending, so flip
+            // the heap's score back to lower-is-better.
+            let before = visit.items.len();
+            for i in 0..distances.len() {
+                if !visit.exclude.contains(&children[i]) {
+                    visit
+                        .items
+                        .push((NotNan::new(-sign * distances[i]).unwrap(), children[i]));
+                }
+            }
+            log::trace!(
+                "lvl={lvl} node={node_id}: collected {} of {} items",
+                visit.items.len() - before,
+                distances.len()
+            );
+            Visited::Leaf
+        } else {
+            // For an internal node, queue its children
+            let children_are_leaves = level + 1 == self.levels - 1;
+            for i in 0..distances.len() {
+                children_into.push(HeapEntry {
+                    score: NotNan::new(sign * distances[i]).unwrap(),
+                    is_leaf: children_are_leaves as i32,
+                    level: level + 1,
+                    node_id: children[i],
+                });
+            }
+            Visited::Internal
+        };
+
+        // Read the node's arrays into cache
+        if self.memory_limit_bytes.is_some() {
+            self.nodes.insert((lvl, node_id), node.clone());
+        }
+        Ok(visited)
+    }
+
     /// Searches for `query` and returns the `k` best items as `(score, item_id)` pairs, lowest
     /// score first (L2 distance, or negated inner product for IP), plus the query id. The query
     /// keeps `exclude` and never returns those ids. Other arguments: [`Self::incremental_search`].
@@ -123,7 +272,7 @@ impl Index {
             query_id,
             Arc::new(Mutex::new(QueryState {
                 query,
-                tree_pq: BinaryHeap::new(),
+                frontier: Frontier::BestFirst(BinaryHeap::new()),
                 items: Vec::new(),
                 exclude: exclude.clone(),
             })),
@@ -156,124 +305,30 @@ impl Index {
         let Some(state_arc) = self.get_or_load_query(query_id)? else {
             return Ok(0);
         };
-        let mut leaf_cnt = 0;
-        {
+        let leaf_cnt = {
             let mut state = state_arc.lock().unwrap();
             let QueryState {
                 query,
-                tree_pq,
+                frontier,
                 items,
                 exclude,
             } = &mut *state;
-
-            // BinaryHeap pops the largest score first, so negate L2's distance
-            // to make the nearest node the largest.
-            let sign = match self.metric {
-                Metric::L2 => -1.0,
-                Metric::IP => 1.0,
+            let mut visit = Visit {
+                query,
+                items,
+                exclude,
             };
-            let mut search_exp = search_exp;
 
-            let mut increments = 0;
-
-            // On the first call, queue every root entry
-            if tree_pq.is_empty() {
-                let root_distances: Array1<f32> =
-                    calculate_distances(&self.root, query, &self.metric, self.is_normalized)?;
-                // In a 1-level index, root's entries point straight at leaves.
-                let is_root_leaf = self.levels == 1;
-                for i in 0..root_distances.len() {
-                    tree_pq.push(HeapEntry {
-                        score: NotNan::new(sign * root_distances[i]).unwrap(),
-                        is_leaf: is_root_leaf as i32,
-                        level: 0,
-                        node_id: i as u32,
-                    });
+            let leaf_cnt = match frontier {
+                Frontier::BestFirst(heap) => {
+                    self.best_first(query_id, &mut visit, heap, k, search_exp, max_increments)?
                 }
-            }
+            };
 
-            while !tree_pq.is_empty() {
-                let HeapEntry {
-                    score: _,
-                    is_leaf,
-                    level,
-                    node_id,
-                } = tree_pq.pop().unwrap();
-                let lvl = level as usize;
-                log::trace!("visiting node lvl={lvl} node={node_id} is_leaf={is_leaf}");
-                let node = self.node_at(lvl, node_id);
-                // Skip an id that was never written to disk
-                let embeddings_f32: &Array2<f32> = match node.embeddings()? {
-                    Some(embs) => embs,
-                    None => {
-                        log::debug!("lvl={lvl} node={node_id} has no embeddings on disk, skipping");
-                        continue;
-                    }
-                };
-
-                let distances: Array1<f32> =
-                    calculate_distances(embeddings_f32, query, &self.metric, self.is_normalized)?;
-                let children = node.children()?.ok_or_else(|| {
-                    EcpError::Corrupt(format!(
-                        "{} has embeddings but no children, likely an interrupted write",
-                        node.group_path
-                    ))
-                })?;
-                if is_leaf == 1 {
-                    // For a leaf, collect its items. items sorts ascending, so flip
-                    // the heap's score back to lower-is-better.
-                    let before = items.len();
-                    for i in 0..distances.len() {
-                        if !exclude.contains(&children[i]) {
-                            items.push((NotNan::new(-sign * distances[i]).unwrap(), children[i]));
-                        }
-                    }
-                    log::trace!(
-                        "lvl={lvl} node={node_id}: collected {} of {} items",
-                        items.len() - before,
-                        distances.len()
-                    );
-                    leaf_cnt += 1;
-                } else {
-                    // For an internal node, queue its children
-                    let children_are_leaves = level + 1 == self.levels - 1;
-                    for i in 0..distances.len() {
-                        tree_pq.push(HeapEntry {
-                            score: NotNan::new(sign * distances[i]).unwrap(),
-                            is_leaf: children_are_leaves as i32,
-                            level: level + 1,
-                            node_id: children[i],
-                        });
-                    }
-                }
-
-                // Read the node's arrays into cache
-                if self.memory_limit_bytes.is_some() {
-                    self.nodes.insert((lvl, node_id), node.clone());
-                }
-
-                // After search_exp leaves, stop or double search_exp
-                if leaf_cnt == search_exp {
-                    if items.len() >= k {
-                        break;
-                    }
-                    if increments < max_increments || max_increments == -1 {
-                        increments += 1;
-                        search_exp *= 2;
-                        log::debug!(
-                            "query_id={query_id}: only {} of {k} items after {leaf_cnt} leaves, \
-                             doubling search_exp to {search_exp}",
-                            items.len()
-                        );
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            // Sort once, whichever way the loop ended
-            items.sort_unstable_by_key(|&(first, _)| first);
-        }
+            // Sort once, whichever way the search ended
+            visit.items.sort_unstable_by_key(|&(first, _)| first);
+            leaf_cnt
+        };
 
         // Read the query's updated state into cache
         if self.memory_limit_bytes.is_some() {
@@ -310,7 +365,7 @@ impl Index {
                 "get_next_k_items: query_id={query_id} k={k} search_exp={search_exp} \
                  max_increments={max_increments} exclude={exclude:?}"
             );
-            state.items.len() < k && !state.tree_pq.is_empty()
+            state.items.len() < k && !state.frontier.is_empty()
         };
         let leaf_nodes_scanned = if needs_more_search {
             self.incremental_search(query_id, k, search_exp, max_increments)?

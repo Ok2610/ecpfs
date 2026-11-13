@@ -2,9 +2,9 @@ use super::*;
 use crate::test_fixtures::{as_readable_writable_listable, new_memory_store};
 use ndarray::array;
 
-/// Returns the heap's entries as sorted tuples, so two heaps can be compared.
-fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)> {
-    let mut entries: Vec<_> = heap
+/// Returns the frontier's entries as sorted tuples, so two frontiers can be compared.
+fn frontier_entries_sorted(frontier: &Frontier) -> Vec<(f32, i32, u32, u32)> {
+    let mut entries: Vec<_> = frontier
         .iter()
         .map(|e| (e.score.into_inner(), e.is_leaf, e.level, e.node_id))
         .collect();
@@ -17,7 +17,7 @@ fn heap_entries_sorted(heap: &BinaryHeap<HeapEntry>) -> Vec<(f32, i32, u32, u32)
 fn sample_state() -> QueryState {
     QueryState {
         query: array![1.0f32, 2.0, 3.0],
-        tree_pq: BinaryHeap::from(vec![
+        frontier: Frontier::BestFirst(BinaryHeap::from(vec![
             HeapEntry {
                 score: NotNan::new(0.5).unwrap(),
                 is_leaf: 0,
@@ -30,7 +30,7 @@ fn sample_state() -> QueryState {
                 level: 2,
                 node_id: 3,
             },
-        ]),
+        ])),
         items: vec![
             (NotNan::new(0.1).unwrap(), 42),
             (NotNan::new(0.9).unwrap(), 99),
@@ -59,8 +59,8 @@ fn round_trip_preserves_non_empty_state() {
 
     assert_eq!(loaded.query, original.query);
     assert_eq!(
-        heap_entries_sorted(&loaded.tree_pq),
-        heap_entries_sorted(&original.tree_pq)
+        frontier_entries_sorted(&loaded.frontier),
+        frontier_entries_sorted(&original.frontier)
     );
     assert_eq!(loaded.items, original.items);
     assert_eq!(loaded.exclude, original.exclude);
@@ -98,7 +98,7 @@ fn round_trip_preserves_items_only_state() {
     let store = as_readable_writable_listable(&new_memory_store());
     let original = QueryState {
         query: array![0.0f32, 0.0],
-        tree_pq: BinaryHeap::new(),
+        frontier: Frontier::BestFirst(BinaryHeap::new()),
         items: vec![(NotNan::new(0.3).unwrap(), 4)],
         exclude: HashSet::new(),
     };
@@ -108,7 +108,7 @@ fn round_trip_preserves_items_only_state() {
         .unwrap()
         .expect("just-persisted query must load");
 
-    assert!(loaded.tree_pq.is_empty());
+    assert!(loaded.frontier.is_empty());
     assert_eq!(loaded.items, original.items);
 }
 
@@ -120,7 +120,7 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
 
     let smaller = QueryState {
         query: array![9.0f32],
-        tree_pq: BinaryHeap::new(),
+        frontier: Frontier::BestFirst(BinaryHeap::new()),
         items: vec![(NotNan::new(1.0).unwrap(), 1)],
         exclude: HashSet::new(),
     };
@@ -141,7 +141,7 @@ fn repersisting_with_fewer_entries_drops_the_old_ones() {
         .unwrap()
         .expect("just-persisted query must load");
     assert_eq!(loaded.query, smaller.query);
-    assert!(loaded.tree_pq.is_empty());
+    assert!(loaded.frontier.is_empty());
     assert_eq!(loaded.items, smaller.items);
 }
 
@@ -159,7 +159,7 @@ fn persist_or_erase_erases_an_empty_state() {
 
     let empty = QueryState {
         query: array![0.0f32],
-        tree_pq: BinaryHeap::new(),
+        frontier: Frontier::BestFirst(BinaryHeap::new()),
         items: Vec::new(),
         exclude: HashSet::new(),
     };

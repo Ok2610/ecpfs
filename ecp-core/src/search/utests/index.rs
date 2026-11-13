@@ -19,7 +19,9 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
     index.set_memory_limit_bytes(Some(40));
     let query: Array1<f32> = array![0.0, 0.0];
 
-    let (items, _query_id) = index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
+    let (items, _query_id) = index
+        .new_search(query, 4, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(
@@ -45,7 +47,9 @@ fn a_tight_memory_limit_evicts_but_still_searches_correctly() {
 fn set_memory_limit_bytes_evicts_immediately_if_already_over_the_new_limit() {
     let mut index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
-    index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
+    index
+        .new_search(query, 4, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     index.nodes.run_pending_tasks();
     assert_eq!(
         index.nodes.entry_count(),
@@ -76,7 +80,9 @@ fn an_index_without_is_normalized_scores_as_not_normalized() {
 
     let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (items, _) = index.new_search(query, 2, 4, -1, &HashSet::new()).unwrap();
+    let (items, _) = index
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     let ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
     assert_eq!(ids, vec![0, 1]);
@@ -132,7 +138,7 @@ fn shutdown_then_reload_resumes_a_query_from_a_fresh_index() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (first, query_id) = first_process
-        .new_search(query, 2, 4, -1, &HashSet::new())
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
     assert_eq!(
         first.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
@@ -164,7 +170,9 @@ fn shutdown_then_reload_keeps_the_exclude_set() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = [2].into_iter().collect();
-    let (_, query_id) = first_process.new_search(query, 1, 1, -1, &exclude).unwrap();
+    let (_, query_id) = first_process
+        .new_search(query, 1, 1, -1, &exclude, SearchStrategy::BestFirst)
+        .unwrap();
     first_process.shutdown().unwrap();
 
     let second_process =
@@ -186,14 +194,21 @@ fn next_query_id_is_seeded_above_every_persisted_id_after_reload() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = first_process
-        .new_search(query.clone(), 2, 4, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            2,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     first_process.shutdown().unwrap();
 
     let second_process =
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let (_, new_id) = second_process
-        .new_search(query, 2, 4, -1, &HashSet::new())
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
     assert!(
         new_id > query_id,
@@ -206,7 +221,14 @@ fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = index
-        .new_search(query.clone(), 2, 4, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            2,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     index.shutdown().unwrap();
 
@@ -218,7 +240,9 @@ fn shutdown_blocks_subsequent_calls_on_the_same_instance() {
         "get_next_k_items must no-op after shutdown"
     );
 
-    let (new_items, new_id) = index.new_search(query, 2, 4, -1, &HashSet::new()).unwrap();
+    let (new_items, new_id) = index
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     assert!(new_items.is_empty(), "new_search must no-op after shutdown");
     assert_ne!(new_id, query_id, "a fresh id is still allocated");
 
@@ -240,7 +264,9 @@ fn exhausted_query_is_erased_not_persisted() {
     let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = (0..8).collect();
-    let (items, query_id) = index.new_search(query, 4, 4, -1, &exclude).unwrap();
+    let (items, query_id) = index
+        .new_search(query, 4, 4, -1, &exclude, SearchStrategy::BestFirst)
+        .unwrap();
     assert!(
         items.is_empty(),
         "sanity check: excluding every item must leave nothing found"
@@ -265,7 +291,9 @@ fn a_search_alone_does_not_save_its_query_to_disk() {
     let index =
         Index::load_from_store(as_readable_writable_listable(&store), Some(1 << 20)).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (_, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new()).unwrap();
+    let (_, query_id) = index
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     index.queries.run_pending_tasks();
 
     assert!(
@@ -285,7 +313,9 @@ fn a_query_evicted_during_a_search_is_saved_to_disk() {
     // The query cache gets 5% of this, well under one QueryState's weight.
     let index = Index::load_from_store(as_readable_writable_listable(&store), Some(400)).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (_, query_id) = index.new_search(query, 2, 4, -1, &HashSet::new()).unwrap();
+    let (_, query_id) = index
+        .new_search(query, 2, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     index.queries.run_pending_tasks();
 
     assert_eq!(
@@ -307,7 +337,9 @@ fn evicted_query_resumes_correctly_within_the_same_process() {
 
     let mut index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (first, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let (first, query_id) = index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     assert_eq!(first.iter().map(|(_, id)| *id).collect::<Vec<_>>(), vec![0]);
 
     // Below any QueryState's weight, so the query is evicted right away.
@@ -343,7 +375,9 @@ fn shutdown_racing_concurrent_searches_leaves_persisted_state_coherent() {
             std::thread::spawn(move || {
                 for _ in 0..SEARCHES_PER_THREAD {
                     let query: Array1<f32> = array![0.0, 0.0];
-                    let _ = index.new_search(query, 4, 4, -1, &HashSet::new()).unwrap();
+                    let _ = index
+                        .new_search(query, 4, 4, -1, &HashSet::new(), SearchStrategy::BestFirst)
+                        .unwrap();
                 }
             })
         })
@@ -374,7 +408,14 @@ fn repersisting_after_more_progress_reflects_the_latest_state() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = first_process
-        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            1,
+            1,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     first_process.shutdown().unwrap();
 
@@ -409,7 +450,9 @@ fn end_search_drops_the_query_without_saving_it() {
 
     let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let (_, query_id) = index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     index.end_search(query_id).unwrap();
 
     let next = index
@@ -433,7 +476,7 @@ fn end_search_erases_a_saved_query() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = first_process
-        .new_search(query, 1, 1, -1, &HashSet::new())
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
     first_process.shutdown().unwrap();
     assert!(
@@ -473,7 +516,14 @@ fn ended_searches_are_not_saved_when_the_query_cache_fills() {
             Index::load_from_store(as_readable_writable_listable(&store), Some(3000)).unwrap();
         for _ in 0..10 {
             let (_, query_id) = index
-                .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+                .new_search(
+                    query.clone(),
+                    1,
+                    1,
+                    -1,
+                    &HashSet::new(),
+                    SearchStrategy::BestFirst,
+                )
                 .unwrap();
             if end_each {
                 index.end_search(query_id).unwrap();
@@ -501,9 +551,18 @@ fn flush_queries_saves_every_open_query_and_empties_the_query_cache() {
     let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, first_id) = index
-        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            1,
+            1,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
-    let (_, second_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let (_, second_id) = index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     assert_eq!(index.flush_queries(), (2, 0));
     index.queries.run_pending_tasks();
@@ -525,7 +584,14 @@ fn a_flushed_query_resumes_and_new_searches_still_run() {
     let index = Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, query_id) = index
-        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            1,
+            1,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     index.flush_queries();
 
@@ -537,7 +603,9 @@ fn a_flushed_query_resumes_and_new_searches_still_run() {
         vec![1],
         "a flushed query must resume from disk"
     );
-    let (fresh, _) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let (fresh, _) = index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
     assert_eq!(
         fresh.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![0],
@@ -551,7 +619,9 @@ fn flush_queries_leaves_a_query_with_nothing_to_save_in_memory() {
     let index = build_test_index();
     let query: Array1<f32> = array![0.0, 0.0];
     let exclude: HashSet<u32> = (0..8).collect();
-    index.new_search(query, 4, 4, -1, &exclude).unwrap();
+    index
+        .new_search(query, 4, 4, -1, &exclude, SearchStrategy::BestFirst)
+        .unwrap();
 
     assert_eq!(index.flush_queries(), (0, 0));
     index.queries.run_pending_tasks();
@@ -564,7 +634,9 @@ fn a_query_that_fails_to_save_stays_in_memory() {
 
     let index = Index::load_from_store(as_store_failing_query_writes(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    let (_, query_id) = index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    let (_, query_id) = index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     assert_eq!(index.flush_queries(), (0, 1));
     let next = index
@@ -583,7 +655,9 @@ fn shutdown_returns_err_when_a_query_fails_to_save() {
 
     let index = Index::load_from_store(as_store_failing_query_writes(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
-    index.new_search(query, 1, 1, -1, &HashSet::new()).unwrap();
+    index
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
+        .unwrap();
 
     assert!(matches!(index.shutdown(), Err(EcpError::Store(_))));
 }
@@ -596,14 +670,21 @@ fn cleanup_persisted_queries_erases_saved_queries_and_leaves_open_ones() {
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let query: Array1<f32> = array![0.0, 0.0];
     let (_, saved_id) = first_process
-        .new_search(query.clone(), 1, 1, -1, &HashSet::new())
+        .new_search(
+            query.clone(),
+            1,
+            1,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     first_process.shutdown().unwrap();
 
     let second_process =
         Index::load_from_store(as_readable_writable_listable(&store), None).unwrap();
     let (_, open_id) = second_process
-        .new_search(query, 1, 1, -1, &HashSet::new())
+        .new_search(query, 1, 1, -1, &HashSet::new(), SearchStrategy::BestFirst)
         .unwrap();
 
     assert_eq!(second_process.cleanup_persisted_queries().unwrap(), 1);
@@ -628,7 +709,14 @@ fn insert_invalidates_exactly_the_touched_cache_entry() {
     let index = build_test_index();
     // search_exp=4 visits all 4 leaves, so every node ends up cached.
     index
-        .new_search(array![0.0f32, 0.0], 4, 4, -1, &HashSet::new())
+        .new_search(
+            array![0.0f32, 0.0],
+            4,
+            4,
+            -1,
+            &HashSet::new(),
+            SearchStrategy::BestFirst,
+        )
         .unwrap();
     index.nodes.run_pending_tasks();
     let before: Vec<((usize, u32), Arc<Node>)> =
@@ -689,7 +777,14 @@ fn concurrent_inserts_to_different_leaves_all_land() {
 
         for (id, point) in assigned {
             let (items, _) = index
-                .new_search(Array1::from_vec(point.to_vec()), 1, 4, -1, &HashSet::new())
+                .new_search(
+                    Array1::from_vec(point.to_vec()),
+                    1,
+                    4,
+                    -1,
+                    &HashSet::new(),
+                    SearchStrategy::BestFirst,
+                )
                 .unwrap();
             assert_eq!(
                 items.iter().map(|(_, i)| *i).collect::<Vec<_>>(),
@@ -715,7 +810,14 @@ fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
                 searcher_barrier.wait();
                 for _ in 0..50 {
                     searcher
-                        .new_search(array![0.0f32, 0.0], 10, 4, -1, &HashSet::new())
+                        .new_search(
+                            array![0.0f32, 0.0],
+                            10,
+                            4,
+                            -1,
+                            &HashSet::new(),
+                            SearchStrategy::BestFirst,
+                        )
                         .unwrap();
                 }
             });
@@ -737,7 +839,14 @@ fn concurrent_insert_and_search_on_the_same_leaf_do_not_corrupt_data() {
         });
 
         let (items, _) = index
-            .new_search(array![0.0f32, 0.0], 12, 4, -1, &HashSet::new())
+            .new_search(
+                array![0.0f32, 0.0],
+                12,
+                4,
+                -1,
+                &HashSet::new(),
+                SearchStrategy::BestFirst,
+            )
             .unwrap();
         let mut ids: Vec<u32> = items.iter().map(|(_, id)| *id).collect();
         ids.sort_unstable();

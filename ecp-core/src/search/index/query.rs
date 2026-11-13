@@ -10,9 +10,21 @@ use crate::error::{EcpError, Result};
 use crate::metric::{Metric, calculate_distances};
 
 mod best_first;
+mod level_beam;
 
 /// Items a search found, as `(score, item_id)` pairs.
 pub type ScoredItems = Vec<(NotNan<f32>, u32)>;
+
+/// The order a search visits the tree's nodes in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchStrategy {
+    /// Visits the best-scoring queued node next, whatever its level.
+    #[default]
+    BestFirst,
+    /// Visits the `search_exp` best nodes on each level, from the root down. A resumed
+    /// search starts at the deepest level holding that many nodes.
+    LevelBeam,
+}
 
 /// One open query's search state.
 pub(super) struct QueryState {
@@ -29,13 +41,24 @@ pub(super) struct QueryState {
 pub(super) enum Frontier {
     /// One heap across every level, best score first.
     BestFirst(BinaryHeap<HeapEntry>),
+    /// One heap per level, indexed by 0-based level, best score first.
+    LevelBeam(Vec<BinaryHeap<HeapEntry>>),
 }
 
 impl Frontier {
+    /// Creates an empty frontier for `strategy` on an index with `levels` levels.
+    pub(super) fn new(strategy: SearchStrategy, levels: usize) -> Self {
+        match strategy {
+            SearchStrategy::BestFirst => Frontier::BestFirst(BinaryHeap::new()),
+            SearchStrategy::LevelBeam => Frontier::LevelBeam(vec![BinaryHeap::new(); levels]),
+        }
+    }
+
     /// Number of queued nodes.
     pub(super) fn len(&self) -> usize {
         match self {
             Frontier::BestFirst(heap) => heap.len(),
+            Frontier::LevelBeam(heaps) => heaps.iter().map(BinaryHeap::len).sum(),
         }
     }
 
@@ -45,9 +68,10 @@ impl Frontier {
     }
 
     /// Iterates over the queued nodes in no particular order.
-    pub(super) fn iter(&self) -> impl Iterator<Item = &HeapEntry> {
+    pub(super) fn iter(&self) -> Box<dyn Iterator<Item = &HeapEntry> + '_> {
         match self {
-            Frontier::BestFirst(heap) => heap.iter(),
+            Frontier::BestFirst(heap) => Box::new(heap.iter()),
+            Frontier::LevelBeam(heaps) => Box::new(heaps.iter().flat_map(BinaryHeap::iter)),
         }
     }
 }
@@ -111,6 +135,16 @@ enum Visited {
 }
 
 const QUERY_NEVER_PERSISTED: &str = "query was never persisted";
+
+/// Rejects a `search_exp` of 0, since a search that visits no node can't find items.
+fn check_search_exp(search_exp: u32) -> Result<()> {
+    if search_exp == 0 {
+        return Err(EcpError::InvalidInput(
+            "search_exp must be at least 1".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 impl Index {
     /// Gets the state of query `query_id` from the cache, or from disk on a
@@ -259,20 +293,22 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
         exclude: &HashSet<u32>,
+        strategy: SearchStrategy,
     ) -> Result<(ScoredItems, usize)> {
+        check_search_exp(search_exp)?;
         let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
         if !self.accepting.load(Ordering::SeqCst) {
             return Ok((Vec::new(), query_id));
         }
         log::debug!(
             "new_search: query_id={query_id} k={k} search_exp={search_exp} \
-             max_increments={max_increments} exclude={exclude:?}"
+             max_increments={max_increments} exclude={exclude:?} strategy={strategy:?}"
         );
         self.queries.insert(
             query_id,
             Arc::new(Mutex::new(QueryState {
                 query,
-                frontier: Frontier::BestFirst(BinaryHeap::new()),
+                frontier: Frontier::new(strategy, self.levels as usize),
                 items: Vec::new(),
                 exclude: exclude.clone(),
             })),
@@ -287,10 +323,10 @@ impl Index {
         Ok((items, query_id))
     }
 
-    /// Scores `search_exp` more leaves for query `query_id`, buffering their items
-    /// except the query's excluded ids. If fewer than `k` items are buffered by then, it
-    /// doubles `search_exp` and goes on, at most `max_increments` times (`-1` for no limit).
-    /// Returns how many leaves this call visited.
+    /// Searches further for query `query_id` in its [`SearchStrategy`]'s order, buffering items
+    /// except the query's excluded ids. A round visits `search_exp` leaves (BestFirst) or nodes per
+    /// level (LevelBeam); while fewer than `k` items are buffered, `search_exp` doubles, at most
+    /// `max_increments` times (`-1` for no limit). Returns how many leaves this call visited.
     pub fn incremental_search(
         &self,
         query_id: usize,
@@ -298,6 +334,7 @@ impl Index {
         search_exp: u32,
         max_increments: i32,
     ) -> Result<u32> {
+        check_search_exp(search_exp)?;
         // No-op after shutdown or for an unknown query_id
         if !self.accepting.load(Ordering::SeqCst) {
             return Ok(0);
@@ -322,6 +359,9 @@ impl Index {
             let leaf_cnt = match frontier {
                 Frontier::BestFirst(heap) => {
                     self.best_first(query_id, &mut visit, heap, k, search_exp, max_increments)?
+                }
+                Frontier::LevelBeam(heaps) => {
+                    self.level_beam(query_id, &mut visit, heaps, k, search_exp, max_increments)?
                 }
             };
 
@@ -348,6 +388,7 @@ impl Index {
         max_increments: i32,
         exclude: &HashSet<u32>,
     ) -> Result<ScoredItems> {
+        check_search_exp(search_exp)?;
         if !self.accepting.load(Ordering::SeqCst) {
             return Ok(Vec::new());
         }

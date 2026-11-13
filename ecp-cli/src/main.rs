@@ -12,7 +12,7 @@ use ecp_core::build::builder::{
 use ecp_core::build::representatives::RepresentativeStrategy;
 use ecp_core::build::source::EmbeddingsSource;
 use ecp_core::logging;
-use ecp_core::search::{Index, IndexInfo};
+use ecp_core::search::{Index, IndexInfo, SearchStrategy};
 use ecp_core::utils::{EmbeddingDtype, Metric, default_memory_limit_bytes};
 
 /// Largest --rep-chunk-mb whose size in bytes still fits in a `usize`.
@@ -400,6 +400,7 @@ fn search(args: SearchArgs) -> Result<()> {
             args.search_exp,
             args.max_increments,
             &exclude,
+            SearchStrategy::BestFirst,
         )?
     };
 

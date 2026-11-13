@@ -1,4 +1,4 @@
-use ecp_core::search::Index;
+use ecp_core::search::{Index, SearchStrategy};
 use ndarray::{Array1, Array2};
 use numpy::{PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use ordered_float::NotNan;
@@ -80,8 +80,14 @@ impl IndexWrapper {
 
         let (results, query_id): (Vec<(NotNan<f32>, u32)>, usize) = py
             .detach(|| {
-                self.inner
-                    .new_search(query, k, search_exp, max_increments, &exclude_set)
+                self.inner.new_search(
+                    query,
+                    k,
+                    search_exp,
+                    max_increments,
+                    &exclude_set,
+                    SearchStrategy::BestFirst,
+                )
             })
             .map_err(to_pyerr)?;
 

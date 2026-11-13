@@ -24,6 +24,7 @@ use crate::search::node::Node;
 
 mod persistence;
 mod query;
+pub use query::SearchStrategy;
 
 use query::{HeapEntry, QueryState};
 

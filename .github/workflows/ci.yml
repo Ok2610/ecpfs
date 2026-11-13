@@ -54,6 +54,34 @@ jobs:
       - name: pytest
         run: uv run pytest tests/
 
+  # The dev group doesn't install on free-threaded Python (deptry has no 3.14t
+  # build), so this job installs only what the tests need.
+  python-free-threaded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Python 3.14t and test dependencies
+        run: |
+          uv venv --python 3.14t .venv
+          uv pip install --python .venv maturin numpy h5py zarr pytest
+
+      - name: Build extension
+        run: |
+          source .venv/bin/activate
+          maturin develop
+
+      - name: pytest
+        run: |
+          source .venv/bin/activate
+          pytest tests/
+
   docs:
     runs-on: ubuntu-latest
     steps:

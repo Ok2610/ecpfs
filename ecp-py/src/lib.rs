@@ -15,8 +15,9 @@ use pylogging::init_logging;
 use pymetric::PyMetric;
 
 // Every method in this module that performs I/O releases the GIL via py.detach.
+// Nothing relies on the GIL: Index is thread-safe and PyO3 guards each &mut self call.
 /// Registers the classes and functions of the `ecp` Python module.
-#[pymodule(gil_used = true)]
+#[pymodule(gil_used = false)]
 fn ecp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IndexWrapper>()?;
     m.add_class::<BuilderWrapper>()?;

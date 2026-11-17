@@ -1,5 +1,9 @@
 # ecpfs
 
+[![CI](https://github.com/Ok2610/ecpfs/actions/workflows/ci.yml/badge.svg)](https://github.com/Ok2610/ecpfs/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/ecpfs)](https://pypi.org/project/ecpfs/)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+
 An implementation of the Extended Cluster Pruning (eCP) approximate
 nearest neighbor index, with a Rust core, Python bindings, and a standalone
 CLI.

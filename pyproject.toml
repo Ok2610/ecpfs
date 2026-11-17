@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name        = "ecpfs"
-version     = "0.9.101"
+version     = "0.10.0"
 description = "Extended Cluster Pruning (eCP) approximate nearest neighbor index, with a Rust core"
 authors     = [
     { name = "Omar Shahbaz Khan", email = "osk@oskhan.com" }
@@ -14,6 +14,7 @@ license     = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.14"
 
 classifiers = [
+  "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Free Threading :: 2 - Beta",

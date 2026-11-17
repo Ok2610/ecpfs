@@ -1,6 +1,5 @@
 # Builds wheels across the supported platform matrix and uploads them as
-# build artifacts. Does not publish anywhere. Publishing is a deliberately
-# separate step, added once a release is ready to go out.
+# build artifacts. A manual run publishes them to TestPyPI, a v* tag to PyPI.
 name: Wheels
 
 on:
@@ -189,3 +188,39 @@ jobs:
         with:
           name: wheels-sdist
           path: dist
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [linux, macos, windows, sdist]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      # skip-existing lets a rerun of the same version succeed
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows, sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
